@@ -1,0 +1,43 @@
+//===-- SHInstrInfo.td - SuperH instruction definitions ----*- tablegen -*-===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+include "SHInstrFormats.td"
+
+def SImm8AsmOperand : AsmOperandClass {
+  let Name = "SImm8";
+  let PredicateMethod = "isSImm8";
+  let RenderMethod = "addImmOperands";
+  let ParserMethod = "parseSImm8";
+  let DiagnosticType = "InvalidSImm8";
+}
+
+def simm8 : Operand<i32> {
+  let ParserMatchClass = SImm8AsmOperand;
+  let PrintMethod = "printSImm8";
+  let DecoderMethod = "decodeSImm8";
+}
+
+def NOP : SHFixed<0x0009, "nop">;
+
+let isReturn = 1, isTerminator = 1, isBarrier = 1, hasDelaySlot = 1,
+    Uses = [PR] in
+def RTS : SHFixed<0x000b, "rts">;
+
+def MOVrr : SHRegReg<0x6, 0x3, (outs GPR:$dst), (ins GPR:$src),
+                     "mov\t$src,$dst">;
+
+let Constraints = "$dst = $dst_in" in
+def ADDrr : SHRegReg<0x3, 0xc, (outs GPR:$dst),
+                     (ins GPR:$dst_in, GPR:$src), "add\t$src,$dst">;
+
+def MOVri : SHRegImm<0xe, (outs GPR:$dst), (ins simm8:$imm),
+                     "mov\t$imm,$dst">;
+
+let Constraints = "$dst = $dst_in" in
+def ADDri : SHRegImm<0x7, (outs GPR:$dst),
+                     (ins GPR:$dst_in, simm8:$imm), "add\t$imm,$dst">;

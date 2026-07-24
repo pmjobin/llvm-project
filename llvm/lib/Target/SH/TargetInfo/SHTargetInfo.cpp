@@ -30,6 +30,5 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeSHTargetInfo() {
 }
 
 // Targets.def requires these entry points for every configured target family.
-// SH-0 intentionally has neither code generation nor MC support to initialize.
+// SH intentionally has no code generation to initialize yet.
 extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeSHTarget() {}
-extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeSHTargetMC() {}
