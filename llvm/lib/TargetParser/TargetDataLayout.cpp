@@ -674,6 +674,11 @@ std::string Triple::computeDataLayout(StringRef ABIName) const {
     // LLVM data layout.
     return "";
 
+  case Triple::sh:
+  case Triple::shle:
+    // SH-0 has no backend-defined data layout.
+    return "";
+
   case Triple::UnknownArch:
     return "";
   }

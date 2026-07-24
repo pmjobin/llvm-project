@@ -1485,6 +1485,55 @@ TEST(TripleTest, ParsedIDs) {
   EXPECT_EQ(Triple::ChipStar, T.getOS());
 }
 
+TEST(TripleTest, SuperH) {
+  Triple Big("sh-unknown-elf");
+  EXPECT_EQ(Triple::sh, Big.getArch());
+  EXPECT_EQ("sh", Big.getArchName());
+  EXPECT_EQ("sh", Triple::getArchTypeName(Big.getArch()));
+  EXPECT_EQ(Triple::sh, Triple::getArchTypeForLLVMName("sh"));
+  EXPECT_EQ("sh", Triple::getArchTypePrefix(Big.getArch()));
+  EXPECT_TRUE(Big.isArch32Bit());
+  EXPECT_FALSE(Big.isArch64Bit());
+  EXPECT_EQ(32U, Big.getArchPointerBitWidth());
+  EXPECT_FALSE(Big.isLittleEndian());
+  EXPECT_EQ(Triple::ELF, Big.getObjectFormat());
+
+  Triple Little("shle-unknown-elf");
+  EXPECT_EQ(Triple::shle, Little.getArch());
+  EXPECT_EQ("shle", Little.getArchName());
+  EXPECT_EQ("shle", Triple::getArchTypeName(Little.getArch()));
+  EXPECT_EQ(Triple::shle, Triple::getArchTypeForLLVMName("shle"));
+  EXPECT_EQ("sh", Triple::getArchTypePrefix(Little.getArch()));
+  EXPECT_TRUE(Little.isArch32Bit());
+  EXPECT_FALSE(Little.isArch64Bit());
+  EXPECT_EQ(32U, Little.getArchPointerBitWidth());
+  EXPECT_TRUE(Little.isLittleEndian());
+  EXPECT_EQ(Triple::ELF, Little.getObjectFormat());
+
+  EXPECT_EQ(Triple::sh, Big.get32BitArchVariant().getArch());
+  EXPECT_EQ(Triple::UnknownArch, Big.get64BitArchVariant().getArch());
+  EXPECT_EQ(Triple::shle, Little.get32BitArchVariant().getArch());
+  EXPECT_EQ(Triple::UnknownArch, Little.get64BitArchVariant().getArch());
+
+  EXPECT_EQ(Triple::sh, Big.getBigEndianArchVariant().getArch());
+  EXPECT_EQ(Triple::shle, Big.getLittleEndianArchVariant().getArch());
+  EXPECT_EQ(Triple::sh, Little.getBigEndianArchVariant().getArch());
+  EXPECT_EQ(Triple::shle, Little.getLittleEndianArchVariant().getArch());
+
+  EXPECT_EQ(Triple::sh, Triple("shbe-unknown-elf").getArch());
+  EXPECT_EQ(Triple::sh, Triple("sheb-unknown-elf").getArch());
+  EXPECT_EQ(Triple::shle, Triple("shl-unknown-elf").getArch());
+  EXPECT_EQ("sh-unknown-unknown-elf", Triple::normalize("sh-unknown-elf"));
+  EXPECT_EQ("shle-unknown-unknown-elf", Triple::normalize("shle-unknown-elf"));
+  EXPECT_EQ("shbe-unknown-unknown-elf", Triple::normalize("shbe-unknown-elf"));
+  EXPECT_EQ("sheb-unknown-unknown-elf", Triple::normalize("sheb-unknown-elf"));
+  EXPECT_EQ("shl-unknown-unknown-elf", Triple::normalize("shl-unknown-elf"));
+
+  EXPECT_EQ(Triple::UnknownArch, Triple("shel-unknown-elf").getArch());
+  EXPECT_TRUE(Big.computeDataLayout("").empty());
+  EXPECT_TRUE(Little.computeDataLayout("").empty());
+}
+
 TEST(TripleTest, EnumConstructor) {
   {
     Triple T(Triple::amdgpu, Triple::NoSubArch, Triple::AMD, Triple::AMDHSA);
