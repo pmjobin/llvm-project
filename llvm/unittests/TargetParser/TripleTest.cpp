@@ -1530,8 +1530,10 @@ TEST(TripleTest, SuperH) {
   EXPECT_EQ("shl-unknown-unknown-elf", Triple::normalize("shl-unknown-elf"));
 
   EXPECT_EQ(Triple::UnknownArch, Triple("shel-unknown-elf").getArch());
-  EXPECT_TRUE(Big.computeDataLayout("").empty());
-  EXPECT_TRUE(Little.computeDataLayout("").empty());
+  EXPECT_EQ("E-m:e-p:32:32-i64:32:32-f64:32:32-a:0:32-n32-S32",
+            Big.computeDataLayout(""));
+  EXPECT_EQ("e-m:e-p:32:32-i64:32:32-f64:32:32-a:0:32-n32-S32",
+            Little.computeDataLayout(""));
 }
 
 TEST(TripleTest, EnumConstructor) {

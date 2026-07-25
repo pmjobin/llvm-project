@@ -25,22 +25,26 @@ class SHFixed<bits<16> Encoding, string Asm>
   let Inst = Encoding;
 }
 
-class SHRegReg<bits<4> Prefix, bits<4> Suffix, dag Outs, dag Ins, string Asm>
+class SHRegReg<bits<4> Prefix, bits<4> Suffix, dag Outs, dag Ins, string Asm,
+               list<dag> pattern = []>
     : SHInst<Outs, Ins, Asm> {
   bits<4> dst;
   bits<4> src;
 
+  let Pattern = pattern;
   let Inst{15-12} = Prefix;
   let Inst{11-8} = dst;
   let Inst{7-4} = src;
   let Inst{3-0} = Suffix;
 }
 
-class SHRegImm<bits<4> Prefix, dag Outs, dag Ins, string Asm>
+class SHRegImm<bits<4> Prefix, dag Outs, dag Ins, string Asm,
+               list<dag> pattern = []>
     : SHInst<Outs, Ins, Asm> {
   bits<4> dst;
   bits<8> imm;
 
+  let Pattern = pattern;
   let Inst{15-12} = Prefix;
   let Inst{11-8} = dst;
   let Inst{7-0} = imm;

@@ -9,6 +9,7 @@
 include "llvm/Target/Target.td"
 
 include "SHRegisterInfo.td"
+include "SHCallingConv.td"
 include "SHInstrInfo.td"
 include "SHSubtarget.td"
 

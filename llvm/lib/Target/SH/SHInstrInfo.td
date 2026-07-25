@@ -16,28 +16,35 @@ def SImm8AsmOperand : AsmOperandClass {
   let DiagnosticType = "InvalidSImm8";
 }
 
-def simm8 : Operand<i32> {
+def simm8 : Operand<i32>, ImmLeaf<i32, [{ return isInt<8>(Imm); }]> {
   let ParserMatchClass = SImm8AsmOperand;
   let PrintMethod = "printSImm8";
   let DecoderMethod = "decodeSImm8";
 }
 
+def SHret : SDNode<"SHISD::RET_GLUE", SDTNone,
+                   [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
+
 def NOP : SHFixed<0x0009, "nop">;
 
 let isReturn = 1, isTerminator = 1, isBarrier = 1, hasDelaySlot = 1,
     Uses = [PR] in
-def RTS : SHFixed<0x000b, "rts">;
+def RTS : SHFixed<0x000b, "rts"> {
+  let Pattern = [(SHret)];
+}
 
 def MOVrr : SHRegReg<0x6, 0x3, (outs GPR:$dst), (ins GPR:$src),
                      "mov\t$src,$dst">;
 
-let Constraints = "$dst = $dst_in" in
+let Constraints = "$dst = $dst_in", isCommutable = 1 in
 def ADDrr : SHRegReg<0x3, 0xc, (outs GPR:$dst),
-                     (ins GPR:$dst_in, GPR:$src), "add\t$src,$dst">;
+                     (ins GPR:$dst_in, GPR:$src), "add\t$src,$dst",
+                     [(set GPR:$dst, (add GPR:$dst_in, GPR:$src))]>;
 
 def MOVri : SHRegImm<0xe, (outs GPR:$dst), (ins simm8:$imm),
-                     "mov\t$imm,$dst">;
+                     "mov\t$imm,$dst", [(set GPR:$dst, simm8:$imm)]>;
 
 let Constraints = "$dst = $dst_in" in
 def ADDri : SHRegImm<0x7, (outs GPR:$dst),
-                     (ins GPR:$dst_in, simm8:$imm), "add\t$imm,$dst">;
+                     (ins GPR:$dst_in, simm8:$imm), "add\t$imm,$dst",
+                     [(set GPR:$dst, (add GPR:$dst_in, simm8:$imm))]>;

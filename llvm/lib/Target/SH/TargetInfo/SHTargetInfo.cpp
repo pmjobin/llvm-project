@@ -28,7 +28,3 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeSHTargetInfo() {
   RegisterTarget<Triple::shle, /*HasJIT=*/false> Y(
       getTheSHLETarget(), "shle", "SuperH (32-bit little endian)", "SH");
 }
-
-// Targets.def requires these entry points for every configured target family.
-// SH intentionally has no code generation to initialize yet.
-extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeSHTarget() {}

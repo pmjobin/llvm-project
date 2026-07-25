@@ -363,6 +363,14 @@ static std::string computeSparcDataLayout(const Triple &T) {
   return Ret;
 }
 
+static std::string computeSHDataLayout(const Triple &T) {
+  // The GNU SH ABI uses 32-bit pointers, 32-bit integer registers, and a
+  // 32-bit stack boundary by default. The optional GCC -mdalign ABI variant is
+  // intentionally not modeled.
+  return std::string(T.isLittleEndian() ? "e" : "E") +
+         "-m:e-p:32:32-i64:32:32-f64:32:32-a:0:32-n32-S32";
+}
+
 static std::string computeSystemZDataLayout(const Triple &TT) {
   std::string Ret;
 
@@ -621,6 +629,9 @@ std::string Triple::computeDataLayout(StringRef ABIName) const {
   case Triple::sparcv9:
   case Triple::sparcel:
     return computeSparcDataLayout(*this);
+  case Triple::sh:
+  case Triple::shle:
+    return computeSHDataLayout(*this);
   case Triple::systemz:
     return computeSystemZDataLayout(*this);
   case Triple::tce:
@@ -672,11 +683,6 @@ std::string Triple::computeDataLayout(StringRef ABIName) const {
   case Triple::renderscript64:
     // These are all virtual ISAs with no LLVM backend, and therefore no fixed
     // LLVM data layout.
-    return "";
-
-  case Triple::sh:
-  case Triple::shle:
-    // SH-0 has no backend-defined data layout.
     return "";
 
   case Triple::UnknownArch:

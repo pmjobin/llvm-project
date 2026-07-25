@@ -24,4 +24,8 @@ def MACL : Register<"macl">;
 def SR : Register<"sr">;
 }
 
-def GPR : RegisterClass<"SH", [i32], 32, (sequence "R%u", 0, 15)>;
+// Keep caller-saved registers first so the narrow register-only leaf-function
+// subset does not need callee-save spills.
+def GPR : RegisterClass<"SH", [i32], 32,
+                        (add (sequence "R%u", 0, 7),
+                             (sequence "R%u", 8, 14), R15)>;
