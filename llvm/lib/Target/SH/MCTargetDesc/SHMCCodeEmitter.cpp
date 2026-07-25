@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "SHFixupKinds.h"
 #include "SHMCTargetDesc.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/MC/MCCodeEmitter.h"
@@ -16,6 +17,7 @@
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/Support/EndianStream.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/TargetParser/Triple.h"
 
 using namespace llvm;
@@ -33,6 +35,9 @@ class SHMCCodeEmitter : public MCCodeEmitter {
   unsigned getMachineOpValue(const MCInst &MI, const MCOperand &MO,
                              SmallVectorImpl<MCFixup> &Fixups,
                              const MCSubtargetInfo &STI) const;
+  unsigned getBranchTargetOpValue(const MCInst &MI, unsigned OpNo,
+                                  SmallVectorImpl<MCFixup> &Fixups,
+                                  const MCSubtargetInfo &STI) const;
   unsigned getLongDispMemOpValue(const MCInst &MI, unsigned OpNo,
                                  SmallVectorImpl<MCFixup> &Fixups,
                                  const MCSubtargetInfo &STI) const;
@@ -71,6 +76,32 @@ unsigned SHMCCodeEmitter::getMachineOpValue(const MCInst &MI,
     return static_cast<unsigned>(MO.getImm());
 
   Ctx.reportError(MI.getLoc(), "relocatable expressions are not supported");
+  return 0;
+}
+
+unsigned
+SHMCCodeEmitter::getBranchTargetOpValue(const MCInst &MI, unsigned OpNo,
+                                        SmallVectorImpl<MCFixup> &Fixups,
+                                        const MCSubtargetInfo &STI) const {
+  const MCOperand &MO = MI.getOperand(OpNo);
+  if (MO.isImm()) {
+    int64_t ByteDisp = MO.getImm();
+    if (ByteDisp % 2 != 0) {
+      Ctx.reportError(MI.getLoc(), "SH branch target must be two-byte aligned");
+      return 0;
+    }
+    unsigned Width = MI.getOpcode() == SH::BRA ? 12 : 8;
+    if (!isIntN(Width, ByteDisp / 2)) {
+      Ctx.reportError(MI.getLoc(), "SH branch target is out of range");
+      return 0;
+    }
+    return static_cast<unsigned>(ByteDisp / 2);
+  }
+
+  assert(MO.isExpr() && "expected SH branch target expression");
+  MCFixupKind Kind = MI.getOpcode() == SH::BRA ? SH::fixup_SH_PCREL12_2
+                                               : SH::fixup_SH_PCREL8_2;
+  Fixups.push_back(MCFixup::create(0, MO.getExpr(), Kind, true));
   return 0;
 }
 

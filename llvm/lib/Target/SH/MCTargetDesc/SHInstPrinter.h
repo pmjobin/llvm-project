@@ -24,6 +24,8 @@ public:
                  const MCSubtargetInfo &STI, raw_ostream &OS) override;
   void printRegName(raw_ostream &OS, MCRegister Reg) override;
   void printOperand(const MCInst *MI, unsigned OpNo, raw_ostream &OS);
+  void printBranchTarget(const MCInst *MI, uint64_t Address, unsigned OpNo,
+                         raw_ostream &OS);
   void printSImm8(const MCInst *MI, unsigned OpNo, raw_ostream &OS);
   void printLongMemReg(const MCInst *MI, unsigned OpNo, raw_ostream &OS);
   void printLongMemDisp(const MCInst *MI, unsigned OpNo, raw_ostream &OS);

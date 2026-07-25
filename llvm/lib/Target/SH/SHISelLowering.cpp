@@ -32,20 +32,16 @@ SHTargetLowering::SHTargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::ADD, MVT::i32, Legal);
   setOperationAction(ISD::Constant, MVT::i32, Legal);
 
-  for (unsigned Opcode : {ISD::LOAD,         ISD::STORE,
-                          ISD::SUB,          ISD::MUL,
-                          ISD::MULHU,        ISD::MULHS,
-                          ISD::SDIV,         ISD::UDIV,
-                          ISD::SREM,         ISD::UREM,
-                          ISD::AND,          ISD::OR,
-                          ISD::XOR,          ISD::SHL,
-                          ISD::SRA,          ISD::SRL,
-                          ISD::ROTL,         ISD::ROTR,
-                          ISD::BR,           ISD::BR_CC,
-                          ISD::SELECT,       ISD::SELECT_CC,
-                          ISD::SETCC,        ISD::GlobalAddress,
-                          ISD::BlockAddress, ISD::JumpTable,
-                          ISD::ConstantPool, ISD::DYNAMIC_STACKALLOC})
+  for (unsigned Opcode :
+       {ISD::LOAD,      ISD::STORE,         ISD::SUB,
+        ISD::MUL,       ISD::MULHU,         ISD::MULHS,
+        ISD::SDIV,      ISD::UDIV,          ISD::SREM,
+        ISD::UREM,      ISD::AND,           ISD::OR,
+        ISD::XOR,       ISD::SHL,           ISD::SRA,
+        ISD::SRL,       ISD::ROTL,          ISD::ROTR,
+        ISD::BR_CC,     ISD::SELECT,        ISD::SELECT_CC,
+        ISD::SETCC,     ISD::GlobalAddress, ISD::BlockAddress,
+        ISD::JumpTable, ISD::ConstantPool,  ISD::DYNAMIC_STACKALLOC})
     setOperationAction(Opcode, MVT::i32, Custom);
 
   computeRegisterProperties(STI.getRegisterInfo());
@@ -60,9 +56,42 @@ static bool isSupportedSHMemoryType(Type *Ty) {
   return Ty->isIntegerTy(32) || Ty->isPointerTy();
 }
 
-static void validateSHMemoryIR(const Function &F) {
+static void validateSHIR(const Function &F) {
   for (const BasicBlock &BB : F) {
+    if (BB.isEHPad())
+      report_fatal_error("SH exception-handling pads are not supported");
     for (const Instruction &I : BB) {
+      if (isa<SwitchInst>(&I))
+        report_fatal_error("SH switch is not supported");
+      if (isa<IndirectBrInst>(&I))
+        report_fatal_error("SH indirectbr is not supported");
+      if (isa<CallBrInst>(&I))
+        report_fatal_error("SH callbr is not supported");
+      if (isa<SelectInst>(&I))
+        report_fatal_error("SH select is not supported");
+      if (const auto *Phi = dyn_cast<PHINode>(&I)) {
+        if (Phi->getType()->isIntegerTy(1))
+          report_fatal_error("SH i1 PHIs are not supported");
+        if (!Phi->getType()->isIntegerTy(32))
+          report_fatal_error("SH only supports i32 PHIs");
+      }
+
+      if (const auto *Cmp = dyn_cast<ICmpInst>(&I)) {
+        Type *OperandTy = Cmp->getOperand(0)->getType();
+        if (OperandTy->isPointerTy())
+          report_fatal_error("SH pointer comparisons are not supported");
+        if (!OperandTy->isIntegerTy(32))
+          report_fatal_error("SH only supports i32 integer comparisons");
+        for (const User *Use : Cmp->users()) {
+          const auto *Branch = dyn_cast<CondBrInst>(Use);
+          if (!Branch || Branch->getCondition() != Cmp)
+            report_fatal_error(
+                "SH comparison results may only be used by conditional "
+                "branches");
+        }
+        continue;
+      }
+
       if (const auto *Load = dyn_cast<LoadInst>(&I)) {
         if (!isSupportedSHMemoryType(Load->getType()))
           report_fatal_error(
@@ -113,6 +142,9 @@ bool SHTargetLowering::CanLowerReturn(
     CallingConv::ID CallConv, MachineFunction &MF, bool IsVarArg,
     const SmallVectorImpl<ISD::OutputArg> &Outs, LLVMContext &Context,
     const Type *RetTy) const {
+  if (RetTy->isIntegerTy(1))
+    report_fatal_error(
+        "SH comparison results may only be used by conditional branches");
   if (CallConv != CallingConv::C || IsVarArg || Outs.size() > 1)
     return false;
   if (RetTy->isVoidTy())
@@ -128,7 +160,7 @@ SDValue SHTargetLowering::LowerFormalArguments(
   requireSupportedCallingConvention(CallConv);
   MachineFunction &MF = DAG.getMachineFunction();
   const Function &F = MF.getFunction();
-  validateSHMemoryIR(F);
+  validateSHIR(F);
   if (IsVarArg || F.isVarArg())
     report_fatal_error("SH varargs are not supported");
   if (F.hasStructRetAttr())
@@ -235,6 +267,8 @@ static bool isSupportedSHAddress(SDValue Addr) {
 }
 
 SDValue SHTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
+  if (Op.getOpcode() == ISD::BR_CC)
+    return LowerBR_CC(Op, DAG);
   if (Op.getOpcode() == ISD::LOAD || Op.getOpcode() == ISD::STORE) {
     const auto *Mem = cast<MemSDNode>(Op);
     if (Mem->getMemoryVT() != MVT::i32)
@@ -253,7 +287,72 @@ SDValue SHTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
       Op.getOpcode() == ISD::BlockAddress || Op.getOpcode() == ISD::JumpTable ||
       Op.getOpcode() == ISD::ConstantPool)
     report_fatal_error("SH symbolic memory addresses are not supported");
+  if (Op.getOpcode() == ISD::SETCC)
+    report_fatal_error(
+        "SH comparison results may only be used by conditional branches");
+  if (Op.getOpcode() == ISD::SELECT || Op.getOpcode() == ISD::SELECT_CC)
+    report_fatal_error("SH select is not supported");
   report_fatal_error("SH operation is not supported");
+}
+
+SDValue SHTargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
+  SDValue Chain = Op.getOperand(0);
+  ISD::CondCode CC = cast<CondCodeSDNode>(Op.getOperand(1))->get();
+  SDValue LHS = Op.getOperand(2);
+  SDValue RHS = Op.getOperand(3);
+  SDValue Dest = Op.getOperand(4);
+  SDLoc DL(Op);
+
+  unsigned CompareOpcode;
+  bool BranchOnSet;
+  switch (CC) {
+  default:
+    report_fatal_error("SH comparison predicate is not supported");
+  case ISD::SETEQ:
+    CompareOpcode = SHISD::CMP_EQ;
+    BranchOnSet = true;
+    break;
+  case ISD::SETNE:
+    CompareOpcode = SHISD::CMP_EQ;
+    BranchOnSet = false;
+    break;
+  case ISD::SETGE:
+    CompareOpcode = SHISD::CMP_GE;
+    BranchOnSet = true;
+    break;
+  case ISD::SETLT:
+    CompareOpcode = SHISD::CMP_GE;
+    BranchOnSet = false;
+    break;
+  case ISD::SETGT:
+    CompareOpcode = SHISD::CMP_GT;
+    BranchOnSet = true;
+    break;
+  case ISD::SETLE:
+    CompareOpcode = SHISD::CMP_GT;
+    BranchOnSet = false;
+    break;
+  case ISD::SETUGE:
+    CompareOpcode = SHISD::CMP_HS;
+    BranchOnSet = true;
+    break;
+  case ISD::SETULT:
+    CompareOpcode = SHISD::CMP_HS;
+    BranchOnSet = false;
+    break;
+  case ISD::SETUGT:
+    CompareOpcode = SHISD::CMP_HI;
+    BranchOnSet = true;
+    break;
+  case ISD::SETULE:
+    CompareOpcode = SHISD::CMP_HI;
+    BranchOnSet = false;
+    break;
+  }
+
+  SDValue Glue = DAG.getNode(CompareOpcode, DL, MVT::Glue, LHS, RHS);
+  return DAG.getNode(BranchOnSet ? SHISD::BT : SHISD::BF, DL, MVT::Other, Chain,
+                     Dest, Glue);
 }
 
 bool SHTargetLowering::allowsMisalignedMemoryAccesses(
@@ -265,7 +364,24 @@ bool SHTargetLowering::allowsMisalignedMemoryAccesses(
 }
 
 const char *SHTargetLowering::getTargetNodeName(unsigned Opcode) const {
-  if (Opcode == SHISD::RET_GLUE)
+  switch (Opcode) {
+  case SHISD::RET_GLUE:
     return "SHISD::RET_GLUE";
-  return nullptr;
+  case SHISD::CMP_EQ:
+    return "SHISD::CMP_EQ";
+  case SHISD::CMP_HS:
+    return "SHISD::CMP_HS";
+  case SHISD::CMP_GE:
+    return "SHISD::CMP_GE";
+  case SHISD::CMP_HI:
+    return "SHISD::CMP_HI";
+  case SHISD::CMP_GT:
+    return "SHISD::CMP_GT";
+  case SHISD::BT:
+    return "SHISD::BT";
+  case SHISD::BF:
+    return "SHISD::BF";
+  default:
+    return nullptr;
+  }
 }

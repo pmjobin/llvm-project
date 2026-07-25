@@ -11,11 +11,15 @@
 
 namespace llvm {
 
+class MCContext;
 class MCInst;
 class MachineInstr;
 
 class SHMCInstLower {
+  MCContext &Ctx;
+
 public:
+  explicit SHMCInstLower(MCContext &Ctx) : Ctx(Ctx) {}
   void lower(const MachineInstr *MI, MCInst &OutMI) const;
 };
 

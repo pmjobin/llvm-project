@@ -43,6 +43,7 @@ BitVector SHRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   Reserved.set(SH::MACH);
   Reserved.set(SH::MACL);
   Reserved.set(SH::SR);
+  Reserved.set(SH::TBit);
   return Reserved;
 }
 

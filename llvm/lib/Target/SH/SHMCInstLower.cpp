@@ -7,7 +7,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "SHMCInstLower.h"
+#include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineInstr.h"
+#include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
@@ -24,6 +27,10 @@ void SHMCInstLower::lower(const MachineInstr *MI, MCInst &OutMI) const {
       break;
     case MachineOperand::MO_Immediate:
       OutMI.addOperand(MCOperand::createImm(MO.getImm()));
+      break;
+    case MachineOperand::MO_MachineBasicBlock:
+      OutMI.addOperand(MCOperand::createExpr(
+          MCSymbolRefExpr::create(MO.getMBB()->getSymbol(), Ctx)));
       break;
     case MachineOperand::MO_RegisterMask:
       break;

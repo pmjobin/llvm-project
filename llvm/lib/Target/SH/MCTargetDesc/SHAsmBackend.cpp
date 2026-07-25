@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "SHFixupKinds.h"
 #include "SHMCTargetDesc.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/MC/MCAsmBackend.h"
@@ -14,6 +15,7 @@
 #include "llvm/MC/MCObjectWriter.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/Support/Endian.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
 
@@ -29,6 +31,12 @@ public:
 
   unsigned getRelocType(const MCFixup &Fixup, const MCValue &Target,
                         bool IsPCRel) const override {
+    if (Fixup.getKind() == SH::fixup_SH_PCREL8_2 ||
+        Fixup.getKind() == SH::fixup_SH_PCREL12_2) {
+      reportError(Fixup.getLoc(),
+                  "SH branch relocations are not yet supported");
+      return 0;
+    }
     reportError(Fixup.getLoc(), "SH relocations are not yet supported");
     return 0;
   }
@@ -49,6 +57,34 @@ public:
                   const MCValue &Target, uint8_t *Data, uint64_t Value,
                   bool IsResolved) override {
     switch (Fixup.getKind()) {
+    case SH::fixup_SH_PCREL8_2:
+    case SH::fixup_SH_PCREL12_2: {
+      if (!IsResolved) {
+        maybeAddReloc(F, Fixup, Target, Value, IsResolved);
+        return;
+      }
+
+      int64_t ByteDisp = static_cast<int64_t>(Value) - 4;
+      if (ByteDisp % 2 != 0) {
+        getContext().reportError(Fixup.getLoc(),
+                                 "SH branch target must be two-byte aligned");
+        return;
+      }
+
+      int64_t Encoded = ByteDisp / 2;
+      unsigned Width = Fixup.getKind() == SH::fixup_SH_PCREL8_2 ? 8 : 12;
+      if (!isIntN(Width, Encoded)) {
+        getContext().reportError(Fixup.getLoc(),
+                                 "SH branch target is out of range");
+        return;
+      }
+
+      uint16_t Mask = Width == 8 ? 0x00ff : 0x0fff;
+      uint16_t Word = support::endian::read<uint16_t>(Data, Endian);
+      Word = (Word & ~Mask) | (static_cast<uint16_t>(Encoded) & Mask);
+      support::endian::write<uint16_t>(Data, Word, Endian);
+      return;
+    }
     case FK_Data_1:
       maybeAddReloc(F, Fixup, Target, Value, IsResolved);
       support::endian::write<uint8_t>(Data, Value, Endian);
@@ -69,6 +105,19 @@ public:
       getContext().reportError(Fixup.getLoc(), "unsupported SH fixup");
       return;
     }
+  }
+
+  MCFixupKindInfo getFixupKindInfo(MCFixupKind Kind) const override {
+    static const MCFixupKindInfo Infos[SH::NumTargetFixupKinds] = {
+        {"fixup_SH_PCREL8_2", 0, 8, 0},
+        {"fixup_SH_PCREL12_2", 0, 12, 0},
+    };
+
+    if (Kind < FirstTargetFixupKind)
+      return MCAsmBackend::getFixupKindInfo(Kind);
+    assert(Kind - FirstTargetFixupKind < SH::NumTargetFixupKinds &&
+           "invalid SH fixup kind");
+    return Infos[Kind - FirstTargetFixupKind];
   }
 
   std::unique_ptr<MCObjectTargetWriter>

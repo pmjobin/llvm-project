@@ -14,6 +14,7 @@
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCELFObjectWriter.h"
 #include "llvm/MC/MCELFStreamer.h"
+#include "llvm/MC/MCInstrAnalysis.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCObjectFileInfo.h"
 #include "llvm/MC/MCRegisterInfo.h"
@@ -69,6 +70,20 @@ static MCInstPrinter *createSHMCInstPrinter(const Triple &TT,
 
 namespace {
 
+class SHMCInstrAnalysis : public MCInstrAnalysis {
+public:
+  explicit SHMCInstrAnalysis(const MCInstrInfo *Info) : MCInstrAnalysis(Info) {}
+
+  bool evaluateBranch(const MCInst &Inst, uint64_t Addr, uint64_t Size,
+                      uint64_t &Target) const override {
+    if ((!isConditionalBranch(Inst) && !isUnconditionalBranch(Inst)) ||
+        Inst.getNumOperands() == 0 || !Inst.getOperand(0).isImm())
+      return false;
+    Target = Addr + 4 + Inst.getOperand(0).getImm();
+    return true;
+  }
+};
+
 class SHTargetELFStreamer : public MCTargetStreamer {
 public:
   explicit SHTargetELFStreamer(MCStreamer &S) : MCTargetStreamer(S) {
@@ -95,11 +110,16 @@ createSHObjectTargetStreamer(MCStreamer &S, const MCSubtargetInfo &STI) {
   return new SHTargetELFStreamer(S);
 }
 
+static MCInstrAnalysis *createSHMCInstrAnalysis(const MCInstrInfo *Info) {
+  return new SHMCInstrAnalysis(Info);
+}
+
 static void registerTargetMC(Target &T) {
   TargetRegistry::RegisterMCAsmInfo(T, createSHMCAsmInfo);
   TargetRegistry::RegisterMCInstrInfo(T, createSHMCInstrInfo);
   TargetRegistry::RegisterMCRegInfo(T, createSHMCRegisterInfo);
   TargetRegistry::RegisterMCSubtargetInfo(T, createSHMCSubtargetInfo);
+  TargetRegistry::RegisterMCInstrAnalysis(T, createSHMCInstrAnalysis);
   TargetRegistry::RegisterMCInstPrinter(T, createSHMCInstPrinter);
   TargetRegistry::RegisterMCCodeEmitter(T, createSHMCCodeEmitter);
   TargetRegistry::RegisterMCAsmBackend(T, createSHMCAsmBackend);

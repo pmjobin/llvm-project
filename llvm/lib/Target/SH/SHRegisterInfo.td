@@ -22,6 +22,7 @@ def VBR : Register<"vbr">;
 def MACH : Register<"mach">;
 def MACL : Register<"macl">;
 def SR : Register<"sr">;
+def TBit : Register<"">;
 }
 
 // Keep caller-saved registers first so the narrow register-only leaf-function

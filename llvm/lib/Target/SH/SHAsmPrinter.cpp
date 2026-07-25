@@ -35,7 +35,7 @@ public:
   StringRef getPassName() const override { return "SH Assembly Printer"; }
 
   void emitInstruction(const MachineInstr *MI) override {
-    SHMCInstLower Lowering;
+    SHMCInstLower Lowering(OutContext);
     MachineBasicBlock::const_instr_iterator I = MI->getIterator();
     MachineBasicBlock::const_instr_iterator E = MI->getParent()->instr_end();
     do {

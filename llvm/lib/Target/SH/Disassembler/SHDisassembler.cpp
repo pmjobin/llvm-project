@@ -61,6 +61,29 @@ static MCDisassembler::DecodeStatus decodeSImm8(MCInst &MI, uint64_t Imm,
   return MCDisassembler::Success;
 }
 
+template <unsigned Width>
+static MCDisassembler::DecodeStatus
+decodeBranchTarget(MCInst &MI, uint64_t Value, uint64_t Address,
+                   const MCDisassembler *Decoder) {
+  int64_t ByteDisp = SignExtend64<Width>(Value) * 2;
+  uint64_t Target = Address + 4 + ByteDisp;
+  if (!Decoder->tryAddingSymbolicOperand(MI, Target, Address, true, 0, 2, 2))
+    MI.addOperand(MCOperand::createImm(ByteDisp));
+  return MCDisassembler::Success;
+}
+
+static MCDisassembler::DecodeStatus
+decodeBranchTarget8(MCInst &MI, uint64_t Value, uint64_t Address,
+                    const MCDisassembler *Decoder) {
+  return decodeBranchTarget<8>(MI, Value, Address, Decoder);
+}
+
+static MCDisassembler::DecodeStatus
+decodeBranchTarget12(MCInst &MI, uint64_t Value, uint64_t Address,
+                     const MCDisassembler *Decoder) {
+  return decodeBranchTarget<12>(MI, Value, Address, Decoder);
+}
+
 static MCDisassembler::DecodeStatus
 decodeLongDispMemOperand(MCInst &MI, uint64_t Value, uint64_t Address,
                          const MCDisassembler *Decoder) {

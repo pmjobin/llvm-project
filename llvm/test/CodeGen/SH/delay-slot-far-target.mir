@@ -1,0 +1,185 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s
+
+# bb.0 starts at 0.  The conditional branch at 2 has P + 4 = 6 and
+# reaches bb.1 at 8, for a two-byte displacement.  bb.1 contains 130
+# two-byte NOPs, then a delayed BRA.  bb.2 is consequently at 272 (0x110).
+# The BRA at 4 has P + 4 = 8 and reaches bb.2 with a 264-byte displacement,
+# which is in range for BRA.  A BT or BF from 2 to bb.2 would have a 266-byte
+# displacement, or 133 scaled units, which exceeds the signed eight-bit range.
+#
+# The removed late reversal would put bb.1 at 4 and bb.2 at 268 after filling
+# the remaining delayed branch.  Its BF from 2 would then require 131 scaled
+# units, which is still out of range.
+
+--- |
+  define void @far_false_target(i32 %a, i32 %b) {
+    ret void
+  }
+...
+---
+name:            far_false_target
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    liveins: $r4, $r5
+
+    CMP_EQ $r5, $r4, implicit-def $tbit
+    BT %bb.1, implicit $tbit
+    BRA %bb.2
+
+  bb.1:
+    successors: %bb.2(0x80000000)
+
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    BRA %bb.2
+
+  bb.2:
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            far_false_target
+# CHECK: BT %bb.1, implicit $tbit
+# CHECK-NOT: NOP
+# CHECK-NEXT: BRA %bb.2 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+# CHECK: bb.1
+# CHECK: BRA %bb.2 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+# CHECK: bb.2
+# CHECK: RTS implicit $pr {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }

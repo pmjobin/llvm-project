@@ -8,6 +8,29 @@
 
 include "SHInstrFormats.td"
 
+def BranchTargetAsmOperand : AsmOperandClass {
+  let Name = "BranchTarget";
+  let PredicateMethod = "isBranchTarget";
+  let RenderMethod = "addBranchTargetOperands";
+  let ParserMethod = "parseBranchTarget";
+}
+
+def brtarget8 : Operand<OtherVT> {
+  let ParserMatchClass = BranchTargetAsmOperand;
+  let PrintMethod = "printBranchTarget";
+  let EncoderMethod = "getBranchTargetOpValue";
+  let DecoderMethod = "decodeBranchTarget8";
+  let OperandType = "OPERAND_PCREL";
+}
+
+def brtarget12 : Operand<OtherVT> {
+  let ParserMatchClass = BranchTargetAsmOperand;
+  let PrintMethod = "printBranchTarget";
+  let EncoderMethod = "getBranchTargetOpValue";
+  let DecoderMethod = "decodeBranchTarget12";
+  let OperandType = "OPERAND_PCREL";
+}
+
 def SImm8AsmOperand : AsmOperandClass {
   let Name = "SImm8";
   let PredicateMethod = "isSImm8";
@@ -52,8 +75,18 @@ def longmemdisp : Operand<iPTR> {
 def addr_reg : ComplexPattern<iPTR, 1, "SelectAddrReg">;
 def addr_disp : ComplexPattern<iPTR, 2, "SelectAddrDisp", [add, frameindex]>;
 
+def SDT_SHCmp : SDTypeProfile<0, 2, [SDTCisVT<0, i32>, SDTCisVT<1, i32>]>;
+def SDT_SHBrcond : SDTypeProfile<0, 1, [SDTCisVT<0, OtherVT>]>;
+
 def SHret : SDNode<"SHISD::RET_GLUE", SDTNone,
                    [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
+def SHcmpeq : SDNode<"SHISD::CMP_EQ", SDT_SHCmp, [SDNPOutGlue]>;
+def SHcmphs : SDNode<"SHISD::CMP_HS", SDT_SHCmp, [SDNPOutGlue]>;
+def SHcmpge : SDNode<"SHISD::CMP_GE", SDT_SHCmp, [SDNPOutGlue]>;
+def SHcmphi : SDNode<"SHISD::CMP_HI", SDT_SHCmp, [SDNPOutGlue]>;
+def SHcmpgt : SDNode<"SHISD::CMP_GT", SDT_SHCmp, [SDNPOutGlue]>;
+def SHbt : SDNode<"SHISD::BT", SDT_SHBrcond, [SDNPHasChain, SDNPInGlue]>;
+def SHbf : SDNode<"SHISD::BF", SDT_SHBrcond, [SDNPHasChain, SDNPInGlue]>;
 
 def NOP : SHFixed<0x0009, "nop">;
 
@@ -78,6 +111,35 @@ let Constraints = "$dst = $dst_in" in
 def ADDri : SHRegImm<0x7, (outs GPR:$dst),
                      (ins GPR:$dst_in, simm8:$imm), "add\t$imm,$dst",
                      [(set GPR:$dst, (add GPR:$dst_in, simm8:$imm))]>;
+
+let Defs = [TBit], isCompare = 1 in {
+  def CMP_EQ : SHRegReg<0x3, 0x0, (outs), (ins GPR:$src, GPR:$dst),
+                        "cmp/eq\t$src,$dst",
+                        [(SHcmpeq GPR:$dst, GPR:$src)]>;
+  def CMP_HS : SHRegReg<0x3, 0x2, (outs), (ins GPR:$src, GPR:$dst),
+                        "cmp/hs\t$src,$dst",
+                        [(SHcmphs GPR:$dst, GPR:$src)]>;
+  def CMP_GE : SHRegReg<0x3, 0x3, (outs), (ins GPR:$src, GPR:$dst),
+                        "cmp/ge\t$src,$dst",
+                        [(SHcmpge GPR:$dst, GPR:$src)]>;
+  def CMP_HI : SHRegReg<0x3, 0x6, (outs), (ins GPR:$src, GPR:$dst),
+                        "cmp/hi\t$src,$dst",
+                        [(SHcmphi GPR:$dst, GPR:$src)]>;
+  def CMP_GT : SHRegReg<0x3, 0x7, (outs), (ins GPR:$src, GPR:$dst),
+                        "cmp/gt\t$src,$dst",
+                        [(SHcmpgt GPR:$dst, GPR:$src)]>;
+}
+
+let isBranch = 1, isTerminator = 1, Uses = [TBit] in {
+  def BT : SHBranch8<0x89, (ins brtarget8:$target), "bt\t$target",
+                     [(SHbt bb:$target)]>;
+  def BF : SHBranch8<0x8b, (ins brtarget8:$target), "bf\t$target",
+                     [(SHbf bb:$target)]>;
+}
+
+let isBranch = 1, isTerminator = 1, isBarrier = 1, hasDelaySlot = 1 in
+def BRA : SHBranch12<0xa, (ins brtarget12:$target), "bra\t$target",
+                     [(br bb:$target)]>;
 
 let mayLoad = 1 in
 def MOVL_load_reg

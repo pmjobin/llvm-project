@@ -50,6 +50,24 @@ class SHRegImm<bits<4> Prefix, dag Outs, dag Ins, string Asm,
   let Inst{7-0} = imm;
 }
 
+class SHBranch8<bits<8> Prefix, dag Ins, string Asm, list<dag> pattern = []>
+    : SHInst<(outs), Ins, Asm> {
+  bits<8> target;
+
+  let Pattern = pattern;
+  let Inst{15-8} = Prefix;
+  let Inst{7-0} = target;
+}
+
+class SHBranch12<bits<4> Prefix, dag Ins, string Asm, list<dag> pattern = []>
+    : SHInst<(outs), Ins, Asm> {
+  bits<12> target;
+
+  let Pattern = pattern;
+  let Inst{15-12} = Prefix;
+  let Inst{11-0} = target;
+}
+
 class SHLongLoadReg<dag Outs, dag Ins, string Asm, list<dag> pattern = []>
     : SHInst<Outs, Ins, Asm> {
   bits<4> dst;

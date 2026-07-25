@@ -12,6 +12,7 @@
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
@@ -35,6 +36,17 @@ void SHInstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
     return;
   }
   MAI.printExpr(OS, *Op.getExpr());
+}
+
+void SHInstPrinter::printBranchTarget(const MCInst *MI, uint64_t Address,
+                                      unsigned OpNo, raw_ostream &OS) {
+  const MCOperand &Op = MI->getOperand(OpNo);
+  if (Op.isExpr()) {
+    MAI.printExpr(OS, *Op.getExpr());
+    return;
+  }
+  assert(Op.isImm() && "invalid SH branch target");
+  OS << format_hex(Address + 4 + Op.getImm(), 0);
 }
 
 void SHInstPrinter::printSImm8(const MCInst *MI, unsigned OpNo,

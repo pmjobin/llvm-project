@@ -1,0 +1,185 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=branch-relaxation %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=branch-relaxation %s -o - | FileCheck %s
+
+# The BT in bb.0 is at offset 2.  The target begins at offset 262:
+#
+#   2-byte CMP + 2-byte BT + 4 * (2-byte BRA + 2-byte delay slot) +
+#   121 * 2-byte NOP = 262 bytes.
+#
+# Therefore the BT displacement is 262 - 2 - 4 = 256 bytes, or 128 scaled
+# units, which is out of its signed eight-bit range.  If each unfilled BRA
+# were counted as two bytes, the target would instead appear at 254 and the
+# displacement would appear to be 248 bytes, or 124 scaled units, in range.
+# BranchRelaxation must invert the conditional branch and insert a BRA.
+
+--- |
+  define void @delayed_instructions_affect_branch_range(i32 %a, i32 %b) {
+    ret void
+  }
+...
+---
+name:            delayed_instructions_affect_branch_range
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x40000000), %bb.6(0x40000000)
+    liveins: $r4, $r5
+
+    CMP_EQ $r5, $r4, implicit-def $tbit
+    BT %bb.6, implicit $tbit
+
+  bb.1:
+    successors: %bb.6(0x80000000)
+
+    BRA %bb.6
+
+  bb.2:
+    successors: %bb.6(0x80000000)
+
+    BRA %bb.6
+
+  bb.3:
+    successors: %bb.6(0x80000000)
+
+    BRA %bb.6
+
+  bb.4:
+    successors: %bb.6(0x80000000)
+
+    BRA %bb.6
+
+  bb.5:
+    successors: %bb.6(0x80000000)
+
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+
+  bb.6:
+
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            delayed_instructions_affect_branch_range
+# CHECK: CMP_EQ $r5, $r4, implicit-def $tbit
+# CHECK-NEXT: BF %bb.1, implicit $tbit
+# CHECK-NEXT: BRA %bb.6

@@ -36,6 +36,7 @@ public:
   SDValue LowerCall(CallLoweringInfo &CLI,
                     SmallVectorImpl<SDValue> &InVals) const override;
   SDValue LowerOperation(SDValue Op, SelectionDAG &DAG) const override;
+  SDValue LowerBR_CC(SDValue Op, SelectionDAG &DAG) const;
   const char *getTargetNodeName(unsigned Opcode) const override;
   bool allowsMisalignedMemoryAccesses(
       EVT VT, unsigned AddrSpace = 0, Align Alignment = Align(1),

@@ -21,6 +21,7 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/MathExtras.h"
+#include <string>
 
 using namespace llvm;
 
@@ -30,7 +31,7 @@ class SHOperand : public MCParsedAsmOperand {
   enum KindTy { Token, Register, Immediate, LongMemReg, LongMemDisp } Kind;
   SMLoc StartLoc;
   SMLoc EndLoc;
-  StringRef Tok;
+  std::string Tok;
   MCRegister Reg;
   const MCExpr *Expr = nullptr;
 
@@ -45,6 +46,7 @@ public:
   }
   bool isLongMemReg() const { return Kind == LongMemReg; }
   bool isLongMemDisp() const { return Kind == LongMemDisp; }
+  bool isBranchTarget() const { return isImm(); }
 
   SMLoc getStartLoc() const override { return StartLoc; }
   SMLoc getEndLoc() const override { return EndLoc; }
@@ -99,6 +101,11 @@ public:
     assert(N == 1);
     const auto *CE = cast<MCConstantExpr>(Expr);
     Inst.addOperand(MCOperand::createImm(CE->getValue()));
+  }
+
+  void addBranchTargetOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1);
+    Inst.addOperand(MCOperand::createExpr(Expr));
   }
 
   void addLongMemRegOperands(MCInst &Inst, unsigned N) const {
@@ -177,6 +184,7 @@ class SHAsmParser : public MCTargetAsmParser {
                                SMLoc &EndLoc) override;
 
   ParseStatus parseOperand(OperandVector &Operands, StringRef Mnemonic);
+  ParseStatus parseBranchTarget(OperandVector &Operands);
   ParseStatus parseSImm8(OperandVector &Operands);
   ParseStatus parseLongMemory(OperandVector &Operands);
 
@@ -239,6 +247,16 @@ ParseStatus SHAsmParser::parseSImm8(OperandVector &Operands) {
     return ParseStatus::Failure;
   }
 
+  Operands.push_back(SHOperand::createImm(Expr, Start, End));
+  return ParseStatus::Success;
+}
+
+ParseStatus SHAsmParser::parseBranchTarget(OperandVector &Operands) {
+  SMLoc Start = Parser.getTok().getLoc();
+  const MCExpr *Expr;
+  SMLoc End;
+  if (Parser.parseExpression(Expr, End))
+    return ParseStatus::Failure;
   Operands.push_back(SHOperand::createImm(Expr, Start, End));
   return ParseStatus::Success;
 }
@@ -332,6 +350,20 @@ ParseStatus SHAsmParser::parseOperand(OperandVector &Operands,
 
 bool SHAsmParser::parseInstruction(ParseInstructionInfo &Info, StringRef Name,
                                    SMLoc NameLoc, OperandVector &Operands) {
+  std::string FullName;
+  if (Parser.getTok().is(AsmToken::Slash)) {
+    if (Name != "cmp")
+      return Error(NameLoc, "unrecognized instruction mnemonic");
+    FullName = Name.str();
+    FullName += '/';
+    Parser.Lex();
+    if (Parser.getTok().isNot(AsmToken::Identifier))
+      return Error(Parser.getTok().getLoc(),
+                   "expected comparison mnemonic suffix");
+    FullName += Parser.getTok().getIdentifier();
+    Parser.Lex();
+    Name = FullName;
+  }
   Operands.push_back(SHOperand::createToken(Name, NameLoc));
 
   if (Parser.getTok().is(AsmToken::EndOfStatement)) {
