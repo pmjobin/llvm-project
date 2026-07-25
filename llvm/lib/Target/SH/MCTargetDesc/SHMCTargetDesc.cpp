@@ -10,9 +10,14 @@
 #include "SHInstPrinter.h"
 #include "SHMCAsmInfo.h"
 #include "TargetInfo/SHTargetInfo.h"
+#include "llvm/BinaryFormat/ELF.h"
 #include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCELFObjectWriter.h"
+#include "llvm/MC/MCELFStreamer.h"
 #include "llvm/MC/MCInstrInfo.h"
+#include "llvm/MC/MCObjectFileInfo.h"
 #include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/Compiler.h"
@@ -62,6 +67,34 @@ static MCInstPrinter *createSHMCInstPrinter(const Triple &TT,
   return nullptr;
 }
 
+namespace {
+
+class SHTargetELFStreamer : public MCTargetStreamer {
+public:
+  explicit SHTargetELFStreamer(MCStreamer &S) : MCTargetStreamer(S) {
+    static_cast<MCELFStreamer &>(S).getWriter().setELFHeaderEFlags(ELF::EF_SH2);
+  }
+};
+
+class SHMCObjectFileInfo : public MCObjectFileInfo {
+public:
+  unsigned getTextSectionAlignment() const override { return 2; }
+};
+
+} // namespace
+
+static MCObjectFileInfo *createSHMCObjectFileInfo(MCContext &Ctx, bool PIC,
+                                                  bool LargeCodeModel) {
+  auto *MOFI = new SHMCObjectFileInfo();
+  MOFI->initMCObjectFileInfo(Ctx, PIC, LargeCodeModel);
+  return MOFI;
+}
+
+static MCTargetStreamer *
+createSHObjectTargetStreamer(MCStreamer &S, const MCSubtargetInfo &STI) {
+  return new SHTargetELFStreamer(S);
+}
+
 static void registerTargetMC(Target &T) {
   TargetRegistry::RegisterMCAsmInfo(T, createSHMCAsmInfo);
   TargetRegistry::RegisterMCInstrInfo(T, createSHMCInstrInfo);
@@ -70,6 +103,8 @@ static void registerTargetMC(Target &T) {
   TargetRegistry::RegisterMCInstPrinter(T, createSHMCInstPrinter);
   TargetRegistry::RegisterMCCodeEmitter(T, createSHMCCodeEmitter);
   TargetRegistry::RegisterMCAsmBackend(T, createSHMCAsmBackend);
+  TargetRegistry::RegisterMCObjectFileInfo(T, createSHMCObjectFileInfo);
+  TargetRegistry::RegisterObjectTargetStreamer(T, createSHObjectTargetStreamer);
 }
 
 extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeSHTargetMC() {

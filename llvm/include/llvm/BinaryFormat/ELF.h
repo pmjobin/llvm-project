@@ -764,6 +764,11 @@ enum {
 #include "ELFRelocs/Sparc.def"
 };
 
+// SH specific e_flags.
+enum : unsigned {
+  EF_SH2 = 2,
+};
+
 // AMDGPU specific e_flags.
 #define AMDGPU_MACH_LIST(X)                                                    \
   X(0x01, EF_AMDGPU_MACH_R600_R600, "r600")                                    \

@@ -13,7 +13,7 @@
 #include "llvm/MC/MCELFObjectWriter.h"
 #include "llvm/MC/MCObjectWriter.h"
 #include "llvm/MC/MCSubtargetInfo.h"
-#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
 
@@ -23,39 +23,57 @@ namespace {
 
 class SHObjectTargetWriter : public MCELFObjectTargetWriter {
 public:
-  SHObjectTargetWriter()
-      : MCELFObjectTargetWriter(/*Is64Bit=*/false, ELF::ELFOSABI_NONE,
-                                ELF::EM_NONE,
+  SHObjectTargetWriter(uint8_t OSABI)
+      : MCELFObjectTargetWriter(/*Is64Bit=*/false, OSABI, ELF::EM_SH,
                                 /*HasRelocationAddend=*/false) {}
 
   unsigned getRelocType(const MCFixup &Fixup, const MCValue &Target,
                         bool IsPCRel) const override {
-    report_fatal_error("SH relocations are not supported");
+    reportError(Fixup.getLoc(), "SH relocations are not yet supported");
+    return 0;
   }
 };
 
 class SHAsmBackend : public MCAsmBackend {
   bool IsLittleEndian;
+  uint8_t OSABI;
 
 public:
-  explicit SHAsmBackend(bool IsLittleEndian)
-      : MCAsmBackend(IsLittleEndian ? endianness::little : endianness::big),
-        IsLittleEndian(IsLittleEndian) {}
+  explicit SHAsmBackend(const Triple &TT)
+      : MCAsmBackend(TT.isLittleEndian() ? endianness::little
+                                         : endianness::big),
+        IsLittleEndian(TT.isLittleEndian()),
+        OSABI(MCELFObjectTargetWriter::getOSABI(TT.getOS())) {}
 
   void applyFixup(const MCFragment &F, const MCFixup &Fixup,
                   const MCValue &Target, uint8_t *Data, uint64_t Value,
                   bool IsResolved) override {
-    getContext().reportError(Fixup.getLoc(), "SH fixups are not supported");
+    switch (Fixup.getKind()) {
+    case FK_Data_1:
+      maybeAddReloc(F, Fixup, Target, Value, IsResolved);
+      support::endian::write<uint8_t>(Data, Value, Endian);
+      return;
+    case FK_Data_2:
+      maybeAddReloc(F, Fixup, Target, Value, IsResolved);
+      support::endian::write<uint16_t>(Data, Value, Endian);
+      return;
+    case FK_Data_4:
+      maybeAddReloc(F, Fixup, Target, Value, IsResolved);
+      support::endian::write<uint32_t>(Data, Value, Endian);
+      return;
+    case FK_Data_8:
+      maybeAddReloc(F, Fixup, Target, Value, IsResolved);
+      support::endian::write<uint64_t>(Data, Value, Endian);
+      return;
+    default:
+      getContext().reportError(Fixup.getLoc(), "unsupported SH fixup");
+      return;
+    }
   }
 
   std::unique_ptr<MCObjectTargetWriter>
   createObjectTargetWriter() const override {
-    return std::make_unique<SHObjectTargetWriter>();
-  }
-
-  bool finishLayout() const override {
-    getContext().reportError(SMLoc(), "SH object emission is not supported");
-    return false;
+    return std::make_unique<SHObjectTargetWriter>(OSABI);
   }
 
   bool writeNopData(raw_ostream &OS, uint64_t Count,
@@ -78,5 +96,5 @@ MCAsmBackend *llvm::createSHMCAsmBackend(const Target &T,
                                          const MCSubtargetInfo &STI,
                                          const MCRegisterInfo &MRI,
                                          const MCTargetOptions &Options) {
-  return new SHAsmBackend(STI.getTargetTriple().isLittleEndian());
+  return new SHAsmBackend(STI.getTargetTriple());
 }

@@ -224,6 +224,15 @@ TEST(ELFObjectFileTest, MachineTestForSPARC32PLUS) {
     checkFormatAndArch(Data, Formats[Idx], Archs[Idx]);
 }
 
+TEST(ELFObjectFileTest, MachineTestForSH) {
+  std::array<StringRef, 4> Formats = {"elf32-shl", "elf32-sh", "elf64-unknown",
+                                      "elf64-unknown"};
+  std::array<Triple::ArchType, 4> Archs = {Triple::shle, Triple::sh,
+                                           Triple::shle, Triple::sh};
+  for (auto [Idx, Data] : enumerate(generateData(ELF::EM_SH)))
+    checkFormatAndArch(Data, Formats[Idx], Archs[Idx]);
+}
+
 TEST(ELFObjectFileTest, MachineTestForBPF) {
   std::array<StringRef, 4> Formats = {"elf32-unknown", "elf32-unknown",
                                       "elf64-bpf", "elf64-bpf"};
