@@ -19,8 +19,59 @@ using namespace llvm;
 namespace {
 
 class SHDAGToDAGISel : public SelectionDAGISel {
+  bool isSupportedBase(SDValue Base) const {
+    switch (Base.getOpcode()) {
+    case ISD::FrameIndex:
+    case ISD::CopyFromReg:
+    case ISD::LOAD:
+      return Base.getValueType() == MVT::i32;
+    default:
+      return false;
+    }
+  }
+
 public:
   explicit SHDAGToDAGISel(SHTargetMachine &TM) : SelectionDAGISel(TM) {}
+
+  bool SelectAddrReg(SDValue Addr, SDValue &Base) {
+    if (Addr.getOpcode() == ISD::ADD) {
+      const auto *Offset = dyn_cast<ConstantSDNode>(Addr.getOperand(1));
+      if (Offset && Offset->isZero() && isSupportedBase(Addr.getOperand(0))) {
+        Base = Addr.getOperand(0);
+        return true;
+      }
+    }
+    if (Addr.getOpcode() == ISD::FrameIndex || !isSupportedBase(Addr))
+      return false;
+    Base = Addr;
+    return true;
+  }
+
+  bool SelectAddrDisp(SDValue Addr, SDValue &Base, SDValue &Disp) {
+    int64_t ByteDisp = 0;
+    SDValue CandidateBase = Addr;
+
+    if (Addr.getOpcode() == ISD::ADD) {
+      const auto *Offset = dyn_cast<ConstantSDNode>(Addr.getOperand(1));
+      if (!Offset)
+        return false;
+      ByteDisp = Offset->getSExtValue();
+      CandidateBase = Addr.getOperand(0);
+    }
+
+    bool IsFrameIndex = CandidateBase.getOpcode() == ISD::FrameIndex;
+    if (!isSupportedBase(CandidateBase) || (!IsFrameIndex && ByteDisp == 0) ||
+        ByteDisp < 0 || ByteDisp > 60 || ByteDisp % 4 != 0)
+      return false;
+
+    if (IsFrameIndex)
+      Base = CurDAG->getTargetFrameIndex(
+          cast<FrameIndexSDNode>(CandidateBase)->getIndex(), MVT::i32);
+    else
+      Base = CandidateBase;
+    Disp = CurDAG->getTargetConstant(ByteDisp, SDLoc(Addr), MVT::i32);
+    return true;
+  }
 
   void Select(SDNode *N) override {
     if (N->isMachineOpcode()) {

@@ -61,6 +61,16 @@ static MCDisassembler::DecodeStatus decodeSImm8(MCInst &MI, uint64_t Imm,
   return MCDisassembler::Success;
 }
 
+static MCDisassembler::DecodeStatus
+decodeLongDispMemOperand(MCInst &MI, uint64_t Value, uint64_t Address,
+                         const MCDisassembler *Decoder) {
+  if (DecodeGPRRegisterClass(MI, Value >> 4, Address, Decoder) ==
+      MCDisassembler::Fail)
+    return MCDisassembler::Fail;
+  MI.addOperand(MCOperand::createImm((Value & 0xf) * 4));
+  return MCDisassembler::Success;
+}
+
 #include "SHGenDisassemblerTables.inc"
 
 MCDisassembler::DecodeStatus

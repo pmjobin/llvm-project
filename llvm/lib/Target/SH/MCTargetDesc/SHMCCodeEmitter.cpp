@@ -33,6 +33,9 @@ class SHMCCodeEmitter : public MCCodeEmitter {
   unsigned getMachineOpValue(const MCInst &MI, const MCOperand &MO,
                              SmallVectorImpl<MCFixup> &Fixups,
                              const MCSubtargetInfo &STI) const;
+  unsigned getLongDispMemOpValue(const MCInst &MI, unsigned OpNo,
+                                 SmallVectorImpl<MCFixup> &Fixups,
+                                 const MCSubtargetInfo &STI) const;
 
 public:
   SHMCCodeEmitter(const MCInstrInfo &MCII, MCContext &Ctx)
@@ -69,6 +72,30 @@ unsigned SHMCCodeEmitter::getMachineOpValue(const MCInst &MI,
 
   Ctx.reportError(MI.getLoc(), "relocatable expressions are not supported");
   return 0;
+}
+
+unsigned
+SHMCCodeEmitter::getLongDispMemOpValue(const MCInst &MI, unsigned OpNo,
+                                       SmallVectorImpl<MCFixup> &Fixups,
+                                       const MCSubtargetInfo &STI) const {
+  const MCOperand &Base = MI.getOperand(OpNo);
+  const MCOperand &Disp = MI.getOperand(OpNo + 1);
+  if (!Base.isReg() || !Disp.isImm()) {
+    Ctx.reportError(MI.getLoc(),
+                    "expected register and integer longword displacement");
+    return 0;
+  }
+
+  int64_t ByteDisp = Disp.getImm();
+  if (ByteDisp < 0 || ByteDisp > 60 || ByteDisp % 4 != 0) {
+    Ctx.reportError(MI.getLoc(),
+                    "longword displacement must be a multiple of 4 in the "
+                    "range [0, 60]");
+    return 0;
+  }
+
+  unsigned Reg = Ctx.getRegisterInfo()->getEncodingValue(Base.getReg());
+  return (Reg << 4) | static_cast<unsigned>(ByteDisp / 4);
 }
 
 #include "SHGenMCCodeEmitter.inc"

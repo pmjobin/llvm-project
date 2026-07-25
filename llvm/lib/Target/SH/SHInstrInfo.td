@@ -22,6 +22,36 @@ def simm8 : Operand<i32>, ImmLeaf<i32, [{ return isInt<8>(Imm); }]> {
   let DecoderMethod = "decodeSImm8";
 }
 
+def LongMemRegAsmOperand : AsmOperandClass {
+  let Name = "LongMemReg";
+  let PredicateMethod = "isLongMemReg";
+  let RenderMethod = "addLongMemRegOperands";
+}
+
+def LongMemDispAsmOperand : AsmOperandClass {
+  let Name = "LongMemDisp";
+  let PredicateMethod = "isLongMemDisp";
+  let RenderMethod = "addLongMemDispOperands";
+}
+
+def longmemreg : Operand<iPTR> {
+  let MIOperandInfo = (ops GPR);
+  let ParserMatchClass = LongMemRegAsmOperand;
+  let PrintMethod = "printLongMemReg";
+  let DecoderMethod = "DecodeGPRRegisterClass";
+}
+
+def longmemdisp : Operand<iPTR> {
+  let MIOperandInfo = (ops GPR, i32imm);
+  let ParserMatchClass = LongMemDispAsmOperand;
+  let PrintMethod = "printLongMemDisp";
+  let EncoderMethod = "getLongDispMemOpValue";
+  let DecoderMethod = "decodeLongDispMemOperand";
+}
+
+def addr_reg : ComplexPattern<iPTR, 1, "SelectAddrReg">;
+def addr_disp : ComplexPattern<iPTR, 2, "SelectAddrDisp", [add, frameindex]>;
+
 def SHret : SDNode<"SHISD::RET_GLUE", SDTNone,
                    [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
 
@@ -48,3 +78,27 @@ let Constraints = "$dst = $dst_in" in
 def ADDri : SHRegImm<0x7, (outs GPR:$dst),
                      (ins GPR:$dst_in, simm8:$imm), "add\t$imm,$dst",
                      [(set GPR:$dst, (add GPR:$dst_in, simm8:$imm))]>;
+
+let mayLoad = 1 in
+def MOVL_load_reg
+    : SHLongLoadReg<(outs GPR:$dst), (ins longmemreg:$addr),
+                    "mov.l\t$addr,$dst",
+                    [(set GPR:$dst, (load addr_reg:$addr))]>;
+
+let mayStore = 1 in
+def MOVL_store_reg
+    : SHLongStoreReg<(outs), (ins GPR:$src, longmemreg:$addr),
+                     "mov.l\t$src,$addr",
+                     [(store GPR:$src, addr_reg:$addr)]>;
+
+let mayLoad = 1 in
+def MOVL_load_disp
+    : SHLongLoadDisp<(outs GPR:$dst), (ins longmemdisp:$addr),
+                     "mov.l\t$addr,$dst",
+                     [(set GPR:$dst, (load addr_disp:$addr))]>;
+
+let mayStore = 1 in
+def MOVL_store_disp
+    : SHLongStoreDisp<(outs), (ins GPR:$src, longmemdisp:$addr),
+                      "mov.l\t$src,$addr",
+                      [(store GPR:$src, addr_disp:$addr)]>;

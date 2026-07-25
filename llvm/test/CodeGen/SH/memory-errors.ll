@@ -1,0 +1,146 @@
+; RUN: split-file %s %t
+; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/load-i8.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=LOAD-I8
+; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/load-i16.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=LOAD-I16
+; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/load-i64.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=LOAD-I64
+; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/unaligned-load.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=UNALIGNED-LOAD
+; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/unaligned-store.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=UNALIGNED-STORE
+; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/dynamic-alloca.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=DYNAMIC
+; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/large-frame.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=LARGE-FRAME
+; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/overaligned.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=OVERALIGNED
+; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/alloca-escape.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ALLOCA-ESCAPE
+; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/offset-64.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ADDRESS
+; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/negative-offset.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ADDRESS
+; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/register-offset.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ADDRESS
+; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/global.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ADDRESS
+
+; LOAD-I8: LLVM ERROR: SH only supports 32-bit integer and pointer loads
+; LOAD-I16: LLVM ERROR: SH only supports 32-bit integer and pointer loads
+; LOAD-I64: LLVM ERROR: SH only supports 32-bit integer and pointer loads
+; UNALIGNED-LOAD: LLVM ERROR: SH requires 4-byte alignment for 32-bit loads
+; UNALIGNED-STORE: LLVM ERROR: SH requires 4-byte alignment for 32-bit stores
+; DYNAMIC: LLVM ERROR: SH dynamic alloca is not supported
+; LARGE-FRAME: LLVM ERROR: SH stack frame size cannot exceed 60 bytes
+; OVERALIGNED: LLVM ERROR: SH stack object alignment cannot exceed 4 bytes
+; ALLOCA-ESCAPE: LLVM ERROR: SH stack object address escape is not supported
+; ADDRESS: LLVM ERROR: SH memory address must be a register or frame index with a nonnegative aligned byte displacement no greater than 60
+
+;--- load-i8.ll
+define i32 @load_i8(ptr %p) {
+	%value = load volatile i8, ptr %p, align 1
+	%result = zext i8 %value to i32
+	ret i32 %result
+}
+
+;--- load-i16.ll
+define i32 @load_i16(ptr %p) {
+	%value = load volatile i16, ptr %p, align 2
+	%result = zext i16 %value to i32
+	ret i32 %result
+}
+
+;--- load-i64.ll
+define i32 @load_i64(ptr %p) {
+	%value = load volatile i64, ptr %p, align 4
+	%result = trunc i64 %value to i32
+	ret i32 %result
+}
+
+;--- unaligned-load.ll
+define i32 @unaligned_load(ptr %p) {
+	%value = load volatile i32, ptr %p, align 2
+	ret i32 %value
+}
+
+;--- unaligned-store.ll
+define void @unaligned_store(ptr %p, i32 %value) {
+	store volatile i32 %value, ptr %p, align 1
+	ret void
+}
+
+;--- dynamic-alloca.ll
+define i32 @dynamic_alloca(i32 %count, i32 %value) {
+	%slot = alloca i32, i32 %count, align 4
+	store volatile i32 %value, ptr %slot, align 4
+	%result = load volatile i32, ptr %slot, align 4
+	ret i32 %result
+}
+
+;--- large-frame.ll
+define void @large_frame(i32 %value) {
+	%s0 = alloca i32, align 4
+	%s1 = alloca i32, align 4
+	%s2 = alloca i32, align 4
+	%s3 = alloca i32, align 4
+	%s4 = alloca i32, align 4
+	%s5 = alloca i32, align 4
+	%s6 = alloca i32, align 4
+	%s7 = alloca i32, align 4
+	%s8 = alloca i32, align 4
+	%s9 = alloca i32, align 4
+	%s10 = alloca i32, align 4
+	%s11 = alloca i32, align 4
+	%s12 = alloca i32, align 4
+	%s13 = alloca i32, align 4
+	%s14 = alloca i32, align 4
+	%s15 = alloca i32, align 4
+	store volatile i32 %value, ptr %s0, align 4
+	store volatile i32 %value, ptr %s1, align 4
+	store volatile i32 %value, ptr %s2, align 4
+	store volatile i32 %value, ptr %s3, align 4
+	store volatile i32 %value, ptr %s4, align 4
+	store volatile i32 %value, ptr %s5, align 4
+	store volatile i32 %value, ptr %s6, align 4
+	store volatile i32 %value, ptr %s7, align 4
+	store volatile i32 %value, ptr %s8, align 4
+	store volatile i32 %value, ptr %s9, align 4
+	store volatile i32 %value, ptr %s10, align 4
+	store volatile i32 %value, ptr %s11, align 4
+	store volatile i32 %value, ptr %s12, align 4
+	store volatile i32 %value, ptr %s13, align 4
+	store volatile i32 %value, ptr %s14, align 4
+	store volatile i32 %value, ptr %s15, align 4
+	ret void
+}
+
+;--- overaligned.ll
+define i32 @overaligned(i32 %value) {
+	%slot = alloca i32, align 8
+	store volatile i32 %value, ptr %slot, align 4
+	%result = load volatile i32, ptr %slot, align 4
+	ret i32 %result
+}
+
+;--- alloca-escape.ll
+define ptr @alloca_escape() {
+	%slot = alloca i32, align 4
+	ret ptr %slot
+}
+
+;--- offset-64.ll
+define i32 @offset_64(ptr %p) {
+	%address = getelementptr i8, ptr %p, i32 64
+	%value = load volatile i32, ptr %address, align 4
+	ret i32 %value
+}
+
+;--- negative-offset.ll
+define i32 @negative_offset(ptr %p) {
+	%address = getelementptr i8, ptr %p, i32 -4
+	%value = load volatile i32, ptr %address, align 4
+	ret i32 %value
+}
+
+;--- register-offset.ll
+define i32 @register_offset(ptr %p, i32 %offset) {
+	%address = getelementptr i8, ptr %p, i32 %offset
+	%value = load volatile i32, ptr %address, align 4
+	ret i32 %value
+}
+
+;--- global.ll
+@global_value = global i32 0, align 4
+
+define i32 @load_global() {
+	%value = load volatile i32, ptr @global_value, align 4
+	ret i32 %value
+}

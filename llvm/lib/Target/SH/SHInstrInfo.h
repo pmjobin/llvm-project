@@ -31,6 +31,10 @@ public:
                    const DebugLoc &DL, Register DestReg, Register SrcReg,
                    bool KillSrc, bool RenamableDest = false,
                    bool RenamableSrc = false) const override;
+  Register isLoadFromStackSlot(const MachineInstr &MI,
+                               int &FrameIndex) const override;
+  Register isStoreToStackSlot(const MachineInstr &MI,
+                              int &FrameIndex) const override;
   void storeRegToStackSlot(
       MachineBasicBlock &MBB, MachineBasicBlock::iterator MI, Register SrcReg,
       bool IsKill, int FrameIndex, const TargetRegisterClass *RC, Register VReg,

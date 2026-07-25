@@ -37,6 +37,10 @@ public:
                     SmallVectorImpl<SDValue> &InVals) const override;
   SDValue LowerOperation(SDValue Op, SelectionDAG &DAG) const override;
   const char *getTargetNodeName(unsigned Opcode) const override;
+  bool allowsMisalignedMemoryAccesses(
+      EVT VT, unsigned AddrSpace = 0, Align Alignment = Align(1),
+      MachineMemOperand::Flags Flags = MachineMemOperand::MONone,
+      unsigned *Fast = nullptr) const override;
 };
 
 } // namespace llvm

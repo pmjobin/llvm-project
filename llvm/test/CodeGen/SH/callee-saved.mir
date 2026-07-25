@@ -1,0 +1,36 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog,sh-delay-slot-filler %s -o - | FileCheck %s
+
+--- |
+  define i32 @use_r8(i32 %value) {
+    ret i32 %value
+  }
+...
+---
+name:            use_r8
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r4, $r8
+
+    $r8 = MOVrr $r4
+    $r0 = MOVrr killed $r8
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            use_r8
+# CHECK: noVRegs:         true
+# CHECK: stackSize:       4
+# CHECK: callee-saved-register: '$r8'
+# CHECK-LABEL: body:
+# CHECK: liveins: $r4, $r8
+# CHECK: $r15 = frame-setup ADDri $r15, -4
+# CHECK-NEXT: MOVL_store_reg killed $r8, $r15
+# CHECK-NEXT: $r8 = MOVrr $r4
+# CHECK-NEXT: $r0 = MOVrr killed $r8
+# CHECK-NEXT: $r8 = MOVL_load_reg $r15
+# CHECK-NEXT: $r15 = frame-destroy ADDri $r15, 4
+# CHECK-NEXT: RTS implicit $pr, implicit $r0 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+# CHECK-NOT: $pr =

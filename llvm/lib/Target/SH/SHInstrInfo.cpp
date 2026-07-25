@@ -8,6 +8,8 @@
 
 #include "SHInstrInfo.h"
 #include "SHSubtarget.h"
+#include "llvm/CodeGen/MachineFrameInfo.h"
+#include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/Support/ErrorHandling.h"
 
@@ -30,11 +32,48 @@ void SHInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
       .addReg(SrcReg, getKillRegState(KillSrc));
 }
 
+Register SHInstrInfo::isLoadFromStackSlot(const MachineInstr &MI,
+                                          int &FrameIndex) const {
+  if (MI.getOpcode() == SH::MOVL_load_disp && MI.getOperand(1).isFI() &&
+      MI.getOperand(2).isImm() && MI.getOperand(2).getImm() == 0) {
+    FrameIndex = MI.getOperand(1).getIndex();
+    return MI.getOperand(0).getReg();
+  }
+  return Register();
+}
+
+Register SHInstrInfo::isStoreToStackSlot(const MachineInstr &MI,
+                                         int &FrameIndex) const {
+  if (MI.getOpcode() == SH::MOVL_store_disp && MI.getOperand(1).isFI() &&
+      MI.getOperand(2).isImm() && MI.getOperand(2).getImm() == 0) {
+    FrameIndex = MI.getOperand(1).getIndex();
+    return MI.getOperand(0).getReg();
+  }
+  return Register();
+}
+
 void SHInstrInfo::storeRegToStackSlot(
     MachineBasicBlock &MBB, MachineBasicBlock::iterator MI, Register SrcReg,
     bool IsKill, int FrameIndex, const TargetRegisterClass *RC, Register VReg,
     MachineInstr::MIFlag Flags) const {
-  report_fatal_error("SH register spills are not supported");
+  if (!SH::GPRRegClass.hasSubClassEq(RC))
+    report_fatal_error("SH only supports 32-bit GPR spills");
+
+  MachineFunction &MF = *MBB.getParent();
+  MachineFrameInfo &MFI = MF.getFrameInfo();
+  if (MFI.getObjectSize(FrameIndex) != 4 ||
+      MFI.getObjectAlign(FrameIndex) < Align(4))
+    report_fatal_error("SH GPR spill slots must be four-byte aligned words");
+
+  MachineMemOperand *MMO =
+      MF.getMachineMemOperand(MachinePointerInfo::getFixedStack(MF, FrameIndex),
+                              MachineMemOperand::MOStore, 4, Align(4));
+  BuildMI(MBB, MI, MBB.findDebugLoc(MI), get(SH::MOVL_store_disp))
+      .addReg(SrcReg, getKillRegState(IsKill))
+      .addFrameIndex(FrameIndex)
+      .addImm(0)
+      .addMemOperand(MMO)
+      .setMIFlag(Flags);
 }
 
 void SHInstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
@@ -43,5 +82,21 @@ void SHInstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
                                        const TargetRegisterClass *RC,
                                        Register VReg, unsigned SubReg,
                                        MachineInstr::MIFlag Flags) const {
-  report_fatal_error("SH register reloads are not supported");
+  if (!SH::GPRRegClass.hasSubClassEq(RC) || SubReg != 0)
+    report_fatal_error("SH only supports 32-bit GPR reloads");
+
+  MachineFunction &MF = *MBB.getParent();
+  MachineFrameInfo &MFI = MF.getFrameInfo();
+  if (MFI.getObjectSize(FrameIndex) != 4 ||
+      MFI.getObjectAlign(FrameIndex) < Align(4))
+    report_fatal_error("SH GPR spill slots must be four-byte aligned words");
+
+  MachineMemOperand *MMO =
+      MF.getMachineMemOperand(MachinePointerInfo::getFixedStack(MF, FrameIndex),
+                              MachineMemOperand::MOLoad, 4, Align(4));
+  BuildMI(MBB, MI, MBB.findDebugLoc(MI), get(SH::MOVL_load_disp), DestReg)
+      .addFrameIndex(FrameIndex)
+      .addImm(0)
+      .addMemOperand(MMO)
+      .setMIFlag(Flags);
 }

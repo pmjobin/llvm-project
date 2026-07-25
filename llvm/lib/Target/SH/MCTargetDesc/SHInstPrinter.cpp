@@ -42,6 +42,19 @@ void SHInstPrinter::printSImm8(const MCInst *MI, unsigned OpNo,
   OS << '#' << MI->getOperand(OpNo).getImm();
 }
 
+void SHInstPrinter::printLongMemReg(const MCInst *MI, unsigned OpNo,
+                                    raw_ostream &OS) {
+  OS << '@';
+  printRegName(OS, MI->getOperand(OpNo).getReg());
+}
+
+void SHInstPrinter::printLongMemDisp(const MCInst *MI, unsigned OpNo,
+                                     raw_ostream &OS) {
+  OS << "@(" << MI->getOperand(OpNo + 1).getImm() << ',';
+  printRegName(OS, MI->getOperand(OpNo).getReg());
+  OS << ')';
+}
+
 void SHInstPrinter::printInst(const MCInst *MI, uint64_t Address,
                               StringRef Annot, const MCSubtargetInfo &STI,
                               raw_ostream &OS) {

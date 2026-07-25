@@ -27,7 +27,7 @@ using namespace llvm;
 namespace {
 
 class SHOperand : public MCParsedAsmOperand {
-  enum KindTy { Token, Register, Immediate } Kind;
+  enum KindTy { Token, Register, Immediate, LongMemReg, LongMemDisp } Kind;
   SMLoc StartLoc;
   SMLoc EndLoc;
   StringRef Tok;
@@ -40,7 +40,11 @@ public:
   bool isToken() const override { return Kind == Token; }
   bool isReg() const override { return Kind == Register; }
   bool isImm() const override { return Kind == Immediate; }
-  bool isMem() const override { return false; }
+  bool isMem() const override {
+    return Kind == LongMemReg || Kind == LongMemDisp;
+  }
+  bool isLongMemReg() const { return Kind == LongMemReg; }
+  bool isLongMemDisp() const { return Kind == LongMemDisp; }
 
   SMLoc getStartLoc() const override { return StartLoc; }
   SMLoc getEndLoc() const override { return EndLoc; }
@@ -74,6 +78,14 @@ public:
       OS << "register " << Reg;
       return;
     }
+    if (isMem()) {
+      OS << "memory base " << Reg;
+      if (Kind == LongMemDisp) {
+        OS << " displacement ";
+        MAI.printExpr(OS, *Expr);
+      }
+      return;
+    }
     OS << "immediate ";
     MAI.printExpr(OS, *Expr);
   }
@@ -87,6 +99,18 @@ public:
     assert(N == 1);
     const auto *CE = cast<MCConstantExpr>(Expr);
     Inst.addOperand(MCOperand::createImm(CE->getValue()));
+  }
+
+  void addLongMemRegOperands(MCInst &Inst, unsigned N) const {
+    assert(Kind == LongMemReg && N == 1);
+    Inst.addOperand(MCOperand::createReg(Reg));
+  }
+
+  void addLongMemDispOperands(MCInst &Inst, unsigned N) const {
+    assert(Kind == LongMemDisp && N == 2);
+    Inst.addOperand(MCOperand::createReg(Reg));
+    Inst.addOperand(
+        MCOperand::createImm(cast<MCConstantExpr>(Expr)->getValue()));
   }
 
   static std::unique_ptr<SHOperand> createToken(StringRef Tok, SMLoc Loc) {
@@ -114,6 +138,26 @@ public:
     Op->EndLoc = End;
     return Op;
   }
+
+  static std::unique_ptr<SHOperand> createLongMemReg(MCRegister Base,
+                                                     SMLoc Start, SMLoc End) {
+    auto Op = std::unique_ptr<SHOperand>(new SHOperand(LongMemReg));
+    Op->Reg = Base;
+    Op->StartLoc = Start;
+    Op->EndLoc = End;
+    return Op;
+  }
+
+  static std::unique_ptr<SHOperand> createLongMemDisp(MCRegister Base,
+                                                      const MCExpr *Disp,
+                                                      SMLoc Start, SMLoc End) {
+    auto Op = std::unique_ptr<SHOperand>(new SHOperand(LongMemDisp));
+    Op->Reg = Base;
+    Op->Expr = Disp;
+    Op->StartLoc = Start;
+    Op->EndLoc = End;
+    return Op;
+  }
 };
 
 class SHAsmParser : public MCTargetAsmParser {
@@ -134,6 +178,7 @@ class SHAsmParser : public MCTargetAsmParser {
 
   ParseStatus parseOperand(OperandVector &Operands, StringRef Mnemonic);
   ParseStatus parseSImm8(OperandVector &Operands);
+  ParseStatus parseLongMemory(OperandVector &Operands);
 
 public:
   enum SHMatchResultTy {
@@ -198,9 +243,73 @@ ParseStatus SHAsmParser::parseSImm8(OperandVector &Operands) {
   return ParseStatus::Success;
 }
 
+ParseStatus SHAsmParser::parseLongMemory(OperandVector &Operands) {
+  if (Parser.getTok().isNot(AsmToken::At))
+    return ParseStatus::NoMatch;
+
+  SMLoc Start = Parser.getTok().getLoc();
+  Parser.Lex();
+
+  if (Parser.getTok().is(AsmToken::LParen)) {
+    Parser.Lex();
+
+    const MCExpr *Disp;
+    SMLoc End;
+    if (Parser.parseExpression(Disp, End))
+      return ParseStatus::Failure;
+    if (!isa<MCConstantExpr>(Disp)) {
+      Error(Start, "expected an integer longword displacement");
+      return ParseStatus::Failure;
+    }
+    int64_t ByteDisp = cast<MCConstantExpr>(Disp)->getValue();
+    if (ByteDisp < 0 || ByteDisp > 60 || ByteDisp % 4 != 0) {
+      Error(Start, "longword displacement must be a multiple of 4 in the "
+                   "range [0, 60]");
+      return ParseStatus::Failure;
+    }
+    if (Parser.getTok().isNot(AsmToken::Comma)) {
+      Error(Parser.getTok().getLoc(),
+            "expected comma in longword memory operand");
+      return ParseStatus::Failure;
+    }
+    Parser.Lex();
+
+    MCRegister Base;
+    SMLoc RegStart;
+    SMLoc RegEnd;
+    if (!tryParseRegister(Base, RegStart, RegEnd).isSuccess()) {
+      Error(Parser.getTok().getLoc(), "invalid register name");
+      return ParseStatus::Failure;
+    }
+    if (Parser.getTok().isNot(AsmToken::RParen)) {
+      Error(Parser.getTok().getLoc(),
+            "expected ')' in longword memory operand");
+      return ParseStatus::Failure;
+    }
+    End = Parser.getTok().getEndLoc();
+    Parser.Lex();
+    Operands.push_back(SHOperand::createLongMemDisp(Base, Disp, Start, End));
+    return ParseStatus::Success;
+  }
+
+  MCRegister Base;
+  SMLoc RegStart;
+  SMLoc RegEnd;
+  if (!tryParseRegister(Base, RegStart, RegEnd).isSuccess()) {
+    Error(Parser.getTok().getLoc(), "expected register or '(' after '@'");
+    return ParseStatus::Failure;
+  }
+  Operands.push_back(SHOperand::createLongMemReg(Base, Start, RegEnd));
+  return ParseStatus::Success;
+}
+
 ParseStatus SHAsmParser::parseOperand(OperandVector &Operands,
                                       StringRef Mnemonic) {
-  ParseStatus Result = MatchOperandParserImpl(Operands, Mnemonic);
+  ParseStatus Result = parseLongMemory(Operands);
+  if (!Result.isNoMatch())
+    return Result;
+
+  Result = MatchOperandParserImpl(Operands, Mnemonic);
   if (!Result.isNoMatch())
     return Result;
 

@@ -1,0 +1,10 @@
+# RUN: llvm-mc -triple=sh-unknown-elf -disassemble %s | FileCheck %s
+
+[0x60,0x42,0x24,0x52,0x50,0x43,0x14,0x53,0x5e,0xf0,0x1f,0xef]
+
+# CHECK: mov.l	@r4,r0
+# CHECK-NEXT: mov.l	r5,@r4
+# CHECK-NEXT: mov.l	@(12,r4),r0
+# CHECK-NEXT: mov.l	r5,@(12,r4)
+# CHECK-NEXT: mov.l	@(0,r15),r14
+# CHECK-NEXT: mov.l	r14,@(60,r15)

@@ -13,6 +13,7 @@
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace llvm;
@@ -55,6 +56,59 @@ static void requireSupportedCallingConvention(CallingConv::ID CallConv) {
     report_fatal_error("SH only supports the C calling convention");
 }
 
+static bool isSupportedSHMemoryType(Type *Ty) {
+  return Ty->isIntegerTy(32) || Ty->isPointerTy();
+}
+
+static void validateSHMemoryIR(const Function &F) {
+  for (const BasicBlock &BB : F) {
+    for (const Instruction &I : BB) {
+      if (const auto *Load = dyn_cast<LoadInst>(&I)) {
+        if (!isSupportedSHMemoryType(Load->getType()))
+          report_fatal_error(
+              "SH only supports 32-bit integer and pointer loads");
+        if (Load->isAtomic())
+          report_fatal_error("SH atomic loads are not supported");
+        if (Load->getAlign() < Align(4))
+          report_fatal_error("SH requires 4-byte alignment for 32-bit loads");
+        continue;
+      }
+
+      if (const auto *Store = dyn_cast<StoreInst>(&I)) {
+        if (!isSupportedSHMemoryType(Store->getValueOperand()->getType()))
+          report_fatal_error(
+              "SH only supports 32-bit integer and pointer stores");
+        if (Store->isAtomic())
+          report_fatal_error("SH atomic stores are not supported");
+        if (Store->getAlign() < Align(4))
+          report_fatal_error("SH requires 4-byte alignment for 32-bit stores");
+        continue;
+      }
+
+      const auto *Alloca = dyn_cast<AllocaInst>(&I);
+      if (!Alloca)
+        continue;
+      if (!Alloca->isStaticAlloca())
+        report_fatal_error("SH dynamic alloca is not supported");
+      const auto *Count = dyn_cast<ConstantInt>(Alloca->getArraySize());
+      if (!Alloca->getAllocatedType()->isIntegerTy(32) || !Count ||
+          !Count->isOne())
+        report_fatal_error("SH only supports fixed scalar i32 allocas");
+      if (Alloca->getAlign() > Align(4))
+        report_fatal_error("SH stack object alignment cannot exceed 4 bytes");
+      for (const User *Use : Alloca->users()) {
+        const auto *Load = dyn_cast<LoadInst>(Use);
+        if (Load && Load->getPointerOperand() == Alloca)
+          continue;
+        const auto *Store = dyn_cast<StoreInst>(Use);
+        if (Store && Store->getPointerOperand() == Alloca)
+          continue;
+        report_fatal_error("SH stack object address escape is not supported");
+      }
+    }
+  }
+}
+
 bool SHTargetLowering::CanLowerReturn(
     CallingConv::ID CallConv, MachineFunction &MF, bool IsVarArg,
     const SmallVectorImpl<ISD::OutputArg> &Outs, LLVMContext &Context,
@@ -63,7 +117,8 @@ bool SHTargetLowering::CanLowerReturn(
     return false;
   if (RetTy->isVoidTy())
     return Outs.empty();
-  return RetTy->isIntegerTy(32) && Outs.size() == 1 && Outs[0].VT == MVT::i32;
+  return (RetTy->isIntegerTy(32) || RetTy->isPointerTy()) && Outs.size() == 1 &&
+         Outs[0].VT == MVT::i32;
 }
 
 SDValue SHTargetLowering::LowerFormalArguments(
@@ -73,19 +128,21 @@ SDValue SHTargetLowering::LowerFormalArguments(
   requireSupportedCallingConvention(CallConv);
   MachineFunction &MF = DAG.getMachineFunction();
   const Function &F = MF.getFunction();
+  validateSHMemoryIR(F);
   if (IsVarArg || F.isVarArg())
     report_fatal_error("SH varargs are not supported");
   if (F.hasStructRetAttr())
     report_fatal_error("SH structure returns are not supported");
   if (F.arg_size() != Ins.size())
-    report_fatal_error("SH only supports scalar i32 arguments");
+    report_fatal_error("SH only supports scalar i32 and pointer arguments");
 
   unsigned Index = 0;
   for (const Argument &Arg : F.args()) {
     const ISD::InputArg &In = Ins[Index++];
-    if (!Arg.getType()->isIntegerTy(32) || In.VT != MVT::i32 ||
-        In.Flags.isByVal() || In.Flags.isSRet() || In.Flags.isInAlloca())
-      report_fatal_error("SH only supports scalar i32 arguments");
+    if ((!Arg.getType()->isIntegerTy(32) && !Arg.getType()->isPointerTy()) ||
+        In.VT != MVT::i32 || In.Flags.isByVal() || In.Flags.isSRet() ||
+        In.Flags.isInAlloca())
+      report_fatal_error("SH only supports scalar i32 and pointer arguments");
   }
 
   SmallVector<CCValAssign, 4> ArgLocs;
@@ -123,9 +180,12 @@ SHTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
   if (IsVarArg || F.isVarArg())
     report_fatal_error("SH varargs are not supported");
   bool IsSupportedVoid = F.getReturnType()->isVoidTy() && Outs.empty();
-  bool IsSupportedI32 = F.getReturnType()->isIntegerTy(32) && Outs.size() == 1;
-  if ((!IsSupportedVoid && !IsSupportedI32) || Outs.size() != OutVals.size())
-    report_fatal_error("SH only supports zero or one scalar i32 return value");
+  bool IsSupportedScalar = (F.getReturnType()->isIntegerTy(32) ||
+                            F.getReturnType()->isPointerTy()) &&
+                           Outs.size() == 1;
+  if ((!IsSupportedVoid && !IsSupportedScalar) || Outs.size() != OutVals.size())
+    report_fatal_error(
+        "SH only supports zero or one scalar i32 or pointer return value");
 
   SmallVector<CCValAssign, 1> RetLocs;
   CCState CCInfo(CallConv, IsVarArg, DAG.getMachineFunction(), RetLocs,
@@ -138,7 +198,7 @@ SHTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
     const CCValAssign &VA = RetLocs[I];
     if (!VA.isRegLoc() || VA.getLocReg() != SH::R0 ||
         VA.getLocVT() != MVT::i32 || VA.getLocInfo() != CCValAssign::Full)
-      report_fatal_error("SH only supports i32 returns in r0");
+      report_fatal_error("SH only supports 32-bit returns in r0");
     Chain = DAG.getCopyToReg(Chain, DL, SH::R0, OutVals[I], Glue);
     Glue = Chain.getValue(1);
     RetOps.push_back(DAG.getRegister(SH::R0, MVT::i32));
@@ -154,8 +214,54 @@ SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
   report_fatal_error("SH function calls are not supported");
 }
 
+static bool isSupportedSHAddress(SDValue Addr) {
+  auto IsBase = [](SDValue Base) {
+    return Base.getValueType() == MVT::i32 &&
+           (Base.getOpcode() == ISD::FrameIndex ||
+            Base.getOpcode() == ISD::CopyFromReg ||
+            Base.getOpcode() == ISD::LOAD);
+  };
+
+  if (IsBase(Addr))
+    return true;
+  if (Addr.getOpcode() != ISD::ADD)
+    return false;
+
+  const auto *Offset = dyn_cast<ConstantSDNode>(Addr.getOperand(1));
+  if (!Offset || !IsBase(Addr.getOperand(0)))
+    return false;
+  int64_t ByteDisp = Offset->getSExtValue();
+  return ByteDisp >= 0 && ByteDisp <= 60 && ByteDisp % 4 == 0;
+}
+
 SDValue SHTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
+  if (Op.getOpcode() == ISD::LOAD || Op.getOpcode() == ISD::STORE) {
+    const auto *Mem = cast<MemSDNode>(Op);
+    if (Mem->getMemoryVT() != MVT::i32)
+      report_fatal_error("SH only supports 32-bit memory operations");
+    if (Mem->getAlign() < Align(4))
+      report_fatal_error("SH requires 4-byte alignment for mov.l");
+    if (!isSupportedSHAddress(Mem->getBasePtr()))
+      report_fatal_error(
+          "SH memory address must be a register or frame index with a "
+          "nonnegative aligned byte displacement no greater than 60");
+    return Op;
+  }
+  if (Op.getOpcode() == ISD::DYNAMIC_STACKALLOC)
+    report_fatal_error("SH dynamic alloca is not supported");
+  if (Op.getOpcode() == ISD::GlobalAddress ||
+      Op.getOpcode() == ISD::BlockAddress || Op.getOpcode() == ISD::JumpTable ||
+      Op.getOpcode() == ISD::ConstantPool)
+    report_fatal_error("SH symbolic memory addresses are not supported");
   report_fatal_error("SH operation is not supported");
+}
+
+bool SHTargetLowering::allowsMisalignedMemoryAccesses(
+    EVT VT, unsigned AddrSpace, Align Alignment, MachineMemOperand::Flags Flags,
+    unsigned *Fast) const {
+  if (Fast)
+    *Fast = 0;
+  return false;
 }
 
 const char *SHTargetLowering::getTargetNodeName(unsigned Opcode) const {
