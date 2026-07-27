@@ -1,0 +1,52 @@
+# RUN: split-file %s %t
+# RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %t/too-large.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=TOO-LARGE
+# RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %t/callee-pop.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=CALLEE-POP
+
+# TOO-LARGE: LLVM ERROR: SH call-frame adjustment must be four-byte aligned and in [0, 60]
+# CALLEE-POP: LLVM ERROR: SH callee-popped call frames are not supported
+
+#--- too-large.mir
+--- |
+  define void @too_large() {
+    ret void
+  }
+...
+---
+name:            too_large
+tracksRegLiveness: true
+noVRegs:         true
+frameInfo:
+  adjustsStack:    true
+fixedStack:
+  - { id: 0, type: default, offset: 0, size: 4, alignment: 4, stack-id: default,
+      isImmutable: true, isAliased: false }
+body:             |
+  bb.0:
+    ADJCALLSTACKDOWN 64, 0, implicit-def dead $r15, implicit $r15
+    $r0 = MOVL_load_disp %fixed-stack.0, 0 :: (load (s32) from %fixed-stack.0)
+    ADJCALLSTACKUP 64, 0, implicit-def dead $r15, implicit $r15
+    RTS implicit $pr, implicit $r0
+...
+
+#--- callee-pop.mir
+--- |
+  define void @callee_pop() {
+    ret void
+  }
+...
+---
+name:            callee_pop
+tracksRegLiveness: true
+noVRegs:         true
+frameInfo:
+  adjustsStack:    true
+fixedStack:
+  - { id: 0, type: default, offset: 0, size: 4, alignment: 4, stack-id: default,
+      isImmutable: true, isAliased: false }
+body:             |
+  bb.0:
+    ADJCALLSTACKDOWN 4, 0, implicit-def dead $r15, implicit $r15
+    $r0 = MOVL_load_disp %fixed-stack.0, 0 :: (load (s32) from %fixed-stack.0)
+    ADJCALLSTACKUP 4, 4, implicit-def dead $r15, implicit $r15
+    RTS implicit $pr, implicit $r0
+...

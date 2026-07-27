@@ -1,0 +1,25 @@
+# RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o /dev/null 2>&1 | FileCheck %s
+
+--- |
+  define i32 @spadj_sixty_four() {
+    ret i32 0
+  }
+...
+---
+name:            spadj_sixty_four
+tracksRegLiveness: true
+noVRegs:         true
+frameInfo:
+  adjustsStack:    true
+fixedStack:
+  - { id: 0, type: default, offset: 52, size: 4, alignment: 4, stack-id: default,
+      isImmutable: true, isAliased: false }
+body:             |
+  bb.0:
+    ADJCALLSTACKDOWN 12, 0, implicit-def dead $r15, implicit $r15
+    $r0 = MOVL_load_disp %fixed-stack.0, 0 :: (load (s32) from %fixed-stack.0)
+    ADJCALLSTACKUP 12, 0, implicit-def dead $r15, implicit $r15
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK: LLVM ERROR: SH finalized frame reference offset 64 must be four-byte aligned and in [0, 60] from r15

@@ -126,8 +126,27 @@ bool SHFrameLowering::assignCalleeSavedSpillSlots(
 MachineBasicBlock::iterator SHFrameLowering::eliminateCallFramePseudoInstr(
     MachineFunction &MF, MachineBasicBlock &MBB,
     MachineBasicBlock::iterator I) const {
-  if (I->getOperand(0).getImm() != 0 || I->getOperand(1).getImm() != 0)
-    report_fatal_error("SH stack-passed call arguments are not supported");
+  if (I->getOpcode() != SH::ADJCALLSTACKDOWN &&
+      I->getOpcode() != SH::ADJCALLSTACKUP)
+    report_fatal_error("SH encountered an unknown call-frame pseudo");
+
+  int64_t Amount = I->getOperand(0).getImm();
+  int64_t CalleePopAmount = I->getOperand(1).getImm();
+  if (CalleePopAmount != 0)
+    report_fatal_error("SH callee-popped call frames are not supported");
+  if (Amount < 0 || Amount > 60 || Amount % 4 != 0)
+    report_fatal_error(
+        "SH call-frame adjustment must be four-byte aligned and in [0, 60]");
+
+  if (Amount != 0) {
+    const SHInstrInfo *TII = MF.getSubtarget<SHSubtarget>().getInstrInfo();
+    int64_t Immediate =
+        I->getOpcode() == SH::ADJCALLSTACKDOWN ? -Amount : Amount;
+    BuildMI(MBB, I, I->getDebugLoc(), TII->get(SH::ADDri), SH::R15)
+        .addReg(SH::R15)
+        .addImm(Immediate)
+        .setMIFlags(I->getFlags());
+  }
   return MBB.erase(I);
 }
 

@@ -58,6 +58,9 @@ static bool isSupportedSHMemoryType(Type *Ty) {
 }
 
 static void validateSHIR(const Function &F) {
+  if (F.hasFnAttribute("stackrealign") ||
+      (F.getFnStackAlign() && *F.getFnStackAlign() > Align(4)))
+    report_fatal_error("SH stack realignment is not supported");
   for (const BasicBlock &BB : F) {
     if (BB.isEHPad())
       report_fatal_error("SH exception-handling pads are not supported");
@@ -90,10 +93,6 @@ static void validateSHIR(const Function &F) {
             !ReturnTy->isPointerTy())
           report_fatal_error(
               "SH calls only support void, i32, and pointer return values");
-        if (Call->arg_size() > 4)
-          report_fatal_error(
-              "SH stack-passed call arguments are not supported; at most four "
-              "scalar arguments may be passed in r4-r7");
         for (unsigned ArgNo = 0; ArgNo != Call->arg_size(); ++ArgNo) {
           Type *ArgTy = Call->getArgOperand(ArgNo)->getType();
           if ((!ArgTy->isIntegerTy(32) && !ArgTy->isPointerTy()) ||
@@ -101,7 +100,12 @@ static void validateSHIR(const Function &F) {
               Call->paramHasAttr(ArgNo, Attribute::StructRet) ||
               Call->paramHasAttr(ArgNo, Attribute::InAlloca) ||
               Call->paramHasAttr(ArgNo, Attribute::Preallocated) ||
-              Call->paramHasAttr(ArgNo, Attribute::ByRef))
+              Call->paramHasAttr(ArgNo, Attribute::ByRef) ||
+              Call->paramHasAttr(ArgNo, Attribute::Nest) ||
+              Call->paramHasAttr(ArgNo, Attribute::Returned) ||
+              Call->paramHasAttr(ArgNo, Attribute::SwiftSelf) ||
+              Call->paramHasAttr(ArgNo, Attribute::SwiftAsync) ||
+              Call->paramHasAttr(ArgNo, Attribute::SwiftError))
             report_fatal_error(
                 "SH calls only support scalar i32 and pointer arguments");
         }
@@ -210,7 +214,10 @@ SDValue SHTargetLowering::LowerFormalArguments(
     const ISD::InputArg &In = Ins[Index++];
     if ((!Arg.getType()->isIntegerTy(32) && !Arg.getType()->isPointerTy()) ||
         In.VT != MVT::i32 || In.Flags.isByVal() || In.Flags.isSRet() ||
-        In.Flags.isInAlloca())
+        In.Flags.isByRef() || In.Flags.isInAlloca() ||
+        In.Flags.isPreallocated() || In.Flags.isNest() ||
+        In.Flags.isReturned() || In.Flags.isSwiftSelf() ||
+        In.Flags.isSwiftAsync() || In.Flags.isSwiftError())
       report_fatal_error("SH only supports scalar i32 and pointer arguments");
   }
 
@@ -221,20 +228,33 @@ SDValue SHTargetLowering::LowerFormalArguments(
     report_fatal_error("SH failed to assign all formal arguments");
 
   MachineRegisterInfo &MRI = MF.getRegInfo();
-  SmallVector<SDValue, 4> CopyChains;
+  MachineFrameInfo &MFI = MF.getFrameInfo();
+  SmallVector<SDValue, 4> ArgChains;
   for (const CCValAssign &VA : ArgLocs) {
-    if (!VA.isRegLoc())
-      report_fatal_error("SH stack-passed arguments are not supported");
     if (VA.getLocVT() != MVT::i32 || VA.getLocInfo() != CCValAssign::Full)
       report_fatal_error("SH only supports unextended i32 arguments");
-    Register VReg = MRI.createVirtualRegister(&SH::GPRRegClass);
-    MRI.addLiveIn(VA.getLocReg(), VReg);
-    SDValue Value = DAG.getCopyFromReg(Chain, DL, VReg, MVT::i32);
+    SDValue Value;
+    if (VA.isRegLoc()) {
+      Register VReg = MRI.createVirtualRegister(&SH::GPRRegClass);
+      MRI.addLiveIn(VA.getLocReg(), VReg);
+      Value = DAG.getCopyFromReg(Chain, DL, VReg, MVT::i32);
+    } else {
+      if (!VA.isMemLoc() || VA.getLocMemOffset() < 0 ||
+          VA.getLocMemOffset() % 4 != 0)
+        report_fatal_error(
+            "SH stack arguments must use four-byte aligned nonnegative "
+            "offsets");
+      int FI =
+          MFI.CreateFixedObject(4, VA.getLocMemOffset(), /*IsImmutable=*/true);
+      SDValue FrameIndex = DAG.getFrameIndex(FI, MVT::i32);
+      Value = DAG.getLoad(MVT::i32, DL, Chain, FrameIndex,
+                          MachinePointerInfo::getFixedStack(MF, FI), Align(4));
+    }
     InVals.push_back(Value);
-    CopyChains.push_back(Value.getValue(1));
+    ArgChains.push_back(Value.getValue(1));
   }
-  if (!CopyChains.empty())
-    Chain = DAG.getNode(ISD::TokenFactor, DL, MVT::Other, CopyChains);
+  if (!ArgChains.empty())
+    Chain = DAG.getNode(ISD::TokenFactor, DL, MVT::Other, ArgChains);
   return Chain;
 }
 
@@ -304,15 +324,12 @@ SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
     report_fatal_error(
         "SH calls only support void, i32, and pointer return values");
 
-  if (CLI.Args.size() > 4)
-    report_fatal_error(
-        "SH stack-passed call arguments are not supported; at most four "
-        "scalar arguments may be passed in r4-r7");
   for (const ArgListEntry &Arg : CLI.Args) {
     if (!Arg.OrigTy ||
         (!Arg.OrigTy->isIntegerTy(32) && !Arg.OrigTy->isPointerTy()) ||
         Arg.IsByVal || Arg.IsSRet || Arg.IsInAlloca || Arg.IsPreallocated ||
-        Arg.IsByRef)
+        Arg.IsByRef || Arg.IsNest || Arg.IsReturned || Arg.IsSwiftSelf ||
+        Arg.IsSwiftAsync || Arg.IsSwiftError)
       report_fatal_error(
           "SH calls only support scalar i32 and pointer arguments");
   }
@@ -322,7 +339,10 @@ SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
         "SH calls only support unsplit scalar i32 and pointer arguments");
   for (const ISD::OutputArg &Out : CLI.Outs) {
     if (Out.VT != MVT::i32 || Out.Flags.isByVal() || Out.Flags.isSRet() ||
-        Out.Flags.isInAlloca())
+        Out.Flags.isByRef() || Out.Flags.isInAlloca() ||
+        Out.Flags.isPreallocated() || Out.Flags.isNest() ||
+        Out.Flags.isReturned() || Out.Flags.isSwiftSelf() ||
+        Out.Flags.isSwiftAsync() || Out.Flags.isSwiftError())
       report_fatal_error(
           "SH calls only support unextended scalar i32 and pointer arguments");
   }
@@ -332,8 +352,13 @@ SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
   SmallVector<CCValAssign, 4> ArgLocs;
   CCState ArgCCInfo(CLI.CallConv, CLI.IsVarArg, MF, ArgLocs, *DAG.getContext());
   ArgCCInfo.AnalyzeCallOperands(CLI.Outs, CC_SH);
-  if (ArgLocs.size() != CLI.Outs.size() || ArgCCInfo.getStackSize() != 0)
-    report_fatal_error("SH stack-passed call arguments are not supported");
+  if (ArgLocs.size() != CLI.Outs.size())
+    report_fatal_error("SH failed to assign all call arguments");
+  unsigned StackBytes = ArgCCInfo.getStackSize();
+  if (StackBytes > 60)
+    report_fatal_error("SH outgoing call frame size cannot exceed 60 bytes");
+  if (StackBytes % 4 != 0)
+    report_fatal_error("SH outgoing call frame size must be four-byte aligned");
 
   SmallVector<CCValAssign, 1> RetLocs;
   CCState RetCCInfo(CLI.CallConv, CLI.IsVarArg, MF, RetLocs, *DAG.getContext());
@@ -341,17 +366,35 @@ SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
   if (RetLocs.size() != CLI.Ins.size())
     report_fatal_error("SH failed to assign the call return value");
 
-  SDValue Chain = DAG.getCALLSEQ_START(CLI.Chain, 0, 0, CLI.DL);
+  SDValue Chain = DAG.getCALLSEQ_START(CLI.Chain, StackBytes, 0, CLI.DL);
   SmallVector<std::pair<MCRegister, SDValue>, 4> RegsToPass;
+  SmallVector<SDValue, 4> StoreChains;
+  SDValue StackPtr;
   for (unsigned I = 0; I != ArgLocs.size(); ++I) {
     const CCValAssign &VA = ArgLocs[I];
-    if (!VA.isRegLoc())
-      report_fatal_error("SH stack-passed call arguments are not supported");
     if (VA.getLocVT() != MVT::i32 || VA.getLocInfo() != CCValAssign::Full)
       report_fatal_error(
           "SH calls only support unextended scalar i32 and pointer arguments");
-    RegsToPass.emplace_back(VA.getLocReg(), CLI.OutVals[I]);
+    if (VA.isRegLoc()) {
+      RegsToPass.emplace_back(VA.getLocReg(), CLI.OutVals[I]);
+      continue;
+    }
+    if (!VA.isMemLoc() || VA.getLocMemOffset() < 0 ||
+        VA.getLocMemOffset() > 56 || VA.getLocMemOffset() % 4 != 0)
+      report_fatal_error(
+          "SH outgoing stack argument offset must be four-byte aligned and "
+          "in [0, 56]");
+    if (!StackPtr)
+      StackPtr = DAG.getRegister(SH::R15, MVT::i32);
+    SDValue Address =
+        DAG.getNode(ISD::ADD, CLI.DL, MVT::i32, StackPtr,
+                    DAG.getIntPtrConstant(VA.getLocMemOffset(), CLI.DL));
+    StoreChains.push_back(DAG.getStore(
+        Chain, CLI.DL, CLI.OutVals[I], Address,
+        MachinePointerInfo::getStack(MF, VA.getLocMemOffset()), Align(4)));
   }
+  if (!StoreChains.empty())
+    Chain = DAG.getNode(ISD::TokenFactor, CLI.DL, MVT::Other, StoreChains);
 
   SDValue Glue;
   for (const auto &[Reg, Value] : RegsToPass) {
@@ -399,7 +442,7 @@ SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
   SDVTList CallVTs = DAG.getVTList(MVT::Other, MVT::Glue);
   Chain = DAG.getNode(SHISD::CALL, CLI.DL, CallVTs, CallOps);
   Glue = Chain.getValue(1);
-  Chain = DAG.getCALLSEQ_END(Chain, 0, 0, Glue, CLI.DL);
+  Chain = DAG.getCALLSEQ_END(Chain, StackBytes, 0, Glue, CLI.DL);
   Glue = Chain.getValue(1);
 
   for (const CCValAssign &VA : RetLocs) {
@@ -420,7 +463,7 @@ static bool isSupportedSHAddress(SDValue Addr) {
     return Base.getValueType() == MVT::i32 &&
            (Base.getOpcode() == ISD::FrameIndex ||
             Base.getOpcode() == ISD::CopyFromReg ||
-            Base.getOpcode() == ISD::LOAD);
+            Base.getOpcode() == ISD::LOAD || Base.getOpcode() == ISD::Register);
   };
 
   if (IsBase(Addr))

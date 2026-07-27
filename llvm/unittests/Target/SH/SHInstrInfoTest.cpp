@@ -84,8 +84,23 @@ TEST_F(SHInstrInfoTest, GetInstSizeInBytesAccountsForDelaySlots) {
                           .addExternalSymbol("callee");
   MachineInstr *Jsr =
       BuildMI(Standalone, DebugLoc(), TII->get(SH::JSR)).addReg(SH::R4);
+  MachineInstr *Add =
+      BuildMI(Standalone, DebugLoc(), TII->get(SH::ADDri), SH::R15)
+          .addReg(SH::R15)
+          .addImm(-4);
+  MachineInstr *CallFrameDown =
+      BuildMI(Standalone, DebugLoc(), TII->get(SH::ADJCALLSTACKDOWN))
+          .addImm(4)
+          .addImm(0);
+  MachineInstr *CallFrameUp =
+      BuildMI(Standalone, DebugLoc(), TII->get(SH::ADJCALLSTACKUP))
+          .addImm(4)
+          .addImm(0);
 
   EXPECT_EQ(2u, TII->getInstSizeInBytes(*Nop));
+  EXPECT_EQ(2u, TII->getInstSizeInBytes(*Add));
+  EXPECT_EQ(0u, TII->getInstSizeInBytes(*CallFrameDown));
+  EXPECT_EQ(0u, TII->getInstSizeInBytes(*CallFrameUp));
   EXPECT_EQ(2u, TII->getInstSizeInBytes(*Bt));
   EXPECT_EQ(2u, TII->getInstSizeInBytes(*Bf));
   EXPECT_EQ(4u, TII->getInstSizeInBytes(*Bra));

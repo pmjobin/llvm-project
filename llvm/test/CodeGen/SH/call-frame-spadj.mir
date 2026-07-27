@@ -1,0 +1,81 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o - | FileCheck %s
+
+--- |
+  define i32 @spadj_zero() {
+    ret i32 0
+  }
+
+  define i32 @spadj_twenty() {
+    ret i32 0
+  }
+
+  define i32 @spadj_sixty() {
+    ret i32 0
+  }
+...
+---
+name:            spadj_zero
+tracksRegLiveness: true
+noVRegs:         true
+fixedStack:
+  - { id: 0, type: default, offset: 8, size: 4, alignment: 4, stack-id: default,
+      isImmutable: true, isAliased: false }
+body:             |
+  bb.0:
+    $r0 = MOVL_load_disp %fixed-stack.0, 0 :: (load (s32) from %fixed-stack.0)
+    RTS implicit $pr, implicit $r0
+...
+---
+name:            spadj_twenty
+tracksRegLiveness: true
+noVRegs:         true
+frameInfo:
+  adjustsStack:    true
+fixedStack:
+  - { id: 0, type: default, offset: 8, size: 4, alignment: 4, stack-id: default,
+      isImmutable: false, isAliased: false }
+body:             |
+  bb.0:
+    liveins: $r0
+
+    ADJCALLSTACKDOWN 12, 0, implicit-def dead $r15, implicit $r15
+    MOVL_store_disp $r0, %fixed-stack.0, 0 :: (store (s32) into %fixed-stack.0)
+    ADJCALLSTACKUP 12, 0, implicit-def dead $r15, implicit $r15
+    RTS implicit $pr
+...
+---
+name:            spadj_sixty
+tracksRegLiveness: true
+noVRegs:         true
+frameInfo:
+  adjustsStack:    true
+fixedStack:
+  - { id: 0, type: default, offset: 48, size: 4, alignment: 4, stack-id: default,
+      isImmutable: true, isAliased: false }
+body:             |
+  bb.0:
+    ADJCALLSTACKDOWN 12, 0, implicit-def dead $r15, implicit $r15
+    $r0 = MOVL_load_disp %fixed-stack.0, 0 :: (load (s32) from %fixed-stack.0)
+    ADJCALLSTACKUP 12, 0, implicit-def dead $r15, implicit $r15
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            spadj_zero
+# CHECK-LABEL: body:
+# CHECK-NOT: ADJCALLSTACK
+# CHECK: $r0 = MOVL_load_disp $r15, 8
+
+# CHECK-LABEL: name:            spadj_twenty
+# CHECK-LABEL: body:
+# CHECK-NOT: ADJCALLSTACK
+# CHECK: $r15 = ADDri $r15, -12
+# CHECK-NEXT: MOVL_store_disp $r0, $r15, 20
+# CHECK-NEXT: $r15 = ADDri $r15, 12
+
+# CHECK-LABEL: name:            spadj_sixty
+# CHECK-LABEL: body:
+# CHECK-NOT: ADJCALLSTACK
+# CHECK: $r15 = ADDri $r15, -12
+# CHECK-NEXT: $r0 = MOVL_load_disp $r15, 60
+# CHECK-NEXT: $r15 = ADDri $r15, 12

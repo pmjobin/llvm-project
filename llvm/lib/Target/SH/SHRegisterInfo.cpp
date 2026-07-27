@@ -57,9 +57,6 @@ SHRegisterInfo::getPointerRegClass(unsigned Kind) const {
 bool SHRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator MI,
                                          int SPAdj, unsigned FIOperandNum,
                                          RegScavenger *RS) const {
-  if (SPAdj != 0)
-    report_fatal_error("SH call-frame adjustments are not supported");
-
   MachineInstr &Instr = *MI;
   if (Instr.getOpcode() != SH::MOVL_load_disp &&
       Instr.getOpcode() != SH::MOVL_store_disp)
@@ -73,12 +70,13 @@ bool SHRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator MI,
   int FrameIndex = Instr.getOperand(FIOperandNum).getIndex();
   int64_t ByteOffset = MFI.getObjectOffset(FrameIndex) +
                        static_cast<int64_t>(MFI.getStackSize()) +
+                       static_cast<int64_t>(SPAdj) +
                        Instr.getOperand(FIOperandNum + 1).getImm();
 
   if (ByteOffset < 0 || ByteOffset > 60 || ByteOffset % 4 != 0)
-    report_fatal_error(
-        "SH frame reference must be a four-byte aligned offset in [0, 60] "
-        "from the post-prologue r15");
+    report_fatal_error(Twine("SH finalized frame reference offset ") +
+                       Twine(ByteOffset) +
+                       " must be four-byte aligned and in [0, 60] from r15");
 
   Instr.getOperand(FIOperandNum).ChangeToRegister(SH::R15, false);
   if (ByteOffset == 0) {

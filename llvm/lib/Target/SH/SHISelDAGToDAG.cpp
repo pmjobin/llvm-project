@@ -24,6 +24,7 @@ class SHDAGToDAGISel : public SelectionDAGISel {
     case ISD::FrameIndex:
     case ISD::CopyFromReg:
     case ISD::LOAD:
+    case ISD::Register:
       return Base.getValueType() == MVT::i32;
     default:
       return false;

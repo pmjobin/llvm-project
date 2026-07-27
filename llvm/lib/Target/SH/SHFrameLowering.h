@@ -17,6 +17,9 @@ class SHFrameLowering : public TargetFrameLowering {
 public:
   SHFrameLowering();
 
+  bool hasReservedCallFrame(const MachineFunction &MF) const override {
+    return false;
+  }
   void emitPrologue(MachineFunction &MF, MachineBasicBlock &MBB) const override;
   void emitEpilogue(MachineFunction &MF, MachineBasicBlock &MBB) const override;
   void determineCalleeSaves(MachineFunction &MF, BitVector &SavedRegs,
