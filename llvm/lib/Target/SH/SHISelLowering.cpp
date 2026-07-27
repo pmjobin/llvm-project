@@ -13,6 +13,7 @@
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/ErrorHandling.h"
 
@@ -69,6 +70,42 @@ static void validateSHIR(const Function &F) {
         report_fatal_error("SH callbr is not supported");
       if (isa<SelectInst>(&I))
         report_fatal_error("SH select is not supported");
+      if (const auto *Call = dyn_cast<CallBase>(&I)) {
+        requireSupportedCallingConvention(Call->getCallingConv());
+        if (isa<InvokeInst>(Call))
+          report_fatal_error("SH exception-handling calls are not supported");
+        if (Call->isInlineAsm())
+          report_fatal_error("SH inline assembly is not supported");
+        if (Call->getFunctionType()->isVarArg())
+          report_fatal_error("SH varargs calls are not supported");
+        if (const auto *CallInst = dyn_cast<llvm::CallInst>(Call)) {
+          if (CallInst->isMustTailCall())
+            report_fatal_error("SH musttail calls are not supported");
+          if (CallInst->isTailCall())
+            report_fatal_error("SH tail calls are not supported");
+        }
+
+        Type *ReturnTy = Call->getType();
+        if (!ReturnTy->isVoidTy() && !ReturnTy->isIntegerTy(32) &&
+            !ReturnTy->isPointerTy())
+          report_fatal_error(
+              "SH calls only support void, i32, and pointer return values");
+        if (Call->arg_size() > 4)
+          report_fatal_error(
+              "SH stack-passed call arguments are not supported; at most four "
+              "scalar arguments may be passed in r4-r7");
+        for (unsigned ArgNo = 0; ArgNo != Call->arg_size(); ++ArgNo) {
+          Type *ArgTy = Call->getArgOperand(ArgNo)->getType();
+          if ((!ArgTy->isIntegerTy(32) && !ArgTy->isPointerTy()) ||
+              Call->paramHasAttr(ArgNo, Attribute::ByVal) ||
+              Call->paramHasAttr(ArgNo, Attribute::StructRet) ||
+              Call->paramHasAttr(ArgNo, Attribute::InAlloca) ||
+              Call->paramHasAttr(ArgNo, Attribute::Preallocated) ||
+              Call->paramHasAttr(ArgNo, Attribute::ByRef))
+            report_fatal_error(
+                "SH calls only support scalar i32 and pointer arguments");
+        }
+      }
       if (const auto *Phi = dyn_cast<PHINode>(&I)) {
         if (Phi->getType()->isIntegerTy(1))
           report_fatal_error("SH i1 PHIs are not supported");
@@ -243,7 +280,139 @@ SHTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
 
 SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
                                     SmallVectorImpl<SDValue> &InVals) const {
-  report_fatal_error("SH function calls are not supported");
+  requireSupportedCallingConvention(CLI.CallConv);
+  if (CLI.IsVarArg)
+    report_fatal_error("SH varargs calls are not supported");
+  if (CLI.CB && isa<InvokeInst>(CLI.CB))
+    report_fatal_error("SH exception-handling calls are not supported");
+  if (CLI.CB && isa<InlineAsm>(CLI.CB->getCalledOperand()))
+    report_fatal_error("SH inline assembly is not supported");
+  if (CLI.CB && CLI.CB->isMustTailCall())
+    report_fatal_error("SH musttail calls are not supported");
+  if (const auto *Call = dyn_cast_or_null<CallInst>(CLI.CB);
+      Call && Call->isTailCall())
+    report_fatal_error("SH tail calls are not supported");
+  CLI.IsTailCall = false;
+
+  Type *ReturnTy = CLI.OrigRetTy;
+  bool SupportedVoidReturn =
+      ReturnTy && ReturnTy->isVoidTy() && CLI.Ins.empty();
+  bool SupportedScalarReturn =
+      ReturnTy && (ReturnTy->isIntegerTy(32) || ReturnTy->isPointerTy()) &&
+      CLI.Ins.size() == 1 && CLI.Ins[0].VT == MVT::i32;
+  if (!SupportedVoidReturn && !SupportedScalarReturn)
+    report_fatal_error(
+        "SH calls only support void, i32, and pointer return values");
+
+  if (CLI.Args.size() > 4)
+    report_fatal_error(
+        "SH stack-passed call arguments are not supported; at most four "
+        "scalar arguments may be passed in r4-r7");
+  for (const ArgListEntry &Arg : CLI.Args) {
+    if (!Arg.OrigTy ||
+        (!Arg.OrigTy->isIntegerTy(32) && !Arg.OrigTy->isPointerTy()) ||
+        Arg.IsByVal || Arg.IsSRet || Arg.IsInAlloca || Arg.IsPreallocated ||
+        Arg.IsByRef)
+      report_fatal_error(
+          "SH calls only support scalar i32 and pointer arguments");
+  }
+  if (CLI.Outs.size() != CLI.Args.size() ||
+      CLI.OutVals.size() != CLI.Outs.size())
+    report_fatal_error(
+        "SH calls only support unsplit scalar i32 and pointer arguments");
+  for (const ISD::OutputArg &Out : CLI.Outs) {
+    if (Out.VT != MVT::i32 || Out.Flags.isByVal() || Out.Flags.isSRet() ||
+        Out.Flags.isInAlloca())
+      report_fatal_error(
+          "SH calls only support unextended scalar i32 and pointer arguments");
+  }
+
+  SelectionDAG &DAG = CLI.DAG;
+  MachineFunction &MF = DAG.getMachineFunction();
+  SmallVector<CCValAssign, 4> ArgLocs;
+  CCState ArgCCInfo(CLI.CallConv, CLI.IsVarArg, MF, ArgLocs, *DAG.getContext());
+  ArgCCInfo.AnalyzeCallOperands(CLI.Outs, CC_SH);
+  if (ArgLocs.size() != CLI.Outs.size() || ArgCCInfo.getStackSize() != 0)
+    report_fatal_error("SH stack-passed call arguments are not supported");
+
+  SmallVector<CCValAssign, 1> RetLocs;
+  CCState RetCCInfo(CLI.CallConv, CLI.IsVarArg, MF, RetLocs, *DAG.getContext());
+  RetCCInfo.AnalyzeCallResult(CLI.Ins, RetCC_SH);
+  if (RetLocs.size() != CLI.Ins.size())
+    report_fatal_error("SH failed to assign the call return value");
+
+  SDValue Chain = DAG.getCALLSEQ_START(CLI.Chain, 0, 0, CLI.DL);
+  SmallVector<std::pair<MCRegister, SDValue>, 4> RegsToPass;
+  for (unsigned I = 0; I != ArgLocs.size(); ++I) {
+    const CCValAssign &VA = ArgLocs[I];
+    if (!VA.isRegLoc())
+      report_fatal_error("SH stack-passed call arguments are not supported");
+    if (VA.getLocVT() != MVT::i32 || VA.getLocInfo() != CCValAssign::Full)
+      report_fatal_error(
+          "SH calls only support unextended scalar i32 and pointer arguments");
+    RegsToPass.emplace_back(VA.getLocReg(), CLI.OutVals[I]);
+  }
+
+  SDValue Glue;
+  for (const auto &[Reg, Value] : RegsToPass) {
+    Chain = DAG.getCopyToReg(Chain, CLI.DL, Reg, Value, Glue);
+    Glue = Chain.getValue(1);
+  }
+
+  SDValue Callee = CLI.Callee;
+  if (const auto *Global = dyn_cast<GlobalAddressSDNode>(Callee)) {
+    const auto *CalleeFunction = dyn_cast<Function>(Global->getGlobal());
+    const Function &Caller = MF.getFunction();
+    if (!CalleeFunction || CalleeFunction->isDeclarationForLinker() ||
+        CalleeFunction->isInterposable() || !CalleeFunction->isDSOLocal())
+      report_fatal_error(
+          "SH unresolved or interposable direct calls are not supported");
+
+    auto EffectiveSection = [](const Function &F) {
+      return F.getSection().empty() ? StringRef(".text") : F.getSection();
+    };
+    if (EffectiveSection(Caller) != EffectiveSection(*CalleeFunction))
+      report_fatal_error("SH cross-section direct calls are not supported");
+
+    Callee = DAG.getTargetGlobalAddress(CalleeFunction, CLI.DL, MVT::i32,
+                                        Global->getOffset());
+  } else if (isa<ExternalSymbolSDNode>(Callee)) {
+    report_fatal_error("SH unresolved external direct calls are not supported");
+  } else if (Callee.getValueType() != MVT::i32) {
+    report_fatal_error("SH indirect call target must be a 32-bit GPR value");
+  }
+
+  SmallVector<SDValue, 8> CallOps;
+  CallOps.push_back(Chain);
+  CallOps.push_back(Callee);
+  const uint32_t *Mask =
+      MF.getSubtarget<SHSubtarget>().getRegisterInfo()->getCallPreservedMask(
+          MF, CLI.CallConv);
+  if (!Mask)
+    report_fatal_error("SH C calling convention has no call-preserved mask");
+  CallOps.push_back(DAG.getRegisterMask(Mask));
+  for (const auto &[Reg, Value] : RegsToPass)
+    CallOps.push_back(DAG.getRegister(Reg, Value.getValueType()));
+  if (Glue)
+    CallOps.push_back(Glue);
+
+  SDVTList CallVTs = DAG.getVTList(MVT::Other, MVT::Glue);
+  Chain = DAG.getNode(SHISD::CALL, CLI.DL, CallVTs, CallOps);
+  Glue = Chain.getValue(1);
+  Chain = DAG.getCALLSEQ_END(Chain, 0, 0, Glue, CLI.DL);
+  Glue = Chain.getValue(1);
+
+  for (const CCValAssign &VA : RetLocs) {
+    if (!VA.isRegLoc() || VA.getLocReg() != SH::R0 ||
+        VA.getLocVT() != MVT::i32 || VA.getLocInfo() != CCValAssign::Full)
+      report_fatal_error("SH calls only support 32-bit return values in r0");
+    SDValue Result = DAG.getCopyFromReg(Chain, CLI.DL, SH::R0, MVT::i32, Glue);
+    InVals.push_back(Result);
+    Chain = Result.getValue(1);
+    Glue = Result.getValue(2);
+  }
+
+  return Chain;
 }
 
 static bool isSupportedSHAddress(SDValue Addr) {
@@ -367,6 +536,8 @@ const char *SHTargetLowering::getTargetNodeName(unsigned Opcode) const {
   switch (Opcode) {
   case SHISD::RET_GLUE:
     return "SHISD::RET_GLUE";
+  case SHISD::CALL:
+    return "SHISD::CALL";
   case SHISD::CMP_EQ:
     return "SHISD::CMP_EQ";
   case SHISD::CMP_HS:

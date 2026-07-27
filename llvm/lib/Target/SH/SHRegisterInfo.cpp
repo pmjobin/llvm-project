@@ -25,11 +25,13 @@ SHRegisterInfo::SHRegisterInfo() : SHGenRegisterInfo(SH::PR) {}
 
 const MCPhysReg *
 SHRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
-  return CSR_SH_SaveList;
+  return CSR_SH_Save_SaveList;
 }
 
 const uint32_t *SHRegisterInfo::getCallPreservedMask(const MachineFunction &MF,
                                                      CallingConv::ID CC) const {
+  if (CC != CallingConv::C)
+    report_fatal_error("SH only supports the C calling convention");
   return CSR_SH_RegMask;
 }
 

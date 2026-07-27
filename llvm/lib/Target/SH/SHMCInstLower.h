@@ -11,15 +11,18 @@
 
 namespace llvm {
 
+class AsmPrinter;
 class MCContext;
 class MCInst;
 class MachineInstr;
 
 class SHMCInstLower {
   MCContext &Ctx;
+  AsmPrinter &Printer;
 
 public:
-  explicit SHMCInstLower(MCContext &Ctx) : Ctx(Ctx) {}
+  SHMCInstLower(MCContext &Ctx, AsmPrinter &Printer)
+      : Ctx(Ctx), Printer(Printer) {}
   void lower(const MachineInstr *MI, MCInst &OutMI) const;
 };
 

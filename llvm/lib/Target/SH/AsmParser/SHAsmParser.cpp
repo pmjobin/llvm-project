@@ -15,6 +15,7 @@
 #include "llvm/MC/MCParser/MCAsmParser.h"
 #include "llvm/MC/MCParser/MCParsedAsmOperand.h"
 #include "llvm/MC/MCParser/MCTargetAsmParser.h"
+#include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/TargetRegistry.h"
@@ -27,8 +28,23 @@ using namespace llvm;
 
 namespace {
 
+static bool isSHGPR(MCAsmParser &Parser, MCRegister Reg) {
+  return Parser.getContext()
+      .getRegisterInfo()
+      ->getRegClass(SH::GPRRegClassID)
+      .contains(Reg);
+}
+
 class SHOperand : public MCParsedAsmOperand {
-  enum KindTy { Token, Register, Immediate, LongMemReg, LongMemDisp } Kind;
+  enum KindTy {
+    Token,
+    Register,
+    Immediate,
+    LongMemReg,
+    LongMemDisp,
+    PreDecGPR,
+    PostIncGPR
+  } Kind;
   SMLoc StartLoc;
   SMLoc EndLoc;
   std::string Tok;
@@ -42,10 +58,13 @@ public:
   bool isReg() const override { return Kind == Register; }
   bool isImm() const override { return Kind == Immediate; }
   bool isMem() const override {
-    return Kind == LongMemReg || Kind == LongMemDisp;
+    return Kind == LongMemReg || Kind == LongMemDisp || Kind == PreDecGPR ||
+           Kind == PostIncGPR;
   }
   bool isLongMemReg() const { return Kind == LongMemReg; }
   bool isLongMemDisp() const { return Kind == LongMemDisp; }
+  bool isPreDecGPR() const { return Kind == PreDecGPR; }
+  bool isPostIncGPR() const { return Kind == PostIncGPR; }
   bool isBranchTarget() const { return isImm(); }
 
   SMLoc getStartLoc() const override { return StartLoc; }
@@ -82,6 +101,10 @@ public:
     }
     if (isMem()) {
       OS << "memory base " << Reg;
+      if (Kind == PreDecGPR)
+        OS << " with pre-decrement";
+      if (Kind == PostIncGPR)
+        OS << " with post-increment";
       if (Kind == LongMemDisp) {
         OS << " displacement ";
         MAI.printExpr(OS, *Expr);
@@ -118,6 +141,16 @@ public:
     Inst.addOperand(MCOperand::createReg(Reg));
     Inst.addOperand(
         MCOperand::createImm(cast<MCConstantExpr>(Expr)->getValue()));
+  }
+
+  void addPreDecGPROperands(MCInst &Inst, unsigned N) const {
+    assert(Kind == PreDecGPR && N == 1);
+    Inst.addOperand(MCOperand::createReg(Reg));
+  }
+
+  void addPostIncGPROperands(MCInst &Inst, unsigned N) const {
+    assert(Kind == PostIncGPR && N == 1);
+    Inst.addOperand(MCOperand::createReg(Reg));
   }
 
   static std::unique_ptr<SHOperand> createToken(StringRef Tok, SMLoc Loc) {
@@ -165,6 +198,24 @@ public:
     Op->EndLoc = End;
     return Op;
   }
+
+  static std::unique_ptr<SHOperand> createPreDecGPR(MCRegister Base,
+                                                    SMLoc Start, SMLoc End) {
+    auto Op = std::unique_ptr<SHOperand>(new SHOperand(PreDecGPR));
+    Op->Reg = Base;
+    Op->StartLoc = Start;
+    Op->EndLoc = End;
+    return Op;
+  }
+
+  static std::unique_ptr<SHOperand> createPostIncGPR(MCRegister Base,
+                                                     SMLoc Start, SMLoc End) {
+    auto Op = std::unique_ptr<SHOperand>(new SHOperand(PostIncGPR));
+    Op->Reg = Base;
+    Op->StartLoc = Start;
+    Op->EndLoc = End;
+    return Op;
+  }
 };
 
 class SHAsmParser : public MCTargetAsmParser {
@@ -187,6 +238,8 @@ class SHAsmParser : public MCTargetAsmParser {
   ParseStatus parseBranchTarget(OperandVector &Operands);
   ParseStatus parseSImm8(OperandVector &Operands);
   ParseStatus parseLongMemory(OperandVector &Operands);
+  ParseStatus parsePreDecGPR(OperandVector &Operands);
+  ParseStatus parsePostIncGPR(OperandVector &Operands);
 
 public:
   enum SHMatchResultTy {
@@ -321,8 +374,107 @@ ParseStatus SHAsmParser::parseLongMemory(OperandVector &Operands) {
   return ParseStatus::Success;
 }
 
+ParseStatus SHAsmParser::parsePreDecGPR(OperandVector &Operands) {
+  if (Parser.getTok().isNot(AsmToken::At))
+    return ParseStatus::NoMatch;
+
+  SMLoc Start = Parser.getTok().getLoc();
+  Parser.Lex();
+  if (Parser.getTok().isNot(AsmToken::Minus)) {
+    Error(Parser.getTok().getLoc(), "expected '-' after '@'");
+    return ParseStatus::Failure;
+  }
+  Parser.Lex();
+
+  MCRegister Base;
+  SMLoc RegStart;
+  SMLoc RegEnd;
+  if (!tryParseRegister(Base, RegStart, RegEnd).isSuccess()) {
+    Error(Parser.getTok().getLoc(), "expected GPR after '@-'");
+    return ParseStatus::Failure;
+  }
+  if (!isSHGPR(Parser, Base)) {
+    Error(RegStart, "expected GPR after '@-'");
+    return ParseStatus::Failure;
+  }
+  Operands.push_back(SHOperand::createPreDecGPR(Base, Start, RegEnd));
+  return ParseStatus::Success;
+}
+
+ParseStatus SHAsmParser::parsePostIncGPR(OperandVector &Operands) {
+  if (Parser.getTok().isNot(AsmToken::At))
+    return ParseStatus::NoMatch;
+
+  SMLoc Start = Parser.getTok().getLoc();
+  Parser.Lex();
+
+  MCRegister Base;
+  SMLoc RegStart;
+  SMLoc RegEnd;
+  if (!tryParseRegister(Base, RegStart, RegEnd).isSuccess()) {
+    Error(Parser.getTok().getLoc(), "expected GPR after '@'");
+    return ParseStatus::Failure;
+  }
+  if (!isSHGPR(Parser, Base)) {
+    Error(RegStart, "expected GPR after '@'");
+    return ParseStatus::Failure;
+  }
+  if (Parser.getTok().isNot(AsmToken::Plus)) {
+    Error(Parser.getTok().getLoc(), "expected '+' after post-increment GPR");
+    return ParseStatus::Failure;
+  }
+  SMLoc End = Parser.getTok().getEndLoc();
+  Parser.Lex();
+  Operands.push_back(SHOperand::createPostIncGPR(Base, Start, End));
+  return ParseStatus::Success;
+}
+
 ParseStatus SHAsmParser::parseOperand(OperandVector &Operands,
                                       StringRef Mnemonic) {
+  if (Mnemonic == "jsr" && Parser.getTok().is(AsmToken::At)) {
+    SMLoc AtLoc = Parser.getTok().getLoc();
+    Operands.push_back(SHOperand::createToken("@", AtLoc));
+    Parser.Lex();
+    MCRegister Reg;
+    SMLoc Start;
+    SMLoc End;
+    if (!tryParseRegister(Reg, Start, End).isSuccess() ||
+        !isSHGPR(Parser, Reg)) {
+      Error(Parser.getTok().getLoc(), "expected GPR after '@'");
+      return ParseStatus::Failure;
+    }
+    Operands.push_back(SHOperand::createReg(Reg, Start, End));
+    return ParseStatus::Success;
+  }
+
+  if (Mnemonic == "sts.l") {
+    if (Parser.getTok().is(AsmToken::Identifier) &&
+        Parser.getTok().getIdentifier() == "pr") {
+      SMLoc Start = Parser.getTok().getLoc();
+      SMLoc End = Parser.getTok().getEndLoc();
+      Operands.push_back(SHOperand::createReg(SH::PR, Start, End));
+      Parser.Lex();
+      return ParseStatus::Success;
+    }
+    ParseStatus Result = parsePreDecGPR(Operands);
+    if (!Result.isNoMatch())
+      return Result;
+  }
+
+  if (Mnemonic == "lds.l") {
+    if (Parser.getTok().is(AsmToken::Identifier) &&
+        Parser.getTok().getIdentifier() == "pr") {
+      SMLoc Start = Parser.getTok().getLoc();
+      SMLoc End = Parser.getTok().getEndLoc();
+      Operands.push_back(SHOperand::createReg(SH::PR, Start, End));
+      Parser.Lex();
+      return ParseStatus::Success;
+    }
+    ParseStatus Result = parsePostIncGPR(Operands);
+    if (!Result.isNoMatch())
+      return Result;
+  }
+
   ParseStatus Result = parseLongMemory(Operands);
   if (!Result.isNoMatch())
     return Result;

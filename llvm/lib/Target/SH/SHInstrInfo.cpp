@@ -21,7 +21,7 @@ using namespace llvm;
 #include "SHGenInstrInfo.inc"
 
 SHInstrInfo::SHInstrInfo(const SHSubtarget &STI)
-    : SHGenInstrInfo(STI, RI), RI() {}
+    : SHGenInstrInfo(STI, RI, SH::ADJCALLSTACKDOWN, SH::ADJCALLSTACKUP), RI() {}
 
 unsigned SHInstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
   if (MI.isInlineAsm()) {
@@ -34,8 +34,7 @@ unsigned SHInstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
     return getInstBundleSize(MI);
 
   unsigned Size = MI.getDesc().getSize();
-  if ((MI.getOpcode() == SH::BRA || MI.getOpcode() == SH::RTS) &&
-      !MI.isBundledWithSucc())
+  if (MI.getDesc().hasDelaySlot() && !MI.isBundledWithSucc())
     Size += get(SH::NOP).getSize();
   return Size;
 }

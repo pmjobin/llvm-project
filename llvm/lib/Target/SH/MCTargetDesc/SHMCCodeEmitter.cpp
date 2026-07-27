@@ -90,7 +90,8 @@ SHMCCodeEmitter::getBranchTargetOpValue(const MCInst &MI, unsigned OpNo,
       Ctx.reportError(MI.getLoc(), "SH branch target must be two-byte aligned");
       return 0;
     }
-    unsigned Width = MI.getOpcode() == SH::BRA ? 12 : 8;
+    unsigned Width =
+        MI.getOpcode() == SH::BRA || MI.getOpcode() == SH::BSR ? 12 : 8;
     if (!isIntN(Width, ByteDisp / 2)) {
       Ctx.reportError(MI.getLoc(), "SH branch target is out of range");
       return 0;
@@ -99,8 +100,9 @@ SHMCCodeEmitter::getBranchTargetOpValue(const MCInst &MI, unsigned OpNo,
   }
 
   assert(MO.isExpr() && "expected SH branch target expression");
-  MCFixupKind Kind = MI.getOpcode() == SH::BRA ? SH::fixup_SH_PCREL12_2
-                                               : SH::fixup_SH_PCREL8_2;
+  MCFixupKind Kind = MI.getOpcode() == SH::BRA || MI.getOpcode() == SH::BSR
+                         ? SH::fixup_SH_PCREL12_2
+                         : SH::fixup_SH_PCREL8_2;
   Fixups.push_back(MCFixup::create(0, MO.getExpr(), Kind, true));
   return 0;
 }

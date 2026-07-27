@@ -31,6 +31,14 @@ def brtarget12 : Operand<OtherVT> {
   let OperandType = "OPERAND_PCREL";
 }
 
+def calltarget12 : Operand<i32> {
+  let ParserMatchClass = BranchTargetAsmOperand;
+  let PrintMethod = "printBranchTarget";
+  let EncoderMethod = "getBranchTargetOpValue";
+  let DecoderMethod = "decodeBranchTarget12";
+  let OperandType = "OPERAND_PCREL";
+}
+
 def SImm8AsmOperand : AsmOperandClass {
   let Name = "SImm8";
   let PredicateMethod = "isSImm8";
@@ -57,6 +65,18 @@ def LongMemDispAsmOperand : AsmOperandClass {
   let RenderMethod = "addLongMemDispOperands";
 }
 
+def PreDecGPRAsmOperand : AsmOperandClass {
+  let Name = "PreDecGPR";
+  let PredicateMethod = "isPreDecGPR";
+  let RenderMethod = "addPreDecGPROperands";
+}
+
+def PostIncGPRAsmOperand : AsmOperandClass {
+  let Name = "PostIncGPR";
+  let PredicateMethod = "isPostIncGPR";
+  let RenderMethod = "addPostIncGPROperands";
+}
+
 def longmemreg : Operand<iPTR> {
   let MIOperandInfo = (ops GPR);
   let ParserMatchClass = LongMemRegAsmOperand;
@@ -72,14 +92,39 @@ def longmemdisp : Operand<iPTR> {
   let DecoderMethod = "decodeLongDispMemOperand";
 }
 
+def predecgpr : Operand<iPTR> {
+  let MIOperandInfo = (ops GPR);
+  let ParserMatchClass = PreDecGPRAsmOperand;
+  let PrintMethod = "printPreDecGPR";
+  let DecoderMethod = "DecodeGPRRegisterClass";
+}
+
+def postincgpr : Operand<iPTR> {
+  let MIOperandInfo = (ops GPR);
+  let ParserMatchClass = PostIncGPRAsmOperand;
+  let PrintMethod = "printPostIncGPR";
+  let DecoderMethod = "DecodeGPRRegisterClass";
+}
+
 def addr_reg : ComplexPattern<iPTR, 1, "SelectAddrReg">;
 def addr_disp : ComplexPattern<iPTR, 2, "SelectAddrDisp", [add, frameindex]>;
 
 def SDT_SHCmp : SDTypeProfile<0, 2, [SDTCisVT<0, i32>, SDTCisVT<1, i32>]>;
 def SDT_SHBrcond : SDTypeProfile<0, 1, [SDTCisVT<0, OtherVT>]>;
+def SDT_SHCall : SDTypeProfile<0, -1, [SDTCisVT<0, i32>]>;
+def SDT_SHCallSeqStart
+    : SDCallSeqStart<[SDTCisVT<0, i32>, SDTCisVT<1, i32>]>;
+def SDT_SHCallSeqEnd
+    : SDCallSeqEnd<[SDTCisVT<0, i32>, SDTCisVT<1, i32>]>;
 
 def SHret : SDNode<"SHISD::RET_GLUE", SDTNone,
                    [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
+def SHcall : SDNode<"SHISD::CALL", SDT_SHCall,
+                    [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue, SDNPVariadic]>;
+def SHcallseq_start : SDNode<"ISD::CALLSEQ_START", SDT_SHCallSeqStart,
+                            [SDNPHasChain, SDNPOutGlue]>;
+def SHcallseq_end : SDNode<"ISD::CALLSEQ_END", SDT_SHCallSeqEnd,
+                          [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue]>;
 def SHcmpeq : SDNode<"SHISD::CMP_EQ", SDT_SHCmp, [SDNPOutGlue]>;
 def SHcmphs : SDNode<"SHISD::CMP_HS", SDT_SHCmp, [SDNPOutGlue]>;
 def SHcmpge : SDNode<"SHISD::CMP_GE", SDT_SHCmp, [SDNPOutGlue]>;
@@ -89,6 +134,17 @@ def SHbt : SDNode<"SHISD::BT", SDT_SHBrcond, [SDNPHasChain, SDNPInGlue]>;
 def SHbf : SDNode<"SHISD::BF", SDT_SHBrcond, [SDNPHasChain, SDNPInGlue]>;
 
 def NOP : SHFixed<0x0009, "nop">;
+
+let isCodeGenOnly = 1, Uses = [R15], Defs = [R15] in {
+  def ADJCALLSTACKDOWN
+      : SHPseudo<(outs), (ins i32imm:$amt1, i32imm:$amt2)> {
+    let Pattern = [(SHcallseq_start timm:$amt1, timm:$amt2)];
+  }
+  def ADJCALLSTACKUP
+      : SHPseudo<(outs), (ins i32imm:$amt1, i32imm:$amt2)> {
+    let Pattern = [(SHcallseq_end timm:$amt1, timm:$amt2)];
+  }
+}
 
 let isReturn = 1, isTerminator = 1, isBarrier = 1, hasDelaySlot = 1,
     Uses = [PR] in
@@ -140,6 +196,23 @@ let isBranch = 1, isTerminator = 1, Uses = [TBit] in {
 let isBranch = 1, isTerminator = 1, isBarrier = 1, hasDelaySlot = 1 in
 def BRA : SHBranch12<0xa, (ins brtarget12:$target), "bra\t$target",
                      [(br bb:$target)]>;
+
+let isCall = 1, hasDelaySlot = 1, Defs = [PR] in {
+  def BSR : SHBranch12<0xb, (ins calltarget12:$target), "bsr\t$target",
+                       [(SHcall tglobaladdr:$target)]>;
+  def JSR : SHIndirectCall<(ins GPR:$callee), "jsr\t@$callee",
+                           [(SHcall GPR:$callee)]>;
+}
+
+let mayStore = 1, Uses = [PR], Constraints = "$base_wb = $base" in
+def STS_L_PR
+    : SHPRStack<0x2, (outs predecgpr:$base_wb), (ins GPR:$base),
+                "sts.l\tpr,$base_wb">;
+
+let mayLoad = 1, Defs = [PR], Constraints = "$base_wb = $base" in
+def LDS_L_PR
+    : SHPRStack<0x6, (outs postincgpr:$base_wb), (ins GPR:$base),
+                "lds.l\t$base_wb,pr">;
 
 let mayLoad = 1 in
 def MOVL_load_reg

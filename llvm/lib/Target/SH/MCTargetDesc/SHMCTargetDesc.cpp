@@ -76,7 +76,8 @@ public:
 
   bool evaluateBranch(const MCInst &Inst, uint64_t Addr, uint64_t Size,
                       uint64_t &Target) const override {
-    if ((!isConditionalBranch(Inst) && !isUnconditionalBranch(Inst)) ||
+    if ((!isConditionalBranch(Inst) && !isUnconditionalBranch(Inst) &&
+         !isCall(Inst)) ||
         Inst.getNumOperands() == 0 || !Inst.getOperand(0).isImm())
       return false;
     Target = Addr + 4 + Inst.getOperand(0).getImm();

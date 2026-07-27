@@ -80,12 +80,18 @@ TEST_F(SHInstrInfoTest, GetInstSizeInBytesAccountsForDelaySlots) {
   MachineInstr *Bra =
       BuildMI(Standalone, DebugLoc(), TII->get(SH::BRA)).addMBB(Target);
   MachineInstr *Rts = BuildMI(Standalone, DebugLoc(), TII->get(SH::RTS));
+  MachineInstr *Bsr = BuildMI(Standalone, DebugLoc(), TII->get(SH::BSR))
+                          .addExternalSymbol("callee");
+  MachineInstr *Jsr =
+      BuildMI(Standalone, DebugLoc(), TII->get(SH::JSR)).addReg(SH::R4);
 
   EXPECT_EQ(2u, TII->getInstSizeInBytes(*Nop));
   EXPECT_EQ(2u, TII->getInstSizeInBytes(*Bt));
   EXPECT_EQ(2u, TII->getInstSizeInBytes(*Bf));
   EXPECT_EQ(4u, TII->getInstSizeInBytes(*Bra));
   EXPECT_EQ(4u, TII->getInstSizeInBytes(*Rts));
+  EXPECT_EQ(4u, TII->getInstSizeInBytes(*Bsr));
+  EXPECT_EQ(4u, TII->getInstSizeInBytes(*Jsr));
 
   MachineBasicBlock *BraBundleBlock = createBlock();
   Bra = BuildMI(BraBundleBlock, DebugLoc(), TII->get(SH::BRA)).addMBB(Target);
@@ -108,6 +114,37 @@ TEST_F(SHInstrInfoTest, GetInstSizeInBytesAccountsForDelaySlots) {
   MachineInstr &RtsBundle = RtsBundleBlock->front();
   EXPECT_EQ(TargetOpcode::BUNDLE, RtsBundle.getOpcode());
   EXPECT_EQ(4u, TII->getInstSizeInBytes(RtsBundle));
+
+  MachineBasicBlock *BsrBundleBlock = createBlock();
+  Bsr = BuildMI(BsrBundleBlock, DebugLoc(), TII->get(SH::BSR))
+            .addExternalSymbol("callee");
+  Nop = BuildMI(BsrBundleBlock, DebugLoc(), TII->get(SH::NOP));
+  MIBundleBuilder(*BsrBundleBlock, Bsr->getIterator(),
+                  std::next(Nop->getIterator()));
+  finalizeBundle(*BsrBundleBlock, Bsr->getIterator(),
+                 std::next(Nop->getIterator()));
+  EXPECT_EQ(4u, TII->getInstSizeInBytes(BsrBundleBlock->front()));
+
+  MachineBasicBlock *JsrBundleBlock = createBlock();
+  Jsr = BuildMI(JsrBundleBlock, DebugLoc(), TII->get(SH::JSR)).addReg(SH::R4);
+  Nop = BuildMI(JsrBundleBlock, DebugLoc(), TII->get(SH::NOP));
+  MIBundleBuilder(*JsrBundleBlock, Jsr->getIterator(),
+                  std::next(Nop->getIterator()));
+  finalizeBundle(*JsrBundleBlock, Jsr->getIterator(),
+                 std::next(Nop->getIterator()));
+  EXPECT_EQ(4u, TII->getInstSizeInBytes(JsrBundleBlock->front()));
+}
+
+TEST_F(SHInstrInfoTest, CCallRegisterMaskMatchesABI) {
+  const SHRegisterInfo &TRI = TII->getRegisterInfo();
+  const uint32_t *Mask = TRI.getCallPreservedMask(*MF, CallingConv::C);
+
+  for (MCRegister Reg : {SH::R0, SH::R1, SH::R2, SH::R3, SH::R4, SH::R5, SH::R6,
+                         SH::R7, SH::PR, SH::TBit, SH::MACH, SH::MACL})
+    EXPECT_TRUE(MachineOperand::clobbersPhysReg(Mask, Reg));
+  for (MCRegister Reg : {SH::R8, SH::R9, SH::R10, SH::R11, SH::R12, SH::R13,
+                         SH::R14, SH::R15, SH::GBR, SH::VBR, SH::SR})
+    EXPECT_FALSE(MachineOperand::clobbersPhysReg(Mask, Reg));
 }
 
 TEST_F(SHInstrInfoTest, InsertBranchReportsFinalEmittedSize) {

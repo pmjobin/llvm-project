@@ -25,6 +25,14 @@ class SHFixed<bits<16> Encoding, string Asm>
   let Inst = Encoding;
 }
 
+class SHPseudo<dag Outs, dag Ins>
+    : SHInst<Outs, Ins, ""> {
+  let Inst = 0;
+  let Size = 0;
+  let isPseudo = 1;
+  let isCodeGenOnly = 1;
+}
+
 class SHRegReg<bits<4> Prefix, bits<4> Suffix, dag Outs, dag Ins, string Asm,
                list<dag> pattern = []>
     : SHInst<Outs, Ins, Asm> {
@@ -66,6 +74,26 @@ class SHBranch12<bits<4> Prefix, dag Ins, string Asm, list<dag> pattern = []>
   let Pattern = pattern;
   let Inst{15-12} = Prefix;
   let Inst{11-0} = target;
+}
+
+class SHIndirectCall<dag Ins, string Asm, list<dag> pattern = []>
+    : SHInst<(outs), Ins, Asm> {
+  bits<4> callee;
+
+  let Pattern = pattern;
+  let Inst{15-12} = 0x4;
+  let Inst{11-8} = callee;
+  let Inst{7-0} = 0x0b;
+}
+
+class SHPRStack<bits<4> LowNibble, dag Outs, dag Ins, string Asm>
+    : SHInst<Outs, Ins, Asm> {
+  bits<4> base_wb;
+
+  let Inst{15-12} = 0x4;
+  let Inst{11-8} = base_wb;
+  let Inst{7-4} = 0x2;
+  let Inst{3-0} = LowNibble;
 }
 
 class SHLongLoadReg<dag Outs, dag Ins, string Asm, list<dag> pattern = []>

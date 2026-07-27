@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SHMCInstLower.h"
+#include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/MC/MCContext.h"
@@ -32,6 +33,15 @@ void SHMCInstLower::lower(const MachineInstr *MI, MCInst &OutMI) const {
       OutMI.addOperand(MCOperand::createExpr(
           MCSymbolRefExpr::create(MO.getMBB()->getSymbol(), Ctx)));
       break;
+    case MachineOperand::MO_GlobalAddress: {
+      const MCExpr *Expr =
+          MCSymbolRefExpr::create(Printer.getSymbol(MO.getGlobal()), Ctx);
+      if (MO.getOffset() != 0)
+        Expr = MCBinaryExpr::createAdd(
+            Expr, MCConstantExpr::create(MO.getOffset(), Ctx), Ctx);
+      OutMI.addOperand(MCOperand::createExpr(Expr));
+      break;
+    }
     case MachineOperand::MO_RegisterMask:
       break;
     default:

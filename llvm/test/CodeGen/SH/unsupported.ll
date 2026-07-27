@@ -11,7 +11,7 @@ define i32 @caller(i32 %value) {
 	ret i32 %result
 }
 
-; CALL: LLVM ERROR: SH function calls are not supported
+; CALL: LLVM ERROR: SH unresolved or interposable direct calls are not supported
 
 ;--- stack-arg.ll
 

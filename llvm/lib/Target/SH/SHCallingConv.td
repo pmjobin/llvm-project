@@ -15,4 +15,8 @@ def RetCC_SH : CallingConv<[
   CCIfType<[i32], CCAssignToReg<[R0]>>
 ]>;
 
-def CSR_SH : CalleeSavedRegs<(add R8, R9, R10, R11, R12, R13, R14)>;
+def CSR_SH_Save : CalleeSavedRegs<(add PR, R8, R9, R10, R11, R12, R13, R14)>;
+
+def CSR_SH
+    : CalleeSavedRegs<(add R8, R9, R10, R11, R12, R13, R14, R15,
+                          GBR, VBR, SR)>;

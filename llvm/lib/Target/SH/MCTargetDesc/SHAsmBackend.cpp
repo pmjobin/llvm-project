@@ -34,7 +34,8 @@ public:
     if (Fixup.getKind() == SH::fixup_SH_PCREL8_2 ||
         Fixup.getKind() == SH::fixup_SH_PCREL12_2) {
       reportError(Fixup.getLoc(),
-                  "SH branch relocations are not yet supported");
+                  "SH branch relocations are not yet supported; SH call "
+                  "relocations are not yet supported");
       return 0;
     }
     reportError(Fixup.getLoc(), "SH relocations are not yet supported");
