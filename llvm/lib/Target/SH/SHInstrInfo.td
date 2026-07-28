@@ -175,8 +175,12 @@ def SHcmphs : SDNode<"SHISD::CMP_HS", SDT_SHCmp, [SDNPOutGlue]>;
 def SHcmpge : SDNode<"SHISD::CMP_GE", SDT_SHCmp, [SDNPOutGlue]>;
 def SHcmphi : SDNode<"SHISD::CMP_HI", SDT_SHCmp, [SDNPOutGlue]>;
 def SHcmpgt : SDNode<"SHISD::CMP_GT", SDT_SHCmp, [SDNPOutGlue]>;
+def SHtst : SDNode<"SHISD::TST", SDT_SHCmp, [SDNPOutGlue]>;
 def SHbt : SDNode<"SHISD::BT", SDT_SHBrcond, [SDNPHasChain, SDNPInGlue]>;
 def SHbf : SDNode<"SHISD::BF", SDT_SHBrcond, [SDNPHasChain, SDNPInGlue]>;
+
+def non_simm8 : ImmLeaf<i32, [{ return !isInt<8>(Imm); }]>;
+def u5imm : ImmLeaf<i32, [{ return isUInt<5>(Imm); }]>;
 
 def NOP : SHFixed<0x0009, "nop">;
 
@@ -205,6 +209,60 @@ def ADDrr : SHRegReg<0x3, 0xc, (outs GPR:$dst),
                      (ins GPR:$dst_in, GPR:$src), "add\t$src,$dst",
                      [(set GPR:$dst, (add GPR:$dst_in, GPR:$src))]>;
 
+let Constraints = "$dst = $dst_in" in
+def SUBrr : SHRegReg<0x3, 0x8, (outs GPR:$dst),
+                     (ins GPR:$dst_in, GPR:$src), "sub\t$src,$dst",
+                     [(set GPR:$dst, (sub GPR:$dst_in, GPR:$src))]>;
+
+def NEG : SHRegReg<0x6, 0xb, (outs GPR:$dst), (ins GPR:$src),
+                   "neg\t$src,$dst",
+                   [(set GPR:$dst, (ineg GPR:$src))]>;
+
+let Constraints = "$dst = $dst_in", isCommutable = 1 in {
+  def ANDrr : SHRegReg<0x2, 0x9, (outs GPR:$dst),
+                       (ins GPR:$dst_in, GPR:$src), "and\t$src,$dst",
+                       [(set GPR:$dst, (and GPR:$dst_in, GPR:$src))]>;
+  def ORrr : SHRegReg<0x2, 0xb, (outs GPR:$dst),
+                      (ins GPR:$dst_in, GPR:$src), "or\t$src,$dst",
+                      [(set GPR:$dst, (or GPR:$dst_in, GPR:$src))]>;
+  def XORrr : SHRegReg<0x2, 0xa, (outs GPR:$dst),
+                       (ins GPR:$dst_in, GPR:$src), "xor\t$src,$dst",
+                       [(set GPR:$dst, (xor GPR:$dst_in, GPR:$src))]>;
+}
+
+def NOT : SHRegReg<0x6, 0x7, (outs GPR:$dst), (ins GPR:$src),
+                   "not\t$src,$dst",
+                   [(set GPR:$dst, (not GPR:$src))]>;
+
+let Defs = [TBit], isCompare = 1 in
+def TST : SHRegReg<0x2, 0x8, (outs), (ins GPR:$src, GPR:$dst),
+                   "tst\t$src,$dst", [(SHtst GPR:$dst, GPR:$src)]>;
+
+let Constraints = "$dst = $dst_in", Defs = [TBit] in {
+  def DT : SHOneReg<0x10, (outs GPR:$dst), (ins GPR:$dst_in), "dt\t$dst">;
+  def SHLL
+      : SHOneReg<0x00, (outs GPR:$dst), (ins GPR:$dst_in), "shll\t$dst">;
+  def SHLR
+      : SHOneReg<0x01, (outs GPR:$dst), (ins GPR:$dst_in), "shlr\t$dst">;
+  def SHAR
+      : SHOneReg<0x21, (outs GPR:$dst), (ins GPR:$dst_in), "shar\t$dst">;
+}
+
+let Constraints = "$dst = $dst_in" in {
+  def SHLL2
+      : SHOneReg<0x08, (outs GPR:$dst), (ins GPR:$dst_in), "shll2\t$dst">;
+  def SHLR2
+      : SHOneReg<0x09, (outs GPR:$dst), (ins GPR:$dst_in), "shlr2\t$dst">;
+  def SHLL8
+      : SHOneReg<0x18, (outs GPR:$dst), (ins GPR:$dst_in), "shll8\t$dst">;
+  def SHLR8
+      : SHOneReg<0x19, (outs GPR:$dst), (ins GPR:$dst_in), "shlr8\t$dst">;
+  def SHLL16
+      : SHOneReg<0x28, (outs GPR:$dst), (ins GPR:$dst_in), "shll16\t$dst">;
+  def SHLR16
+      : SHOneReg<0x29, (outs GPR:$dst), (ins GPR:$dst_in), "shlr16\t$dst">;
+}
+
 def MOVri : SHRegImm<0xe, (outs GPR:$dst), (ins simm8:$imm),
                      "mov\t$imm,$dst", [(set GPR:$dst, simm8:$imm)]>;
 
@@ -212,6 +270,30 @@ let Constraints = "$dst = $dst_in" in
 def ADDri : SHRegImm<0x7, (outs GPR:$dst),
                      (ins GPR:$dst_in, simm8:$imm), "add\t$imm,$dst",
                      [(set GPR:$dst, (add GPR:$dst_in, simm8:$imm))]>;
+
+let usesCustomInserter = 1 in {
+  def MOVi32 : SHPseudo<(outs GPR:$dst), (ins i32imm:$imm)> {
+    let Pattern = [(set GPR:$dst, non_simm8:$imm)];
+  }
+  def SHLri : SHPseudo<(outs GPR:$dst), (ins GPR:$src, i32imm:$amount)> {
+    let Pattern = [(set GPR:$dst, (shl GPR:$src, u5imm:$amount))];
+  }
+  def SRLri : SHPseudo<(outs GPR:$dst), (ins GPR:$src, i32imm:$amount)> {
+    let Pattern = [(set GPR:$dst, (srl GPR:$src, u5imm:$amount))];
+  }
+  def SRAri : SHPseudo<(outs GPR:$dst), (ins GPR:$src, i32imm:$amount)> {
+    let Pattern = [(set GPR:$dst, (sra GPR:$src, u5imm:$amount))];
+  }
+  def SHLrr : SHPseudo<(outs GPR:$dst), (ins GPR:$src, GPR:$amount)> {
+    let Pattern = [(set GPR:$dst, (shl GPR:$src, GPR:$amount))];
+  }
+  def SRLrr : SHPseudo<(outs GPR:$dst), (ins GPR:$src, GPR:$amount)> {
+    let Pattern = [(set GPR:$dst, (srl GPR:$src, GPR:$amount))];
+  }
+  def SRArr : SHPseudo<(outs GPR:$dst), (ins GPR:$src, GPR:$amount)> {
+    let Pattern = [(set GPR:$dst, (sra GPR:$src, GPR:$amount))];
+  }
+}
 
 let Defs = [TBit], isCompare = 1 in {
   def CMP_EQ : SHRegReg<0x3, 0x0, (outs), (ins GPR:$src, GPR:$dst),

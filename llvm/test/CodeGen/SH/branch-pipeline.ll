@@ -39,7 +39,7 @@ attributes #0 = { noinline optnone }
 ; ISEL: %{{[0-9]+}}:gpr = PHI
 ; ISEL-LABEL: name:            loop_pipeline
 ; ISEL: %{{[0-9]+}}:gpr = PHI
-; ISEL: CMP_EQ {{.*}}, implicit-def $tbit
+; ISEL: TST {{.*}}, implicit-def $tbit
 ; ISEL: BF %bb.1, implicit $tbit
 ; ISEL-NEXT: BRA %bb.2
 
@@ -65,7 +65,7 @@ attributes #0 = { noinline optnone }
 ; RA-LABEL: name:            loop_pipeline
 ; RA: noVRegs:         true
 ; RA-NOT: PHI
-; RA: CMP_EQ {{.*}}, implicit-def $tbit
+; RA: TST {{.*}}, implicit-def $tbit
 ; RA: BF %bb.1, implicit $tbit
 
 ; DELAY-LABEL: name:            max_signed_pipeline
@@ -78,7 +78,7 @@ attributes #0 = { noinline optnone }
 ; DELAY-NEXT: NOP
 ; DELAY-NEXT: }
 ; DELAY-LABEL: name:            loop_pipeline
-; DELAY: CMP_EQ {{.*}}, implicit-def $tbit
+; DELAY: TST {{.*}}, implicit-def $tbit
 ; DELAY: BF %bb.1, implicit $tbit
 ; DELAY-NEXT: BRA %bb.2 {
 ; DELAY-NEXT: NOP

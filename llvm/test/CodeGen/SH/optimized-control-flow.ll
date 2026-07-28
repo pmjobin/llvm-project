@@ -35,7 +35,7 @@ define i32 @count_down_optimized(i32 %n) {
 ; CHECK-LABEL: count_down_optimized:
 ; CHECK: [[LOOP:.LBB[0-9_]+]]:
 ; CHECK: add	#-1,{{r[0-9]+}}
-; CHECK: cmp/eq
+; CHECK: tst
 ; CHECK: bf	[[LOOP]]
 entry:
 	br label %loop

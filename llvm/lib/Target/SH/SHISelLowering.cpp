@@ -10,9 +10,12 @@
 #include "SHSubtarget.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/CodeGen/CallingConvLower.h"
+#include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/SelectionDAG.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
@@ -32,7 +35,9 @@ SHTargetLowering::SHTargetLowering(const TargetMachine &TM,
   setMinFunctionAlignment(Align(2));
   setPrefFunctionAlignment(Align(4));
 
-  setOperationAction(ISD::ADD, MVT::i32, Legal);
+  for (unsigned Opcode :
+       {ISD::ADD, ISD::SUB, ISD::XOR, ISD::SHL, ISD::SRA, ISD::SRL})
+    setOperationAction(Opcode, MVT::i32, Legal);
   setOperationAction(ISD::Constant, MVT::i32, Legal);
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i32, Legal);
 
@@ -43,16 +48,17 @@ SHTargetLowering::SHTargetLowering(const TargetMachine &TM,
     setTruncStoreAction(MVT::i32, MemVT, Legal);
   }
 
-  for (unsigned Opcode :
-       {ISD::LOAD,      ISD::STORE,         ISD::SUB,
-        ISD::MUL,       ISD::MULHU,         ISD::MULHS,
-        ISD::SDIV,      ISD::UDIV,          ISD::SREM,
-        ISD::UREM,      ISD::AND,           ISD::OR,
-        ISD::XOR,       ISD::SHL,           ISD::SRA,
-        ISD::SRL,       ISD::ROTL,          ISD::ROTR,
-        ISD::BR_CC,     ISD::SELECT,        ISD::SELECT_CC,
-        ISD::SETCC,     ISD::GlobalAddress, ISD::BlockAddress,
-        ISD::JumpTable, ISD::ConstantPool,  ISD::DYNAMIC_STACKALLOC})
+  for (unsigned Opcode : {ISD::LOAD,         ISD::STORE,
+                          ISD::MUL,          ISD::MULHU,
+                          ISD::MULHS,        ISD::SDIV,
+                          ISD::UDIV,         ISD::SREM,
+                          ISD::UREM,         ISD::AND,
+                          ISD::OR,           ISD::ROTL,
+                          ISD::ROTR,         ISD::BR_CC,
+                          ISD::SELECT,       ISD::SELECT_CC,
+                          ISD::SETCC,        ISD::GlobalAddress,
+                          ISD::BlockAddress, ISD::JumpTable,
+                          ISD::ConstantPool, ISD::DYNAMIC_STACKALLOC})
     setOperationAction(Opcode, MVT::i32, Custom);
 
   computeRegisterProperties(STI.getRegisterInfo());
@@ -132,6 +138,18 @@ static void validateSHAllocaUses(const AllocaInst &Alloca) {
   }
 }
 
+static bool containsUnsupportedSHAddressConstant(const Value *V) {
+  if (isa<GlobalValue>(V) || isa<BlockAddress>(V))
+    return true;
+  const auto *C = dyn_cast<Constant>(V);
+  if (!C)
+    return false;
+  for (const Use &Operand : C->operands())
+    if (containsUnsupportedSHAddressConstant(Operand.get()))
+      return true;
+  return false;
+}
+
 static void validateSHIR(const Function &F) {
   if (!F.getReturnType()->isVoidTy() && !F.getReturnType()->isIntegerTy(32) &&
       !F.getReturnType()->isPointerTy())
@@ -150,6 +168,15 @@ static void validateSHIR(const Function &F) {
     if (BB.isEHPad())
       report_fatal_error("SH exception-handling pads are not supported");
     for (const Instruction &I : BB) {
+      const auto *Call = dyn_cast<CallBase>(&I);
+      for (const Use &Operand : I.operands()) {
+        if (Call && Operand.get() == Call->getCalledOperand())
+          continue;
+        if (containsUnsupportedSHAddressConstant(Operand.get()))
+          report_fatal_error(
+              "SH global, function, and block address constants are not "
+              "supported");
+      }
       if (isa<SwitchInst>(&I))
         report_fatal_error("SH switch is not supported");
       if (isa<IndirectBrInst>(&I))
@@ -158,7 +185,7 @@ static void validateSHIR(const Function &F) {
         report_fatal_error("SH callbr is not supported");
       if (isa<SelectInst>(&I))
         report_fatal_error("SH select is not supported");
-      if (const auto *Call = dyn_cast<CallBase>(&I)) {
+      if (Call) {
         requireSupportedCallingConvention(Call->getCallingConv());
         if (isa<InvokeInst>(Call))
           report_fatal_error("SH exception-handling calls are not supported");
@@ -249,10 +276,28 @@ static void validateSHIR(const Function &F) {
 
       if (const auto *BinOp = dyn_cast<BinaryOperator>(&I)) {
         Type *Ty = BinOp->getType();
-        if ((Ty->isIntegerTy(8) || Ty->isIntegerTy(16)) &&
-            BinOp->getOpcode() != Instruction::Add)
+        if (!Ty->isIntegerTy(8) && !Ty->isIntegerTy(16) && !Ty->isIntegerTy(32))
           report_fatal_error(
-              "SH only supports add for narrow integer arithmetic");
+              "SH only supports i8, i16, and i32 integer operations");
+        if (Ty->isIntegerTy(8) || Ty->isIntegerTy(16)) {
+          switch (BinOp->getOpcode()) {
+          default:
+            report_fatal_error("SH narrow integer operation is not supported");
+          case Instruction::Add:
+          case Instruction::Sub:
+          case Instruction::And:
+          case Instruction::Or:
+          case Instruction::Xor:
+            break;
+          case Instruction::Shl:
+          case Instruction::LShr:
+          case Instruction::AShr:
+            if (!isa<ConstantInt>(BinOp->getOperand(1)))
+              report_fatal_error(
+                  "SH variable narrow integer shifts are not supported");
+            break;
+          }
+        }
       }
 
       const auto *Alloca = dyn_cast<AllocaInst>(&I);
@@ -567,8 +612,7 @@ static bool isSupportedSHAddress(SDValue Addr) {
   const auto *Offset = dyn_cast<ConstantSDNode>(Addr.getOperand(1));
   if (!Offset || !IsBase(Addr.getOperand(0)))
     return false;
-  int64_t ByteDisp = Offset->getSExtValue();
-  return ByteDisp >= 0 && ByteDisp <= 60 && ByteDisp % 4 == 0;
+  return true;
 }
 
 static bool isSupportedSHNarrowAddress(SDValue Addr) {
@@ -599,8 +643,8 @@ SDValue SHTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
         report_fatal_error("SH requires 4-byte alignment for mov.l");
       if (!isSupportedSHAddress(Mem->getBasePtr()))
         report_fatal_error(
-            "SH memory address must be a register or frame index with a "
-            "nonnegative aligned byte displacement no greater than 60");
+            "SH memory address must be a register or supported 32-bit constant "
+            "address addition");
       return Op;
     }
     if (MemoryVT != MVT::i8 && MemoryVT != MVT::i16)
@@ -626,11 +670,7 @@ SDValue SHTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   if (Op.getOpcode() == ISD::SELECT || Op.getOpcode() == ISD::SELECT_CC)
     report_fatal_error("SH select is not supported");
   if (Op.getOpcode() == ISD::AND) {
-    const auto *Mask = dyn_cast<ConstantSDNode>(Op.getOperand(1));
-    if (Mask &&
-        (Mask->getZExtValue() == 0xff || Mask->getZExtValue() == 0xffff))
-      return Op;
-    report_fatal_error("SH logical operations are not supported");
+    return Op;
   }
   if (Op.getOpcode() == ISD::OR) {
     if (Op->getFlags().hasDisjoint() &&
@@ -638,10 +678,238 @@ SDValue SHTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
         isa<ConstantSDNode>(Op.getOperand(1)))
       return DAG.getNode(ISD::ADD, SDLoc(Op), MVT::i32, Op.getOperand(0),
                          Op.getOperand(1));
-    report_fatal_error("SH logical operations are not supported");
+    return Op;
   }
   report_fatal_error(Twine("SH operation is not supported: ") +
                      Op->getOperationName(&DAG));
+}
+
+static Register createGPR(MachineRegisterInfo &MRI) {
+  return MRI.createVirtualRegister(&SH::GPRRegClass);
+}
+
+static void emitUnsignedByte(MachineBasicBlock &MBB, MachineInstr &InsertBefore,
+                             const DebugLoc &DL, const SHInstrInfo &TII,
+                             MachineRegisterInfo &MRI, uint8_t Byte,
+                             Register Dest) {
+  if (Byte <= 127) {
+    BuildMI(MBB, InsertBefore, DL, TII.get(SH::MOVri), Dest).addImm(Byte);
+    return;
+  }
+
+  Register SignedByte = createGPR(MRI);
+  BuildMI(MBB, InsertBefore, DL, TII.get(SH::MOVri), SignedByte)
+      .addImm(static_cast<int64_t>(Byte) - 256);
+  BuildMI(MBB, InsertBefore, DL, TII.get(SH::EXTUB), Dest).addReg(SignedByte);
+}
+
+static MachineBasicBlock *emitI32Constant(MachineInstr &MI,
+                                          MachineBasicBlock *MBB) {
+  MachineFunction &MF = *MBB->getParent();
+  MachineRegisterInfo &MRI = MF.getRegInfo();
+  const SHInstrInfo &TII = *MF.getSubtarget<SHSubtarget>().getInstrInfo();
+  const DebugLoc &DL = MI.getDebugLoc();
+  Register Dest = MI.getOperand(0).getReg();
+  uint32_t Value = static_cast<uint32_t>(MI.getOperand(1).getImm());
+  uint8_t Bytes[] = {
+      static_cast<uint8_t>(Value >> 24), static_cast<uint8_t>(Value >> 16),
+      static_cast<uint8_t>(Value >> 8), static_cast<uint8_t>(Value)};
+
+  unsigned First = 0;
+  while (First != 3 && Bytes[First] == 0)
+    ++First;
+
+  Register Acc = First == 3 ? Dest : createGPR(MRI);
+  emitUnsignedByte(*MBB, MI, DL, TII, MRI, Bytes[First], Acc);
+  for (unsigned I = First + 1; I != 4; ++I) {
+    bool IsLast = I == 3;
+    Register Shifted = IsLast && Bytes[I] == 0 ? Dest : createGPR(MRI);
+    BuildMI(*MBB, MI, DL, TII.get(SH::SHLL8), Shifted).addReg(Acc);
+    if (Bytes[I] == 0) {
+      Acc = Shifted;
+      continue;
+    }
+
+    Register ByteReg = createGPR(MRI);
+    emitUnsignedByte(*MBB, MI, DL, TII, MRI, Bytes[I], ByteReg);
+    Register Combined = IsLast ? Dest : createGPR(MRI);
+    BuildMI(*MBB, MI, DL, TII.get(SH::ORrr), Combined)
+        .addReg(Shifted)
+        .addReg(ByteReg);
+    Acc = Combined;
+  }
+
+  MI.eraseFromParent();
+  return MBB;
+}
+
+SmallVector<unsigned, 16> llvm::SH::planConstantShift(unsigned PseudoOpcode,
+                                                      unsigned Amount) {
+  SmallVector<unsigned, 16> Opcodes;
+  if (PseudoOpcode == SH::SRAri) {
+    if (Amount >= 24) {
+      Opcodes.push_back(SH::SHLR16);
+      Opcodes.push_back(SH::SHLR8);
+      Opcodes.push_back(SH::EXTSB);
+      Amount -= 24;
+    } else if (Amount >= 16) {
+      Opcodes.push_back(SH::SHLR16);
+      Opcodes.push_back(SH::EXTSW);
+      Amount -= 16;
+    }
+    Opcodes.append(Amount, SH::SHAR);
+    return Opcodes;
+  }
+
+  unsigned Shift16 = PseudoOpcode == SH::SHLri ? SH::SHLL16 : SH::SHLR16;
+  unsigned Shift8 = PseudoOpcode == SH::SHLri ? SH::SHLL8 : SH::SHLR8;
+  unsigned Shift2 = PseudoOpcode == SH::SHLri ? SH::SHLL2 : SH::SHLR2;
+  unsigned Shift1 = PseudoOpcode == SH::SHLri ? SH::SHLL : SH::SHLR;
+  if (Amount >= 16) {
+    Opcodes.push_back(Shift16);
+    Amount -= 16;
+  }
+  if (Amount >= 8) {
+    Opcodes.push_back(Shift8);
+    Amount -= 8;
+  }
+  while (Amount >= 2) {
+    Opcodes.push_back(Shift2);
+    Amount -= 2;
+  }
+  if (Amount)
+    Opcodes.push_back(Shift1);
+  return Opcodes;
+}
+
+static MachineBasicBlock *emitConstantShift(MachineInstr &MI,
+                                            MachineBasicBlock *MBB) {
+  MachineFunction &MF = *MBB->getParent();
+  MachineRegisterInfo &MRI = MF.getRegInfo();
+  const SHInstrInfo &TII = *MF.getSubtarget<SHSubtarget>().getInstrInfo();
+  const DebugLoc &DL = MI.getDebugLoc();
+  Register Dest = MI.getOperand(0).getReg();
+  Register Current = MI.getOperand(1).getReg();
+  int64_t SignedAmount = MI.getOperand(2).getImm();
+  if (SignedAmount < 0 || SignedAmount > 31)
+    report_fatal_error("SH constant shift amount must be in [0, 31]");
+  SmallVector<unsigned, 16> Opcodes = SH::planConstantShift(
+      MI.getOpcode(), static_cast<unsigned>(SignedAmount));
+
+  if (Opcodes.empty()) {
+    BuildMI(*MBB, MI, DL, TII.get(TargetOpcode::COPY), Dest).addReg(Current);
+  } else {
+    for (unsigned I = 0; I != Opcodes.size(); ++I) {
+      Register Next = I + 1 == Opcodes.size() ? Dest : createGPR(MRI);
+      BuildMI(*MBB, MI, DL, TII.get(Opcodes[I]), Next).addReg(Current);
+      Current = Next;
+    }
+  }
+
+  MI.eraseFromParent();
+  return MBB;
+}
+
+static MachineBasicBlock *emitVariableShift(MachineInstr &MI,
+                                            MachineBasicBlock *EntryMBB) {
+  MachineFunction &MF = *EntryMBB->getParent();
+  MachineRegisterInfo &MRI = MF.getRegInfo();
+  const SHInstrInfo &TII = *MF.getSubtarget<SHSubtarget>().getInstrInfo();
+  const DebugLoc &DL = MI.getDebugLoc();
+  const BasicBlock *IRBB = EntryMBB->getBasicBlock();
+  MachineFunction::iterator Insert = std::next(EntryMBB->getIterator());
+
+  MachineBasicBlock *LoopMBB = MF.CreateMachineBasicBlock(IRBB);
+  MachineBasicBlock *DoneMBB = MF.CreateMachineBasicBlock(IRBB);
+  MF.insert(Insert, LoopMBB);
+  MF.insert(Insert, DoneMBB);
+
+  DoneMBB->splice(DoneMBB->begin(), EntryMBB,
+                  std::next(MachineBasicBlock::iterator(MI)), EntryMBB->end());
+  DoneMBB->transferSuccessorsAndUpdatePHIs(EntryMBB);
+
+  EntryMBB->addSuccessor(LoopMBB);
+  EntryMBB->addSuccessor(DoneMBB);
+  LoopMBB->addSuccessor(LoopMBB);
+  LoopMBB->addSuccessor(DoneMBB);
+
+  Register Dest = MI.getOperand(0).getReg();
+  Register Source = MI.getOperand(1).getReg();
+  Register Count = MI.getOperand(2).getReg();
+  Register Mask = createGPR(MRI);
+  Register MaskedCount = createGPR(MRI);
+  Register ValuePhi = createGPR(MRI);
+  Register CountPhi = createGPR(MRI);
+  Register NextValue = createGPR(MRI);
+  Register NextCount = createGPR(MRI);
+
+  BuildMI(*EntryMBB, MI, DL, TII.get(SH::MOVri), Mask).addImm(31);
+  BuildMI(*EntryMBB, MI, DL, TII.get(SH::ANDrr), MaskedCount)
+      .addReg(Mask)
+      .addReg(Count);
+  BuildMI(*EntryMBB, MI, DL, TII.get(SH::TST))
+      .addReg(MaskedCount)
+      .addReg(MaskedCount);
+  BuildMI(*EntryMBB, MI, DL, TII.get(SH::BT)).addMBB(DoneMBB);
+
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(TargetOpcode::PHI), ValuePhi)
+      .addReg(Source)
+      .addMBB(EntryMBB)
+      .addReg(NextValue)
+      .addMBB(LoopMBB);
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(TargetOpcode::PHI), CountPhi)
+      .addReg(MaskedCount)
+      .addMBB(EntryMBB)
+      .addReg(NextCount)
+      .addMBB(LoopMBB);
+
+  unsigned ShiftOpcode;
+  switch (MI.getOpcode()) {
+  default:
+    llvm_unreachable("unexpected SH variable shift pseudo");
+  case SH::SHLrr:
+    ShiftOpcode = SH::SHLL;
+    break;
+  case SH::SRLrr:
+    ShiftOpcode = SH::SHLR;
+    break;
+  case SH::SRArr:
+    ShiftOpcode = SH::SHAR;
+    break;
+  }
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(ShiftOpcode), NextValue)
+      .addReg(ValuePhi);
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SH::DT), NextCount)
+      .addReg(CountPhi);
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SH::BF)).addMBB(LoopMBB);
+
+  BuildMI(*DoneMBB, DoneMBB->begin(), DL, TII.get(TargetOpcode::PHI), Dest)
+      .addReg(Source)
+      .addMBB(EntryMBB)
+      .addReg(NextValue)
+      .addMBB(LoopMBB);
+
+  MI.eraseFromParent();
+  return DoneMBB;
+}
+
+MachineBasicBlock *
+SHTargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
+                                              MachineBasicBlock *MBB) const {
+  switch (MI.getOpcode()) {
+  default:
+    llvm_unreachable("unexpected SH custom inserter opcode");
+  case SH::MOVi32:
+    return emitI32Constant(MI, MBB);
+  case SH::SHLri:
+  case SH::SRLri:
+  case SH::SRAri:
+    return emitConstantShift(MI, MBB);
+  case SH::SHLrr:
+  case SH::SRLrr:
+  case SH::SRArr:
+    return emitVariableShift(MI, MBB);
+  }
 }
 
 void SHTargetLowering::AdjustInstrPostInstrSelection(MachineInstr &MI,
@@ -662,6 +930,15 @@ SDValue SHTargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
   SDValue RHS = Op.getOperand(3);
   SDValue Dest = Op.getOperand(4);
   SDLoc DL(Op);
+
+  if ((CC == ISD::SETEQ || CC == ISD::SETNE) &&
+      ((isa<ConstantSDNode>(RHS) && cast<ConstantSDNode>(RHS)->isZero()) ||
+       (isa<ConstantSDNode>(LHS) && cast<ConstantSDNode>(LHS)->isZero()))) {
+    SDValue Value = isa<ConstantSDNode>(RHS) ? LHS : RHS;
+    SDValue Glue = DAG.getNode(SHISD::TST, DL, MVT::Glue, Value, Value);
+    return DAG.getNode(CC == ISD::SETEQ ? SHISD::BT : SHISD::BF, DL, MVT::Other,
+                       Chain, Dest, Glue);
+  }
 
   unsigned CompareOpcode;
   bool BranchOnSet;
@@ -739,6 +1016,8 @@ const char *SHTargetLowering::getTargetNodeName(unsigned Opcode) const {
     return "SHISD::CMP_HI";
   case SHISD::CMP_GT:
     return "SHISD::CMP_GT";
+  case SHISD::TST:
+    return "SHISD::TST";
   case SHISD::BT:
     return "SHISD::BT";
   case SHISD::BF:

@@ -43,8 +43,7 @@ merge:
 define i32 @count_down(i32 %n) #0 {
 ; CHECK-LABEL: count_down:
 ; CHECK: add	#-1,{{r[0-9]+}}
-; CHECK: mov	#0,[[ZERO:r[0-9]+]]
-; CHECK: cmp/eq	[[ZERO]],{{r[0-9]+}}
+; CHECK: tst	[[VALUE:r[0-9]+]],[[VALUE]]
 ; CHECK: bf	[[LOOP:.LBB[0-9_]+]]
 ; CHECK-NEXT: bra	{{.*}}
 ; CHECK-NEXT: nop

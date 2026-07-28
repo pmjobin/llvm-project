@@ -13,8 +13,8 @@
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/narrow-stack-call-i16.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=CALL-ARGUMENT
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/narrow-vararg.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VARARG
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/narrow-vararg-i16.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VARARG
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/sub.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ARITHMETIC
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/shift.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ARITHMETIC
+; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/variable-shift-i8.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ARITHMETIC
+; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/variable-shift-i16.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ARITHMETIC
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/global.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=GLOBAL
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/vector.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VECTOR
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/materialized-compare.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=MATERIALIZED
@@ -30,8 +30,8 @@
 ; RETURN: LLVM ERROR: SH functions only support void, i32, and pointer return values
 ; CALL-ARGUMENT: LLVM ERROR: SH calls only support scalar i32 and pointer arguments
 ; VARARG: LLVM ERROR: SH varargs calls are not supported
-; ARITHMETIC: LLVM ERROR: SH only supports add for narrow integer arithmetic
-; GLOBAL: LLVM ERROR: SH symbolic memory addresses are not supported
+; ARITHMETIC: LLVM ERROR: SH variable narrow integer shifts are not supported
+; GLOBAL: LLVM ERROR: SH global, function, and block address constants are not supported
 ; VECTOR: LLVM ERROR: SH only supports 8-, 16-, and 32-bit integer and pointer loads
 ; MATERIALIZED: LLVM ERROR: SH comparison results may only be used by conditional branches
 ; INTRINSIC: LLVM ERROR: SH intrinsics are not supported
@@ -138,19 +138,21 @@ define void @narrow_vararg_i16(i32 %value) {
 	ret void
 }
 
-;--- sub.ll
-define void @sub_i8(ptr %p, i32 %value) {
-	%narrow = trunc i32 %value to i8
-	%result = sub i8 %narrow, 1
-	store i8 %result, ptr %p, align 1
+;--- variable-shift-i8.ll
+define void @variable_shift_i8(ptr %value_address, ptr %count_address, ptr %out) {
+	%value = load i8, ptr %value_address, align 1
+	%count = load i8, ptr %count_address, align 1
+	%result = shl i8 %value, %count
+	store i8 %result, ptr %out, align 1
 	ret void
 }
 
-;--- shift.ll
-define void @shift_i16(ptr %p, i32 %value) {
-	%narrow = trunc i32 %value to i16
-	%result = shl i16 %narrow, 1
-	store i16 %result, ptr %p, align 2
+;--- variable-shift-i16.ll
+define void @variable_shift_i16(ptr %value_address, ptr %count_address, ptr %out) {
+	%value = load i16, ptr %value_address, align 2
+	%count = load i16, ptr %count_address, align 2
+	%result = ashr i16 %value, %count
+	store i16 %result, ptr %out, align 2
 	ret void
 }
 

@@ -6,10 +6,8 @@
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/large-frame.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=LARGE-FRAME
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/overaligned.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=OVERALIGNED
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/alloca-escape.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ALLOCA-ESCAPE
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/offset-64.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ADDRESS
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/negative-offset.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ADDRESS
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/register-offset.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ADDRESS
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/global.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ADDRESS
+; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/global.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=GLOBAL
 
 ; LOAD-I64: LLVM ERROR: SH only supports 8-, 16-, and 32-bit integer and pointer loads
 ; UNALIGNED-LOAD: LLVM ERROR: SH requires 4-byte alignment for 32-bit loads
@@ -18,7 +16,8 @@
 ; LARGE-FRAME: LLVM ERROR: SH stack frame size cannot exceed 60 bytes
 ; OVERALIGNED: LLVM ERROR: SH stack object alignment cannot exceed 4 bytes
 ; ALLOCA-ESCAPE: LLVM ERROR: SH stack object address escape is not supported
-; ADDRESS: LLVM ERROR: SH memory address must be a register or frame index with a nonnegative aligned byte displacement no greater than 60
+; ADDRESS: LLVM ERROR: SH memory address must be a register or supported 32-bit constant address addition
+; GLOBAL: LLVM ERROR: SH global, function, and block address constants are not supported
 
 ;--- load-i64.ll
 define i32 @load_i64(ptr %p) {

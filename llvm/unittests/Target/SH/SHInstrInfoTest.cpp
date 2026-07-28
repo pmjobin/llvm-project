@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SHInstrInfo.h"
+#include "SHISelLowering.h"
 #include "SHSubtarget.h"
 #include "SHTargetMachine.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
@@ -185,6 +186,116 @@ TEST_F(SHInstrInfoTest, ByteAndWordInstructionsHavePreciseProperties) {
     EXPECT_FALSE(Desc.mayLoad());
     EXPECT_FALSE(Desc.mayStore());
   }
+}
+
+static uint32_t executeConstantShiftPlan(ArrayRef<unsigned> Opcodes,
+                                         uint32_t Value) {
+  for (unsigned Opcode : Opcodes) {
+    switch (Opcode) {
+    default:
+      llvm_unreachable("unexpected constant shift plan opcode");
+    case SH::SHLL:
+      Value <<= 1;
+      break;
+    case SH::SHLL2:
+      Value <<= 2;
+      break;
+    case SH::SHLL8:
+      Value <<= 8;
+      break;
+    case SH::SHLL16:
+      Value <<= 16;
+      break;
+    case SH::SHLR:
+      Value >>= 1;
+      break;
+    case SH::SHLR2:
+      Value >>= 2;
+      break;
+    case SH::SHLR8:
+      Value >>= 8;
+      break;
+    case SH::SHLR16:
+      Value >>= 16;
+      break;
+    case SH::SHAR:
+      Value = (Value >> 1) | (Value & 0x80000000);
+      break;
+    case SH::EXTSB:
+      Value = static_cast<uint32_t>(
+          static_cast<int32_t>(static_cast<int8_t>(Value)));
+      break;
+    case SH::EXTSW:
+      Value = static_cast<uint32_t>(
+          static_cast<int32_t>(static_cast<int16_t>(Value)));
+      break;
+    }
+  }
+  return Value;
+}
+
+TEST_F(SHInstrInfoTest, ConstantShiftPlansCoverEveryDefinedAmount) {
+  constexpr uint32_t Values[] = {0,          1,          0x7fffffff,
+                                 0x80000000, 0xdeadbeef, 0xffffffff};
+  for (unsigned Amount = 0; Amount != 32; ++Amount) {
+    for (unsigned Pseudo : {SH::SHLri, SH::SRLri, SH::SRAri}) {
+      SmallVector<unsigned, 16> Plan = SH::planConstantShift(Pseudo, Amount);
+      EXPECT_EQ(Amount == 0, Plan.empty());
+      for (uint32_t Value : Values) {
+        uint32_t Expected;
+        if (Pseudo == SH::SHLri)
+          Expected = Value << Amount;
+        else if (Pseudo == SH::SRLri)
+          Expected = Value >> Amount;
+        else {
+          Expected = Value;
+          for (unsigned I = 0; I != Amount; ++I)
+            Expected = (Expected >> 1) | (Expected & 0x80000000);
+        }
+        EXPECT_EQ(Expected, executeConstantShiftPlan(Plan, Value))
+            << "amount " << Amount << ", pseudo " << Pseudo;
+      }
+    }
+  }
+
+  EXPECT_EQ((SmallVector<unsigned, 2>{SH::SHLR16, SH::EXTSW}),
+            SH::planConstantShift(SH::SRAri, 16));
+  EXPECT_EQ((SmallVector<unsigned, 3>{SH::SHLR16, SH::SHLR8, SH::EXTSB}),
+            SH::planConstantShift(SH::SRAri, 24));
+}
+
+TEST_F(SHInstrInfoTest, IntegerALUAndShiftPropertiesArePrecise) {
+  constexpr unsigned RealOpcodes[] = {
+      SH::SUBrr, SH::NEG,   SH::ANDrr, SH::ORrr,   SH::XORrr, SH::NOT,
+      SH::TST,   SH::DT,    SH::SHLL,  SH::SHLR,   SH::SHAR,  SH::SHLL2,
+      SH::SHLR2, SH::SHLL8, SH::SHLR8, SH::SHLL16, SH::SHLR16};
+  for (unsigned Opcode : RealOpcodes) {
+    const MCInstrDesc &Desc = TII->get(Opcode);
+    EXPECT_EQ(2u, Desc.getSize());
+    EXPECT_FALSE(Desc.mayLoad());
+    EXPECT_FALSE(Desc.mayStore());
+  }
+
+  for (unsigned Opcode : {SH::TST, SH::DT, SH::SHLL, SH::SHLR, SH::SHAR})
+    EXPECT_TRUE(TII->get(Opcode).hasImplicitDefOfPhysReg(SH::TBit));
+  for (unsigned Opcode :
+       {SH::SUBrr, SH::NEG, SH::ANDrr, SH::ORrr, SH::XORrr, SH::NOT, SH::SHLL2,
+        SH::SHLR2, SH::SHLL8, SH::SHLR8, SH::SHLL16, SH::SHLR16})
+    EXPECT_FALSE(TII->get(Opcode).hasImplicitDefOfPhysReg(SH::TBit));
+
+  EXPECT_TRUE(TII->get(SH::TST).isCompare());
+  for (unsigned Opcode : {SH::SUBrr, SH::ANDrr, SH::ORrr, SH::XORrr, SH::DT,
+                          SH::SHLL, SH::SHLR, SH::SHAR, SH::SHLL2, SH::SHLR2,
+                          SH::SHLL8, SH::SHLR8, SH::SHLL16, SH::SHLR16})
+    EXPECT_EQ(0, TII->get(Opcode).getOperandConstraint(1, MCOI::TIED_TO));
+  for (unsigned Opcode : {SH::NEG, SH::NOT}) {
+    EXPECT_EQ(-1, TII->get(Opcode).getOperandConstraint(0, MCOI::TIED_TO));
+    EXPECT_EQ(-1, TII->get(Opcode).getOperandConstraint(1, MCOI::TIED_TO));
+  }
+
+  EXPECT_FALSE(TII->get(SH::SUBrr).isCommutable());
+  for (unsigned Opcode : {SH::ANDrr, SH::ORrr, SH::XORrr})
+    EXPECT_TRUE(TII->get(Opcode).isCommutable());
 }
 
 TEST_F(SHInstrInfoTest, InsertBranchReportsFinalEmittedSize) {

@@ -60,6 +60,13 @@ public:
         Base = Addr.getOperand(0);
         return true;
       }
+      if (Offset && isSupportedBase(Addr.getOperand(0))) {
+        int64_t ByteDisp = Offset->getSExtValue();
+        if (ByteDisp < 0 || ByteDisp > 60 || ByteDisp % 4 != 0) {
+          Base = Addr;
+          return true;
+        }
+      }
     }
     if (Addr.getOpcode() == ISD::FrameIndex || !isSupportedBase(Addr))
       return false;

@@ -74,7 +74,7 @@ define void @call_void(i32 %x) {
 define i32 @call_in_control_flow(i32 %x, i32 %condition) {
 ; CHECK-LABEL: call_in_control_flow:
 ; CHECK: sts.l	pr,@-r15
-; CHECK: cmp/eq
+; CHECK: tst
 ; CHECK: {{b[tf]}}
 ; CHECK: bsr	add_one
 ; CHECK-NEXT: nop

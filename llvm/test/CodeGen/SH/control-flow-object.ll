@@ -42,7 +42,7 @@ attributes #0 = { noinline optnone }
 ; COMMON: Flags [ (0x2)
 ; COMMON-NEXT: 0x2
 ; COMMON: Name: .text
-; COMMON: Size: 42
+; COMMON: Size: 40
 ; COMMON: Relocations [
 ; COMMON-NEXT: ]
 
@@ -52,17 +52,17 @@ attributes #0 = { noinline optnone }
 ; COMMON: Type: Function (0x2)
 ; COMMON: Name: count_down
 ; COMMON: Value: 0x14
-; COMMON: Size: 22
+; COMMON: Size: 20
 ; COMMON: Type: Function (0x2)
 
 ; BE: Hex dump of section '.text':
 ; BE-NEXT: 0x00000000 34508b04 a0000009 6043000b 00096053
-; BE-NEXT: 0x00000010 000b0009 6043a000 000970ff e1003010
-; BE-NEXT: 0x00000020 8bfba000 0009000b 0009
+; BE-NEXT: 0x00000010 000b0009 6043a000 000970ff 20088bfc
+; BE-NEXT: 0x00000020 a0000009 000b0009
 ; LE: Hex dump of section '.text':
 ; LE-NEXT: 0x00000000 5034048b 00a00900 43600b00 09005360
-; LE-NEXT: 0x00000010 0b000900 436000a0 0900ff70 00e11030
-; LE-NEXT: 0x00000020 fb8b00a0 09000b00 0900
+; LE-NEXT: 0x00000010 0b000900 436000a0 0900ff70 0820fc8b
+; LE-NEXT: 0x00000020 00a00900 0b000900
 
 ; READELF: Class: ELF32
 ; READELF-BE: Data: 2's complement, big endian
@@ -75,11 +75,13 @@ attributes #0 = { noinline optnone }
 ; DIS-BE: 0: 34 50 cmp/eq r5,r4
 ; DIS-BE: 2: 8b 04 bf	0xe <choose_equal+0xe>
 ; DIS-BE-LABEL: <count_down>:
-; DIS-BE: 20: 8b fb bf	0x1a <count_down+0x6>
+; DIS-BE: 1c: 20 08 tst	r0,r0
+; DIS-BE-NEXT: 1e: 8b fc bf	0x1a <count_down+0x6>
 
 ; DIS-LE: file format elf32-shl
 ; DIS-LE-LABEL: <choose_equal>:
 ; DIS-LE: 0: 50 34 cmp/eq r5,r4
 ; DIS-LE: 2: 04 8b bf	0xe <choose_equal+0xe>
 ; DIS-LE-LABEL: <count_down>:
-; DIS-LE: 20: fb 8b bf	0x1a <count_down+0x6>
+; DIS-LE: 1c: 08 20 tst	r0,r0
+; DIS-LE-NEXT: 1e: fc 8b bf	0x1a <count_down+0x6>

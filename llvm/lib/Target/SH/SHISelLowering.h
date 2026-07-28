@@ -16,6 +16,11 @@ namespace llvm {
 
 class SHSubtarget;
 
+namespace SH {
+SmallVector<unsigned, 16> planConstantShift(unsigned PseudoOpcode,
+                                            unsigned Amount);
+}
+
 class SHTargetLowering : public TargetLowering {
 public:
   SHTargetLowering(const TargetMachine &TM, const SHSubtarget &STI);
@@ -36,6 +41,9 @@ public:
   SDValue LowerCall(CallLoweringInfo &CLI,
                     SmallVectorImpl<SDValue> &InVals) const override;
   SDValue LowerOperation(SDValue Op, SelectionDAG &DAG) const override;
+  MachineBasicBlock *
+  EmitInstrWithCustomInserter(MachineInstr &MI,
+                              MachineBasicBlock *MBB) const override;
   void AdjustInstrPostInstrSelection(MachineInstr &MI,
                                      SDNode *Node) const override;
   SDValue LowerBR_CC(SDValue Op, SelectionDAG &DAG) const;
