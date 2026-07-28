@@ -31,6 +31,25 @@ class SHDAGToDAGISel : public SelectionDAGISel {
     }
   }
 
+  bool SelectNarrowFrameAddr(SDValue Addr, SDValue &Base, SDValue &Disp) {
+    int64_t ByteDisp = 0;
+    SDValue CandidateBase = Addr;
+    if (Addr.getOpcode() == ISD::ADD) {
+      const auto *Offset = dyn_cast<ConstantSDNode>(Addr.getOperand(1));
+      if (!Offset)
+        return false;
+      ByteDisp = Offset->getSExtValue();
+      CandidateBase = Addr.getOperand(0);
+    }
+    if (CandidateBase.getOpcode() != ISD::FrameIndex)
+      return false;
+
+    Base = CurDAG->getTargetFrameIndex(
+        cast<FrameIndexSDNode>(CandidateBase)->getIndex(), MVT::i32);
+    Disp = CurDAG->getTargetConstant(ByteDisp, SDLoc(Addr), MVT::i32);
+    return true;
+  }
+
 public:
   explicit SHDAGToDAGISel(SHTargetMachine &TM) : SelectionDAGISel(TM) {}
 
@@ -72,6 +91,32 @@ public:
       Base = CandidateBase;
     Disp = CurDAG->getTargetConstant(ByteDisp, SDLoc(Addr), MVT::i32);
     return true;
+  }
+
+  bool SelectNarrowAddrReg(SDValue Addr, SDValue &Base) {
+    if (Addr.getValueType() != MVT::i32 || Addr.getOpcode() == ISD::FrameIndex)
+      return false;
+    if (Addr.getOpcode() == ISD::ADD &&
+        Addr.getOperand(0).getOpcode() == ISD::FrameIndex)
+      return false;
+    switch (Addr.getOpcode()) {
+    case ISD::CopyFromReg:
+    case ISD::LOAD:
+    case ISD::Register:
+    case ISD::ADD:
+      Base = Addr;
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  bool SelectByteFrameAddr(SDValue Addr, SDValue &Base, SDValue &Disp) {
+    return SelectNarrowFrameAddr(Addr, Base, Disp);
+  }
+
+  bool SelectWordFrameAddr(SDValue Addr, SDValue &Base, SDValue &Disp) {
+    return SelectNarrowFrameAddr(Addr, Base, Disp);
   }
 
   void Select(SDNode *N) override {

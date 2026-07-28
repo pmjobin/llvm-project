@@ -41,6 +41,9 @@ class SHMCCodeEmitter : public MCCodeEmitter {
   unsigned getLongDispMemOpValue(const MCInst &MI, unsigned OpNo,
                                  SmallVectorImpl<MCFixup> &Fixups,
                                  const MCSubtargetInfo &STI) const;
+  unsigned getNarrowDispMemOpValue(const MCInst &MI, unsigned OpNo,
+                                   SmallVectorImpl<MCFixup> &Fixups,
+                                   const MCSubtargetInfo &STI) const;
 
 public:
   SHMCCodeEmitter(const MCInstrInfo &MCII, MCContext &Ctx)
@@ -129,6 +132,45 @@ SHMCCodeEmitter::getLongDispMemOpValue(const MCInst &MI, unsigned OpNo,
 
   unsigned Reg = Ctx.getRegisterInfo()->getEncodingValue(Base.getReg());
   return (Reg << 4) | static_cast<unsigned>(ByteDisp / 4);
+}
+
+unsigned
+SHMCCodeEmitter::getNarrowDispMemOpValue(const MCInst &MI, unsigned OpNo,
+                                         SmallVectorImpl<MCFixup> &Fixups,
+                                         const MCSubtargetInfo &STI) const {
+  const MCOperand &FixedReg = MI.getOperand(0);
+  const MCOperand &Base = MI.getOperand(OpNo);
+  const MCOperand &Disp = MI.getOperand(OpNo + 1);
+  if (!FixedReg.isReg() || FixedReg.getReg() != SH::R0) {
+    Ctx.reportError(MI.getLoc(),
+                    "byte/word displacement data register must be r0");
+    return 0;
+  }
+  if (!Base.isReg() || !Disp.isImm()) {
+    Ctx.reportError(MI.getLoc(),
+                    "expected register and integer byte/word displacement");
+    return 0;
+  }
+
+  int64_t ByteDisp = Disp.getImm();
+  bool IsWord = MI.getOpcode() == SH::MOVW_load_disp ||
+                MI.getOpcode() == SH::MOVW_store_disp;
+  if (IsWord && (ByteDisp < 0 || ByteDisp > 30 || ByteDisp % 2 != 0)) {
+    Ctx.reportError(MI.getLoc(),
+                    "word displacement must be an even byte offset in the "
+                    "range [0, 30]");
+    return 0;
+  }
+  if (!IsWord && (ByteDisp < 0 || ByteDisp > 15)) {
+    Ctx.reportError(MI.getLoc(),
+                    "byte displacement must be in the range [0, 15]");
+    return 0;
+  }
+
+  unsigned Reg = Ctx.getRegisterInfo()->getEncodingValue(Base.getReg());
+  unsigned EncodedDisp =
+      static_cast<unsigned>(IsWord ? ByteDisp / 2 : ByteDisp);
+  return (Reg << 4) | EncodedDisp;
 }
 
 #include "SHGenMCCodeEmitter.inc"

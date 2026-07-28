@@ -42,6 +42,8 @@ class SHOperand : public MCParsedAsmOperand {
     Immediate,
     LongMemReg,
     LongMemDisp,
+    ByteMemDisp,
+    WordMemDisp,
     PreDecGPR,
     PostIncGPR
   } Kind;
@@ -58,13 +60,16 @@ public:
   bool isReg() const override { return Kind == Register; }
   bool isImm() const override { return Kind == Immediate; }
   bool isMem() const override {
-    return Kind == LongMemReg || Kind == LongMemDisp || Kind == PreDecGPR ||
-           Kind == PostIncGPR;
+    return Kind == LongMemReg || Kind == LongMemDisp || Kind == ByteMemDisp ||
+           Kind == WordMemDisp || Kind == PreDecGPR || Kind == PostIncGPR;
   }
   bool isLongMemReg() const { return Kind == LongMemReg; }
   bool isLongMemDisp() const { return Kind == LongMemDisp; }
+  bool isByteMemDisp() const { return Kind == ByteMemDisp; }
+  bool isWordMemDisp() const { return Kind == WordMemDisp; }
   bool isPreDecGPR() const { return Kind == PreDecGPR; }
   bool isPostIncGPR() const { return Kind == PostIncGPR; }
+  bool isR0() const { return isReg() && Reg == SH::R0; }
   bool isBranchTarget() const { return isImm(); }
 
   SMLoc getStartLoc() const override { return StartLoc; }
@@ -105,7 +110,7 @@ public:
         OS << " with pre-decrement";
       if (Kind == PostIncGPR)
         OS << " with post-increment";
-      if (Kind == LongMemDisp) {
+      if (Kind == LongMemDisp || Kind == ByteMemDisp || Kind == WordMemDisp) {
         OS << " displacement ";
         MAI.printExpr(OS, *Expr);
       }
@@ -138,6 +143,13 @@ public:
 
   void addLongMemDispOperands(MCInst &Inst, unsigned N) const {
     assert(Kind == LongMemDisp && N == 2);
+    Inst.addOperand(MCOperand::createReg(Reg));
+    Inst.addOperand(
+        MCOperand::createImm(cast<MCConstantExpr>(Expr)->getValue()));
+  }
+
+  void addNarrowMemDispOperands(MCInst &Inst, unsigned N) const {
+    assert((Kind == ByteMemDisp || Kind == WordMemDisp) && N == 2);
     Inst.addOperand(MCOperand::createReg(Reg));
     Inst.addOperand(
         MCOperand::createImm(cast<MCConstantExpr>(Expr)->getValue()));
@@ -199,6 +211,31 @@ public:
     return Op;
   }
 
+  static std::unique_ptr<SHOperand>
+  createNarrowMemDisp(KindTy Kind, MCRegister Base, const MCExpr *Disp,
+                      SMLoc Start, SMLoc End) {
+    assert((Kind == ByteMemDisp || Kind == WordMemDisp) &&
+           "invalid narrow memory operand kind");
+    auto Op = std::unique_ptr<SHOperand>(new SHOperand(Kind));
+    Op->Reg = Base;
+    Op->Expr = Disp;
+    Op->StartLoc = Start;
+    Op->EndLoc = End;
+    return Op;
+  }
+
+  static std::unique_ptr<SHOperand> createByteMemDisp(MCRegister Base,
+                                                      const MCExpr *Disp,
+                                                      SMLoc Start, SMLoc End) {
+    return createNarrowMemDisp(ByteMemDisp, Base, Disp, Start, End);
+  }
+
+  static std::unique_ptr<SHOperand> createWordMemDisp(MCRegister Base,
+                                                      const MCExpr *Disp,
+                                                      SMLoc Start, SMLoc End) {
+    return createNarrowMemDisp(WordMemDisp, Base, Disp, Start, End);
+  }
+
   static std::unique_ptr<SHOperand> createPreDecGPR(MCRegister Base,
                                                     SMLoc Start, SMLoc End) {
     auto Op = std::unique_ptr<SHOperand>(new SHOperand(PreDecGPR));
@@ -237,7 +274,7 @@ class SHAsmParser : public MCTargetAsmParser {
   ParseStatus parseOperand(OperandVector &Operands, StringRef Mnemonic);
   ParseStatus parseBranchTarget(OperandVector &Operands);
   ParseStatus parseSImm8(OperandVector &Operands);
-  ParseStatus parseLongMemory(OperandVector &Operands);
+  ParseStatus parseMemory(OperandVector &Operands, StringRef Mnemonic);
   ParseStatus parsePreDecGPR(OperandVector &Operands);
   ParseStatus parsePostIncGPR(OperandVector &Operands);
 
@@ -314,7 +351,8 @@ ParseStatus SHAsmParser::parseBranchTarget(OperandVector &Operands) {
   return ParseStatus::Success;
 }
 
-ParseStatus SHAsmParser::parseLongMemory(OperandVector &Operands) {
+ParseStatus SHAsmParser::parseMemory(OperandVector &Operands,
+                                     StringRef Mnemonic) {
   if (Parser.getTok().isNot(AsmToken::At))
     return ParseStatus::NoMatch;
 
@@ -329,18 +367,31 @@ ParseStatus SHAsmParser::parseLongMemory(OperandVector &Operands) {
     if (Parser.parseExpression(Disp, End))
       return ParseStatus::Failure;
     if (!isa<MCConstantExpr>(Disp)) {
-      Error(Start, "expected an integer longword displacement");
+      Error(Start, "expected an integer memory displacement");
       return ParseStatus::Failure;
     }
     int64_t ByteDisp = cast<MCConstantExpr>(Disp)->getValue();
-    if (ByteDisp < 0 || ByteDisp > 60 || ByteDisp % 4 != 0) {
+    if (Mnemonic == "mov.b" && (ByteDisp < 0 || ByteDisp > 15)) {
+      Error(Start, "byte displacement must be in the range [0, 15]");
+      return ParseStatus::Failure;
+    }
+    if (Mnemonic == "mov.w" &&
+        (ByteDisp < 0 || ByteDisp > 30 || ByteDisp % 2 != 0)) {
+      Error(Start, "word displacement must be an even byte offset in the range "
+                   "[0, 30]");
+      return ParseStatus::Failure;
+    }
+    if (Mnemonic != "mov.b" && Mnemonic != "mov.w" &&
+        (ByteDisp < 0 || ByteDisp > 60 || ByteDisp % 4 != 0)) {
       Error(Start, "longword displacement must be a multiple of 4 in the "
                    "range [0, 60]");
       return ParseStatus::Failure;
     }
     if (Parser.getTok().isNot(AsmToken::Comma)) {
       Error(Parser.getTok().getLoc(),
-            "expected comma in longword memory operand");
+            Mnemonic == "mov.b" || Mnemonic == "mov.w"
+                ? "expected comma in byte/word memory operand"
+                : "expected comma in longword memory operand");
       return ParseStatus::Failure;
     }
     Parser.Lex();
@@ -354,12 +405,19 @@ ParseStatus SHAsmParser::parseLongMemory(OperandVector &Operands) {
     }
     if (Parser.getTok().isNot(AsmToken::RParen)) {
       Error(Parser.getTok().getLoc(),
-            "expected ')' in longword memory operand");
+            Mnemonic == "mov.b" || Mnemonic == "mov.w"
+                ? "expected ')' in byte/word memory operand"
+                : "expected ')' in longword memory operand");
       return ParseStatus::Failure;
     }
     End = Parser.getTok().getEndLoc();
     Parser.Lex();
-    Operands.push_back(SHOperand::createLongMemDisp(Base, Disp, Start, End));
+    if (Mnemonic == "mov.b")
+      Operands.push_back(SHOperand::createByteMemDisp(Base, Disp, Start, End));
+    else if (Mnemonic == "mov.w")
+      Operands.push_back(SHOperand::createWordMemDisp(Base, Disp, Start, End));
+    else
+      Operands.push_back(SHOperand::createLongMemDisp(Base, Disp, Start, End));
     return ParseStatus::Success;
   }
 
@@ -475,7 +533,7 @@ ParseStatus SHAsmParser::parseOperand(OperandVector &Operands,
       return Result;
   }
 
-  ParseStatus Result = parseLongMemory(Operands);
+  ParseStatus Result = parseMemory(Operands, Mnemonic);
   if (!Result.isNoMatch())
     return Result;
 
@@ -536,6 +594,15 @@ bool SHAsmParser::parseInstruction(ParseInstructionInfo &Info, StringRef Name,
       return true;
   }
 
+  if ((Name == "mov.b" || Name == "mov.w") && Operands.size() == 3) {
+    const auto *First = static_cast<const SHOperand *>(Operands[1].get());
+    const auto *Second = static_cast<const SHOperand *>(Operands[2].get());
+    if ((Second->isByteMemDisp() || Second->isWordMemDisp()) && !First->isR0())
+      return Error(First->getStartLoc(), "operand must be r0");
+    if ((First->isByteMemDisp() || First->isWordMemDisp()) && !Second->isR0())
+      return Error(Second->getStartLoc(), "operand must be r0");
+  }
+
   Parser.Lex();
   return false;
 }
@@ -557,6 +624,8 @@ bool SHAsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   case Match_InvalidSImm8:
     return Error(Operands[ErrorInfo]->getStartLoc(),
                  "immediate must be an integer in the range [-128, 127]");
+  case Match_InvalidR0:
+    return Error(Operands[ErrorInfo]->getStartLoc(), "operand must be r0");
   case Match_InvalidTiedOperand:
     return Error(Operands[ErrorInfo]->getStartLoc(),
                  "destination register must match its input");

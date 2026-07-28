@@ -67,6 +67,13 @@ void SHInstPrinter::printLongMemDisp(const MCInst *MI, unsigned OpNo,
   OS << ')';
 }
 
+void SHInstPrinter::printNarrowMemDisp(const MCInst *MI, unsigned OpNo,
+                                       raw_ostream &OS) {
+  OS << "@(" << MI->getOperand(OpNo + 1).getImm() << ',';
+  printRegName(OS, MI->getOperand(OpNo).getReg());
+  OS << ')';
+}
+
 void SHInstPrinter::printPreDecGPR(const MCInst *MI, unsigned OpNo,
                                    raw_ostream &OS) {
   OS << "@-";

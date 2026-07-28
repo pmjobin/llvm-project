@@ -1,0 +1,77 @@
+# RUN: split-file %s %t
+# RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %t/byte-sixteen.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTE
+# RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %t/word-thirty-two.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=WORD
+# RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %t/word-odd.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=ODD
+
+# BYTE: LLVM ERROR: SH finalized byte frame reference offset 16 must be in [0, 15] from r15
+# WORD: LLVM ERROR: SH finalized word frame reference offset 32 must be even and in [0, 30] from r15
+# ODD: LLVM ERROR: SH finalized word frame reference offset 29 must be even and in [0, 30] from r15
+
+#--- byte-sixteen.mir
+--- |
+  define void @byte_sixteen() {
+    ret void
+  }
+...
+---
+name:            byte_sixteen
+tracksRegLiveness: true
+noVRegs:         true
+frameInfo:
+  adjustsStack:    true
+fixedStack:
+  - { id: 0, type: default, offset: 4, size: 1, alignment: 1, stack-id: default,
+      isImmutable: true, isAliased: false }
+body:             |
+  bb.0:
+    ADJCALLSTACKDOWN 12, 0, implicit-def dead $r15, implicit $r15
+    dead $r1 = MOVB_load_frame %fixed-stack.0, 0, implicit-def dead $r0 :: (load (s8) from %fixed-stack.0)
+    ADJCALLSTACKUP 12, 0, implicit-def dead $r15, implicit $r15
+    RTS implicit $pr
+...
+
+#--- word-thirty-two.mir
+--- |
+  define void @word_thirty_two() {
+    ret void
+  }
+...
+---
+name:            word_thirty_two
+tracksRegLiveness: true
+noVRegs:         true
+frameInfo:
+  adjustsStack:    true
+fixedStack:
+  - { id: 0, type: default, offset: 20, size: 2, alignment: 2, stack-id: default,
+      isImmutable: true, isAliased: false }
+body:             |
+  bb.0:
+    ADJCALLSTACKDOWN 12, 0, implicit-def dead $r15, implicit $r15
+    dead $r1 = MOVW_load_frame %fixed-stack.0, 0, implicit-def dead $r0 :: (load (s16) from %fixed-stack.0)
+    ADJCALLSTACKUP 12, 0, implicit-def dead $r15, implicit $r15
+    RTS implicit $pr
+...
+
+#--- word-odd.mir
+--- |
+  define void @word_odd() {
+    ret void
+  }
+...
+---
+name:            word_odd
+tracksRegLiveness: true
+noVRegs:         true
+frameInfo:
+  adjustsStack:    true
+fixedStack:
+  - { id: 0, type: default, offset: 17, size: 2, alignment: 1, stack-id: default,
+      isImmutable: true, isAliased: false }
+body:             |
+  bb.0:
+    ADJCALLSTACKDOWN 12, 0, implicit-def dead $r15, implicit $r15
+    dead $r1 = MOVW_load_frame %fixed-stack.0, 0, implicit-def dead $r0 :: (load (s16) from %fixed-stack.0)
+    ADJCALLSTACKUP 12, 0, implicit-def dead $r15, implicit $r15
+    RTS implicit $pr
+...

@@ -162,6 +162,31 @@ TEST_F(SHInstrInfoTest, CCallRegisterMaskMatchesABI) {
     EXPECT_FALSE(MachineOperand::clobbersPhysReg(Mask, Reg));
 }
 
+TEST_F(SHInstrInfoTest, ByteAndWordInstructionsHavePreciseProperties) {
+  for (unsigned Opcode : {SH::MOVB_load_reg, SH::MOVW_load_reg,
+                          SH::MOVB_load_disp, SH::MOVW_load_disp}) {
+    const MCInstrDesc &Desc = TII->get(Opcode);
+    EXPECT_EQ(2u, Desc.getSize());
+    EXPECT_TRUE(Desc.mayLoad());
+    EXPECT_FALSE(Desc.mayStore());
+  }
+
+  for (unsigned Opcode : {SH::MOVB_store_reg, SH::MOVW_store_reg,
+                          SH::MOVB_store_disp, SH::MOVW_store_disp}) {
+    const MCInstrDesc &Desc = TII->get(Opcode);
+    EXPECT_EQ(2u, Desc.getSize());
+    EXPECT_FALSE(Desc.mayLoad());
+    EXPECT_TRUE(Desc.mayStore());
+  }
+
+  for (unsigned Opcode : {SH::EXTUB, SH::EXTUW, SH::EXTSB, SH::EXTSW}) {
+    const MCInstrDesc &Desc = TII->get(Opcode);
+    EXPECT_EQ(2u, Desc.getSize());
+    EXPECT_FALSE(Desc.mayLoad());
+    EXPECT_FALSE(Desc.mayStore());
+  }
+}
+
 TEST_F(SHInstrInfoTest, InsertBranchReportsFinalEmittedSize) {
   MachineBasicBlock *Unconditional = createBlock();
   MachineBasicBlock *UnconditionalTarget = createBlock();

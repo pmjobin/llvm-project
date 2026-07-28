@@ -143,3 +143,49 @@ class SHLongStoreDisp<dag Outs, dag Ins, string Asm, list<dag> pattern = []>
   let Inst{7-4} = src;
   let Inst{3-0} = addr{3-0};
 }
+
+class SHNarrowLoadReg<bits<4> Suffix, dag Outs, dag Ins, string Asm,
+                      list<dag> pattern = []>
+    : SHInst<Outs, Ins, Asm> {
+  bits<4> dst;
+  bits<4> addr;
+
+  let Pattern = pattern;
+  let Inst{15-12} = 0x6;
+  let Inst{11-8} = dst;
+  let Inst{7-4} = addr;
+  let Inst{3-0} = Suffix;
+}
+
+class SHNarrowStoreReg<bits<4> Suffix, dag Outs, dag Ins, string Asm,
+                       list<dag> pattern = []>
+    : SHInst<Outs, Ins, Asm> {
+  bits<4> src;
+  bits<4> addr;
+
+  let Pattern = pattern;
+  let Inst{15-12} = 0x2;
+  let Inst{11-8} = addr;
+  let Inst{7-4} = src;
+  let Inst{3-0} = Suffix;
+}
+
+class SHNarrowLoadDisp<bits<8> Prefix, dag Outs, dag Ins, string Asm>
+    : SHInst<Outs, Ins, Asm> {
+  bits<4> dst = 0;
+  bits<8> addr;
+
+  let Inst{15-8} = Prefix;
+  let Inst{7-4} = addr{7-4};
+  let Inst{3-0} = addr{3-0};
+}
+
+class SHNarrowStoreDisp<bits<8> Prefix, dag Outs, dag Ins, string Asm>
+    : SHInst<Outs, Ins, Asm> {
+  bits<4> src = 0;
+  bits<8> addr;
+
+  let Inst{15-8} = Prefix;
+  let Inst{7-4} = addr{7-4};
+  let Inst{3-0} = addr{3-0};
+}

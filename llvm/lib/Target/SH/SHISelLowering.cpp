@@ -8,6 +8,7 @@
 
 #include "SHISelLowering.h"
 #include "SHSubtarget.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
@@ -15,6 +16,7 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace llvm;
@@ -32,6 +34,14 @@ SHTargetLowering::SHTargetLowering(const TargetMachine &TM,
 
   setOperationAction(ISD::ADD, MVT::i32, Legal);
   setOperationAction(ISD::Constant, MVT::i32, Legal);
+  setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i32, Legal);
+
+  for (MVT MemVT : {MVT::i8, MVT::i16}) {
+    setLoadExtAction(ISD::EXTLOAD, MVT::i32, MemVT, Legal);
+    setLoadExtAction(ISD::SEXTLOAD, MVT::i32, MemVT, Legal);
+    setLoadExtAction(ISD::ZEXTLOAD, MVT::i32, MemVT, Legal);
+    setTruncStoreAction(MVT::i32, MemVT, Legal);
+  }
 
   for (unsigned Opcode :
        {ISD::LOAD,      ISD::STORE,         ISD::SUB,
@@ -54,10 +64,85 @@ static void requireSupportedCallingConvention(CallingConv::ID CallConv) {
 }
 
 static bool isSupportedSHMemoryType(Type *Ty) {
-  return Ty->isIntegerTy(32) || Ty->isPointerTy();
+  return Ty->isIntegerTy(8) || Ty->isIntegerTy(16) || Ty->isIntegerTy(32) ||
+         Ty->isPointerTy();
+}
+
+static bool isSupportedSHStackType(Type *Ty) {
+  if (isSupportedSHMemoryType(Ty))
+    return true;
+  if (const auto *ArrayTy = dyn_cast<ArrayType>(Ty))
+    return isSupportedSHStackType(ArrayTy->getElementType());
+  if (const auto *StructTy = dyn_cast<StructType>(Ty)) {
+    if (StructTy->isOpaque())
+      return false;
+    for (Type *ElementTy : StructTy->elements())
+      if (!isSupportedSHStackType(ElementTy))
+        return false;
+    return true;
+  }
+  return false;
+}
+
+static void requireSupportedSHMemoryAlignment(Type *Ty, Align Alignment,
+                                              bool IsLoad) {
+  if (Ty->isIntegerTy(8))
+    return;
+  if (Ty->isIntegerTy(16)) {
+    if (Alignment < Align(2))
+      report_fatal_error(
+          IsLoad ? "SH requires 2-byte alignment for 16-bit loads"
+                 : "SH requires 2-byte alignment for 16-bit stores");
+    return;
+  }
+  if (Alignment < Align(4))
+    report_fatal_error(IsLoad
+                           ? "SH requires 4-byte alignment for 32-bit loads"
+                           : "SH requires 4-byte alignment for 32-bit stores");
+}
+
+static void validateSHAllocaUses(const AllocaInst &Alloca) {
+  SmallVector<const Value *, 8> Worklist(1, &Alloca);
+  SmallPtrSet<const Value *, 8> Visited;
+  while (!Worklist.empty()) {
+    const Value *Pointer = Worklist.pop_back_val();
+    if (!Visited.insert(Pointer).second)
+      continue;
+    for (const User *Use : Pointer->users()) {
+      if (const auto *Cast = dyn_cast<BitCastInst>(Use)) {
+        if (Cast->getOperand(0) == Pointer) {
+          Worklist.push_back(Cast);
+          continue;
+        }
+      }
+      if (const auto *GEP = dyn_cast<GetElementPtrInst>(Use)) {
+        if (GEP->getPointerOperand() == Pointer) {
+          Worklist.push_back(GEP);
+          continue;
+        }
+      }
+      if (const auto *Load = dyn_cast<LoadInst>(Use))
+        if (Load->getPointerOperand() == Pointer)
+          continue;
+      if (const auto *Store = dyn_cast<StoreInst>(Use))
+        if (Store->getPointerOperand() == Pointer)
+          continue;
+      report_fatal_error("SH stack object address escape is not supported");
+    }
+  }
 }
 
 static void validateSHIR(const Function &F) {
+  if (!F.getReturnType()->isVoidTy() && !F.getReturnType()->isIntegerTy(32) &&
+      !F.getReturnType()->isPointerTy())
+    report_fatal_error(
+        "SH functions only support void, i32, and pointer return values");
+  for (const Argument &Arg : F.args())
+    if (!Arg.getType()->isIntegerTy(32) && !Arg.getType()->isPointerTy())
+      report_fatal_error(
+          "SH function arguments must be scalar i32 or pointers");
+  if (F.isVarArg())
+    report_fatal_error("SH varargs are not supported");
   if (F.hasFnAttribute("stackrealign") ||
       (F.getFnStackAlign() && *F.getFnStackAlign() > Align(4)))
     report_fatal_error("SH stack realignment is not supported");
@@ -79,6 +164,8 @@ static void validateSHIR(const Function &F) {
           report_fatal_error("SH exception-handling calls are not supported");
         if (Call->isInlineAsm())
           report_fatal_error("SH inline assembly is not supported");
+        if (Call->getIntrinsicID() != Intrinsic::not_intrinsic)
+          report_fatal_error("SH intrinsics are not supported");
         if (Call->getFunctionType()->isVarArg())
           report_fatal_error("SH varargs calls are not supported");
         if (const auto *CallInst = dyn_cast<llvm::CallInst>(Call)) {
@@ -113,16 +200,20 @@ static void validateSHIR(const Function &F) {
       if (const auto *Phi = dyn_cast<PHINode>(&I)) {
         if (Phi->getType()->isIntegerTy(1))
           report_fatal_error("SH i1 PHIs are not supported");
-        if (!Phi->getType()->isIntegerTy(32))
-          report_fatal_error("SH only supports i32 PHIs");
+        if (!Phi->getType()->isIntegerTy(8) &&
+            !Phi->getType()->isIntegerTy(16) &&
+            !Phi->getType()->isIntegerTy(32))
+          report_fatal_error("SH only supports i8, i16, and i32 PHIs");
       }
 
       if (const auto *Cmp = dyn_cast<ICmpInst>(&I)) {
         Type *OperandTy = Cmp->getOperand(0)->getType();
         if (OperandTy->isPointerTy())
           report_fatal_error("SH pointer comparisons are not supported");
-        if (!OperandTy->isIntegerTy(32))
-          report_fatal_error("SH only supports i32 integer comparisons");
+        if (!OperandTy->isIntegerTy(8) && !OperandTy->isIntegerTy(16) &&
+            !OperandTy->isIntegerTy(32))
+          report_fatal_error(
+              "SH only supports i8, i16, and i32 integer comparisons");
         for (const User *Use : Cmp->users()) {
           const auto *Branch = dyn_cast<CondBrInst>(Use);
           if (!Branch || Branch->getCondition() != Cmp)
@@ -136,23 +227,32 @@ static void validateSHIR(const Function &F) {
       if (const auto *Load = dyn_cast<LoadInst>(&I)) {
         if (!isSupportedSHMemoryType(Load->getType()))
           report_fatal_error(
-              "SH only supports 32-bit integer and pointer loads");
+              "SH only supports 8-, 16-, and 32-bit integer and pointer loads");
         if (Load->isAtomic())
           report_fatal_error("SH atomic loads are not supported");
-        if (Load->getAlign() < Align(4))
-          report_fatal_error("SH requires 4-byte alignment for 32-bit loads");
+        requireSupportedSHMemoryAlignment(Load->getType(), Load->getAlign(),
+                                          true);
         continue;
       }
 
       if (const auto *Store = dyn_cast<StoreInst>(&I)) {
         if (!isSupportedSHMemoryType(Store->getValueOperand()->getType()))
           report_fatal_error(
-              "SH only supports 32-bit integer and pointer stores");
+              "SH only supports 8-, 16-, and 32-bit integer and pointer "
+              "stores");
         if (Store->isAtomic())
           report_fatal_error("SH atomic stores are not supported");
-        if (Store->getAlign() < Align(4))
-          report_fatal_error("SH requires 4-byte alignment for 32-bit stores");
+        requireSupportedSHMemoryAlignment(Store->getValueOperand()->getType(),
+                                          Store->getAlign(), false);
         continue;
+      }
+
+      if (const auto *BinOp = dyn_cast<BinaryOperator>(&I)) {
+        Type *Ty = BinOp->getType();
+        if ((Ty->isIntegerTy(8) || Ty->isIntegerTy(16)) &&
+            BinOp->getOpcode() != Instruction::Add)
+          report_fatal_error(
+              "SH only supports add for narrow integer arithmetic");
       }
 
       const auto *Alloca = dyn_cast<AllocaInst>(&I);
@@ -161,20 +261,13 @@ static void validateSHIR(const Function &F) {
       if (!Alloca->isStaticAlloca())
         report_fatal_error("SH dynamic alloca is not supported");
       const auto *Count = dyn_cast<ConstantInt>(Alloca->getArraySize());
-      if (!Alloca->getAllocatedType()->isIntegerTy(32) || !Count ||
-          !Count->isOne())
-        report_fatal_error("SH only supports fixed scalar i32 allocas");
+      if (!Count || !isSupportedSHStackType(Alloca->getAllocatedType()))
+        report_fatal_error(
+            "SH only supports fixed stack objects containing i8, i16, i32, "
+            "and pointers");
       if (Alloca->getAlign() > Align(4))
         report_fatal_error("SH stack object alignment cannot exceed 4 bytes");
-      for (const User *Use : Alloca->users()) {
-        const auto *Load = dyn_cast<LoadInst>(Use);
-        if (Load && Load->getPointerOperand() == Alloca)
-          continue;
-        const auto *Store = dyn_cast<StoreInst>(Use);
-        if (Store && Store->getPointerOperand() == Alloca)
-          continue;
-        report_fatal_error("SH stack object address escape is not supported");
-      }
+      validateSHAllocaUses(*Alloca);
     }
   }
 }
@@ -478,19 +571,47 @@ static bool isSupportedSHAddress(SDValue Addr) {
   return ByteDisp >= 0 && ByteDisp <= 60 && ByteDisp % 4 == 0;
 }
 
+static bool isSupportedSHNarrowAddress(SDValue Addr) {
+  auto IsBase = [](SDValue Base) {
+    return Base.getValueType() == MVT::i32 &&
+           (Base.getOpcode() == ISD::FrameIndex ||
+            Base.getOpcode() == ISD::CopyFromReg ||
+            Base.getOpcode() == ISD::LOAD || Base.getOpcode() == ISD::Register);
+  };
+
+  if (IsBase(Addr))
+    return true;
+  if (Addr.getOpcode() != ISD::ADD || Addr.getValueType() != MVT::i32)
+    return false;
+  if (!IsBase(Addr.getOperand(0)))
+    return false;
+  return isa<ConstantSDNode>(Addr.getOperand(1)) || IsBase(Addr.getOperand(1));
+}
+
 SDValue SHTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   if (Op.getOpcode() == ISD::BR_CC)
     return LowerBR_CC(Op, DAG);
   if (Op.getOpcode() == ISD::LOAD || Op.getOpcode() == ISD::STORE) {
     const auto *Mem = cast<MemSDNode>(Op);
-    if (Mem->getMemoryVT() != MVT::i32)
-      report_fatal_error("SH only supports 32-bit memory operations");
-    if (Mem->getAlign() < Align(4))
-      report_fatal_error("SH requires 4-byte alignment for mov.l");
-    if (!isSupportedSHAddress(Mem->getBasePtr()))
+    EVT MemoryVT = Mem->getMemoryVT();
+    if (MemoryVT == MVT::i32) {
+      if (Mem->getAlign() < Align(4))
+        report_fatal_error("SH requires 4-byte alignment for mov.l");
+      if (!isSupportedSHAddress(Mem->getBasePtr()))
+        report_fatal_error(
+            "SH memory address must be a register or frame index with a "
+            "nonnegative aligned byte displacement no greater than 60");
+      return Op;
+    }
+    if (MemoryVT != MVT::i8 && MemoryVT != MVT::i16)
       report_fatal_error(
-          "SH memory address must be a register or frame index with a "
-          "nonnegative aligned byte displacement no greater than 60");
+          "SH only supports 8-, 16-, and 32-bit memory operations");
+    if (MemoryVT == MVT::i16 && Mem->getAlign() < Align(2))
+      report_fatal_error("SH requires 2-byte alignment for mov.w");
+    if (!isSupportedSHNarrowAddress(Mem->getBasePtr()))
+      report_fatal_error(
+          "SH byte/word memory address must be a register, frame index, or "
+          "supported 32-bit address addition");
     return Op;
   }
   if (Op.getOpcode() == ISD::DYNAMIC_STACKALLOC)
@@ -504,7 +625,34 @@ SDValue SHTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
         "SH comparison results may only be used by conditional branches");
   if (Op.getOpcode() == ISD::SELECT || Op.getOpcode() == ISD::SELECT_CC)
     report_fatal_error("SH select is not supported");
-  report_fatal_error("SH operation is not supported");
+  if (Op.getOpcode() == ISD::AND) {
+    const auto *Mask = dyn_cast<ConstantSDNode>(Op.getOperand(1));
+    if (Mask &&
+        (Mask->getZExtValue() == 0xff || Mask->getZExtValue() == 0xffff))
+      return Op;
+    report_fatal_error("SH logical operations are not supported");
+  }
+  if (Op.getOpcode() == ISD::OR) {
+    if (Op->getFlags().hasDisjoint() &&
+        Op.getOperand(0).getOpcode() == ISD::FrameIndex &&
+        isa<ConstantSDNode>(Op.getOperand(1)))
+      return DAG.getNode(ISD::ADD, SDLoc(Op), MVT::i32, Op.getOperand(0),
+                         Op.getOperand(1));
+    report_fatal_error("SH logical operations are not supported");
+  }
+  report_fatal_error(Twine("SH operation is not supported: ") +
+                     Op->getOperationName(&DAG));
+}
+
+void SHTargetLowering::AdjustInstrPostInstrSelection(MachineInstr &MI,
+                                                     SDNode *Node) const {
+  if (MI.getOpcode() != SH::MOVB_store_frame &&
+      MI.getOpcode() != SH::MOVW_store_frame)
+    return;
+  MachineOperand *R0Def = MI.findRegisterDefOperand(SH::R0, /*TRI=*/nullptr);
+  if (!R0Def)
+    report_fatal_error("SH narrow frame store is missing its r0 clobber");
+  R0Def->setIsEarlyClobber(true);
 }
 
 SDValue SHTargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {

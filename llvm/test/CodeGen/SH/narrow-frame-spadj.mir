@@ -1,0 +1,129 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog,postrapseudos %s -o - | FileCheck %s --check-prefix=FINAL
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog,postrapseudos %s -o - | FileCheck %s --check-prefix=FINAL
+
+--- |
+  define void @byte_fifteen() {
+    ret void
+  }
+
+  define void @word_thirty() {
+    ret void
+  }
+
+  define void @byte_zero() {
+    ret void
+  }
+
+  define void @word_zero() {
+    ret void
+  }
+...
+---
+name:            byte_fifteen
+tracksRegLiveness: true
+noVRegs:         true
+frameInfo:
+  adjustsStack:    true
+fixedStack:
+  - { id: 0, type: default, offset: 3, size: 1, alignment: 1, stack-id: default,
+      isImmutable: true, isAliased: false }
+body:             |
+  bb.0:
+    ADJCALLSTACKDOWN 12, 0, implicit-def dead $r15, implicit $r15
+    dead $r1 = MOVB_load_frame %fixed-stack.0, 0, implicit-def dead $r0 :: (load (s8) from %fixed-stack.0)
+    ADJCALLSTACKUP 12, 0, implicit-def dead $r15, implicit $r15
+    RTS implicit $pr
+...
+---
+name:            word_thirty
+tracksRegLiveness: true
+noVRegs:         true
+frameInfo:
+  adjustsStack:    true
+fixedStack:
+  - { id: 0, type: default, offset: 18, size: 2, alignment: 2, stack-id: default,
+      isImmutable: true, isAliased: false }
+body:             |
+  bb.0:
+    ADJCALLSTACKDOWN 12, 0, implicit-def dead $r15, implicit $r15
+    dead $r1 = MOVW_load_frame %fixed-stack.0, 0, implicit-def dead $r0 :: (load (s16) from %fixed-stack.0)
+    ADJCALLSTACKUP 12, 0, implicit-def dead $r15, implicit $r15
+    RTS implicit $pr
+...
+---
+name:            byte_zero
+tracksRegLiveness: true
+noVRegs:         true
+fixedStack:
+  - { id: 0, type: default, offset: 0, size: 1, alignment: 1, stack-id: default,
+      isImmutable: true, isAliased: false }
+body:             |
+  bb.0:
+    dead $r1 = MOVB_load_frame %fixed-stack.0, 0, implicit-def dead $r0 :: (load (s8) from %fixed-stack.0)
+    RTS implicit $pr
+...
+---
+name:            word_zero
+tracksRegLiveness: true
+noVRegs:         true
+fixedStack:
+  - { id: 0, type: default, offset: 0, size: 2, alignment: 2, stack-id: default,
+      isImmutable: false, isAliased: false }
+body:             |
+  bb.0:
+    liveins: $r1
+
+    MOVW_store_frame killed $r1, %fixed-stack.0, 0, implicit-def dead early-clobber $r0 :: (store (s16) into %fixed-stack.0)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            byte_fifteen
+# CHECK-LABEL: body:
+# CHECK-NOT: ADJCALLSTACK
+# CHECK: $r15 = ADDri $r15, -12
+# CHECK-NEXT: dead $r1 = MOVB_load_frame $r15, 15, implicit-def dead $r0
+# CHECK-NEXT: $r15 = ADDri $r15, 12
+
+# CHECK-LABEL: name:            word_thirty
+# CHECK-LABEL: body:
+# CHECK-NOT: ADJCALLSTACK
+# CHECK: $r15 = ADDri $r15, -12
+# CHECK-NEXT: dead $r1 = MOVW_load_frame $r15, 30, implicit-def dead $r0
+# CHECK-NEXT: $r15 = ADDri $r15, 12
+
+# CHECK-LABEL: name:            byte_zero
+# CHECK-LABEL: body:
+# CHECK-NEXT: bb.0:
+# CHECK-NEXT: dead $r1 = MOVB_load_reg $r15 :: (load (s8)
+# CHECK-NEXT: RTS
+
+# CHECK-LABEL: name:            word_zero
+# CHECK-LABEL: body:
+# CHECK-NEXT: bb.0:
+# CHECK: MOVW_store_reg killed $r1, $r15 :: (store (s16)
+# CHECK-NEXT: RTS
+
+# FINAL-LABEL: name:            byte_fifteen
+# FINAL-LABEL: body:
+# FINAL-NOT: MOVB_load_frame
+# FINAL: $r0 = MOVB_load_disp $r15, 15 :: (load (s8)
+# FINAL-NEXT: dead $r1 = MOVrr killed $r0
+
+# FINAL-LABEL: name:            word_thirty
+# FINAL-LABEL: body:
+# FINAL-NOT: MOVW_load_frame
+# FINAL: $r0 = MOVW_load_disp $r15, 30 :: (load (s16)
+# FINAL-NEXT: dead $r1 = MOVrr killed $r0
+
+# FINAL-LABEL: name:            byte_zero
+# FINAL-LABEL: body:
+# FINAL-NOT: MOVB_load_frame
+# FINAL-NEXT: bb.0:
+# FINAL-NEXT: dead $r1 = MOVB_load_reg $r15 :: (load (s8)
+
+# FINAL-LABEL: name:            word_zero
+# FINAL-LABEL: body:
+# FINAL-NOT: MOVW_store_frame
+# FINAL: MOVW_store_reg killed $r1, $r15 :: (store (s16)

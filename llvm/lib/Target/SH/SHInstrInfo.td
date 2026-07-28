@@ -65,6 +65,25 @@ def LongMemDispAsmOperand : AsmOperandClass {
   let RenderMethod = "addLongMemDispOperands";
 }
 
+def ByteMemDispAsmOperand : AsmOperandClass {
+  let Name = "ByteMemDisp";
+  let PredicateMethod = "isByteMemDisp";
+  let RenderMethod = "addNarrowMemDispOperands";
+}
+
+def WordMemDispAsmOperand : AsmOperandClass {
+  let Name = "WordMemDisp";
+  let PredicateMethod = "isWordMemDisp";
+  let RenderMethod = "addNarrowMemDispOperands";
+}
+
+def R0AsmOperand : AsmOperandClass {
+  let Name = "R0";
+  let PredicateMethod = "isR0";
+  let RenderMethod = "addRegOperands";
+  let DiagnosticType = "InvalidR0";
+}
+
 def PreDecGPRAsmOperand : AsmOperandClass {
   let Name = "PreDecGPR";
   let PredicateMethod = "isPreDecGPR";
@@ -92,6 +111,27 @@ def longmemdisp : Operand<iPTR> {
   let DecoderMethod = "decodeLongDispMemOperand";
 }
 
+def bytememdisp : Operand<iPTR> {
+  let MIOperandInfo = (ops GPR, i32imm);
+  let ParserMatchClass = ByteMemDispAsmOperand;
+  let PrintMethod = "printNarrowMemDisp";
+  let EncoderMethod = "getNarrowDispMemOpValue";
+  let DecoderMethod = "decodeByteDispMemOperand";
+}
+
+def wordmemdisp : Operand<iPTR> {
+  let MIOperandInfo = (ops GPR, i32imm);
+  let ParserMatchClass = WordMemDispAsmOperand;
+  let PrintMethod = "printNarrowMemDisp";
+  let EncoderMethod = "getNarrowDispMemOpValue";
+  let DecoderMethod = "decodeWordDispMemOperand";
+}
+
+def r0reg : RegisterOperand<GPR> {
+  let ParserMatchClass = R0AsmOperand;
+  let DecoderMethod = "decodeR0RegisterClass";
+}
+
 def predecgpr : Operand<iPTR> {
   let MIOperandInfo = (ops GPR);
   let ParserMatchClass = PreDecGPRAsmOperand;
@@ -108,6 +148,11 @@ def postincgpr : Operand<iPTR> {
 
 def addr_reg : ComplexPattern<iPTR, 1, "SelectAddrReg">;
 def addr_disp : ComplexPattern<iPTR, 2, "SelectAddrDisp", [add, frameindex]>;
+def addr_narrow_reg : ComplexPattern<iPTR, 1, "SelectNarrowAddrReg", [add]>;
+def addr_byte_frame
+    : ComplexPattern<iPTR, 2, "SelectByteFrameAddr", [add, frameindex]>;
+def addr_word_frame
+    : ComplexPattern<iPTR, 2, "SelectWordFrameAddr", [add, frameindex]>;
 
 def SDT_SHCmp : SDTypeProfile<0, 2, [SDTCisVT<0, i32>, SDTCisVT<1, i32>]>;
 def SDT_SHBrcond : SDTypeProfile<0, 1, [SDTCisVT<0, OtherVT>]>;
@@ -237,3 +282,106 @@ def MOVL_store_disp
     : SHLongStoreDisp<(outs), (ins GPR:$src, longmemdisp:$addr),
                       "mov.l\t$src,$addr",
                       [(store GPR:$src, addr_disp:$addr)]>;
+
+let mayStore = 1 in {
+  def MOVB_store_reg
+      : SHNarrowStoreReg<0x0, (outs), (ins GPR:$src, longmemreg:$addr),
+                         "mov.b\t$src,$addr",
+                         [(truncstorei8 GPR:$src,
+                                          addr_narrow_reg:$addr)]>;
+  def MOVW_store_reg
+      : SHNarrowStoreReg<0x1, (outs), (ins GPR:$src, longmemreg:$addr),
+                         "mov.w\t$src,$addr",
+                         [(truncstorei16 GPR:$src,
+                                           addr_narrow_reg:$addr)]>;
+}
+
+let mayLoad = 1 in {
+  def MOVB_load_reg
+      : SHNarrowLoadReg<0x0, (outs GPR:$dst), (ins longmemreg:$addr),
+                        "mov.b\t$addr,$dst",
+                        [(set GPR:$dst,
+                              (sextloadi8 addr_narrow_reg:$addr))]>;
+  def MOVW_load_reg
+      : SHNarrowLoadReg<0x1, (outs GPR:$dst), (ins longmemreg:$addr),
+                        "mov.w\t$addr,$dst",
+                        [(set GPR:$dst,
+                              (sextloadi16 addr_narrow_reg:$addr))]>;
+}
+
+let mayStore = 1 in {
+  def MOVB_store_disp
+      : SHNarrowStoreDisp<0x80, (outs),
+                          (ins r0reg:$src, bytememdisp:$addr),
+                          "mov.b\t$src,$addr">;
+  def MOVW_store_disp
+      : SHNarrowStoreDisp<0x81, (outs),
+                          (ins r0reg:$src, wordmemdisp:$addr),
+                          "mov.w\t$src,$addr">;
+}
+
+let mayLoad = 1 in {
+  def MOVB_load_disp
+      : SHNarrowLoadDisp<0x84, (outs r0reg:$dst),
+                         (ins bytememdisp:$addr), "mov.b\t$addr,$dst">;
+  def MOVW_load_disp
+      : SHNarrowLoadDisp<0x85, (outs r0reg:$dst),
+                         (ins wordmemdisp:$addr), "mov.w\t$addr,$dst">;
+}
+
+def EXTUB : SHRegReg<0x6, 0xc, (outs GPR:$dst), (ins GPR:$src),
+                     "extu.b\t$src,$dst",
+                     [(set GPR:$dst, (and GPR:$src, 0xff))]>;
+def EXTUW : SHRegReg<0x6, 0xd, (outs GPR:$dst), (ins GPR:$src),
+                     "extu.w\t$src,$dst",
+                     [(set GPR:$dst, (and GPR:$src, 0xffff))]>;
+def EXTSB : SHRegReg<0x6, 0xe, (outs GPR:$dst), (ins GPR:$src),
+                     "exts.b\t$src,$dst",
+                     [(set GPR:$dst, (sext_inreg GPR:$src, i8))]>;
+def EXTSW : SHRegReg<0x6, 0xf, (outs GPR:$dst), (ins GPR:$src),
+                     "exts.w\t$src,$dst",
+                     [(set GPR:$dst, (sext_inreg GPR:$src, i16))]>;
+
+let mayLoad = 1, Defs = [R0] in {
+  def MOVB_load_frame
+      : SHPseudo<(outs GPR:$dst), (ins bytememdisp:$addr)> {
+    let Pattern =
+        [(set GPR:$dst, (sextloadi8 addr_byte_frame:$addr))];
+  }
+  def MOVW_load_frame
+      : SHPseudo<(outs GPR:$dst), (ins wordmemdisp:$addr)> {
+    let Pattern =
+        [(set GPR:$dst, (sextloadi16 addr_word_frame:$addr))];
+  }
+}
+
+let mayStore = 1, Defs = [R0], hasPostISelHook = 1 in {
+  def MOVB_store_frame
+      : SHPseudo<(outs), (ins GPR:$src, bytememdisp:$addr)> {
+    let Pattern =
+        [(truncstorei8 GPR:$src, addr_byte_frame:$addr)];
+  }
+  def MOVW_store_frame
+      : SHPseudo<(outs), (ins GPR:$src, wordmemdisp:$addr)> {
+    let Pattern =
+        [(truncstorei16 GPR:$src, addr_word_frame:$addr)];
+  }
+}
+
+def : Pat<(i32 (extloadi8 addr_narrow_reg:$addr)),
+          (MOVB_load_reg addr_narrow_reg:$addr)>;
+def : Pat<(i32 (extloadi16 addr_narrow_reg:$addr)),
+          (MOVW_load_reg addr_narrow_reg:$addr)>;
+def : Pat<(i32 (zextloadi8 addr_narrow_reg:$addr)),
+          (EXTUB (MOVB_load_reg addr_narrow_reg:$addr))>;
+def : Pat<(i32 (zextloadi16 addr_narrow_reg:$addr)),
+          (EXTUW (MOVW_load_reg addr_narrow_reg:$addr))>;
+
+def : Pat<(i32 (extloadi8 addr_byte_frame:$addr)),
+          (MOVB_load_frame addr_byte_frame:$addr)>;
+def : Pat<(i32 (extloadi16 addr_word_frame:$addr)),
+          (MOVW_load_frame addr_word_frame:$addr)>;
+def : Pat<(i32 (zextloadi8 addr_byte_frame:$addr)),
+          (EXTUB (MOVB_load_frame addr_byte_frame:$addr))>;
+def : Pat<(i32 (zextloadi16 addr_word_frame:$addr)),
+          (EXTUW (MOVW_load_frame addr_word_frame:$addr))>;

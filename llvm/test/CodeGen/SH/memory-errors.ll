@@ -1,6 +1,4 @@
 ; RUN: split-file %s %t
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/load-i8.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=LOAD-I8
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/load-i16.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=LOAD-I16
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/load-i64.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=LOAD-I64
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/unaligned-load.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=UNALIGNED-LOAD
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/unaligned-store.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=UNALIGNED-STORE
@@ -13,9 +11,7 @@
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/register-offset.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ADDRESS
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/global.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ADDRESS
 
-; LOAD-I8: LLVM ERROR: SH only supports 32-bit integer and pointer loads
-; LOAD-I16: LLVM ERROR: SH only supports 32-bit integer and pointer loads
-; LOAD-I64: LLVM ERROR: SH only supports 32-bit integer and pointer loads
+; LOAD-I64: LLVM ERROR: SH only supports 8-, 16-, and 32-bit integer and pointer loads
 ; UNALIGNED-LOAD: LLVM ERROR: SH requires 4-byte alignment for 32-bit loads
 ; UNALIGNED-STORE: LLVM ERROR: SH requires 4-byte alignment for 32-bit stores
 ; DYNAMIC: LLVM ERROR: SH dynamic alloca is not supported
@@ -23,20 +19,6 @@
 ; OVERALIGNED: LLVM ERROR: SH stack object alignment cannot exceed 4 bytes
 ; ALLOCA-ESCAPE: LLVM ERROR: SH stack object address escape is not supported
 ; ADDRESS: LLVM ERROR: SH memory address must be a register or frame index with a nonnegative aligned byte displacement no greater than 60
-
-;--- load-i8.ll
-define i32 @load_i8(ptr %p) {
-	%value = load volatile i8, ptr %p, align 1
-	%result = zext i8 %value to i32
-	ret i32 %result
-}
-
-;--- load-i16.ll
-define i32 @load_i16(ptr %p) {
-	%value = load volatile i16, ptr %p, align 2
-	%result = zext i16 %value to i32
-	ret i32 %result
-}
 
 ;--- load-i64.ll
 define i32 @load_i64(ptr %p) {

@@ -54,6 +54,13 @@ DecodeGPRRegisterClass(MCInst &MI, uint64_t RegNo, uint64_t Address,
   return MCDisassembler::Success;
 }
 
+static MCDisassembler::DecodeStatus
+decodeR0RegisterClass(MCInst &MI, uint64_t RegNo, uint64_t Address,
+                      const MCDisassembler *Decoder) {
+  MI.addOperand(MCOperand::createReg(SH::R0));
+  return MCDisassembler::Success;
+}
+
 static MCDisassembler::DecodeStatus decodeSImm8(MCInst &MI, uint64_t Imm,
                                                 uint64_t Address,
                                                 const MCDisassembler *Decoder) {
@@ -92,6 +99,29 @@ decodeLongDispMemOperand(MCInst &MI, uint64_t Value, uint64_t Address,
     return MCDisassembler::Fail;
   MI.addOperand(MCOperand::createImm((Value & 0xf) * 4));
   return MCDisassembler::Success;
+}
+
+template <unsigned Scale>
+static MCDisassembler::DecodeStatus
+decodeNarrowDispMemOperand(MCInst &MI, uint64_t Value, uint64_t Address,
+                           const MCDisassembler *Decoder) {
+  if (DecodeGPRRegisterClass(MI, Value >> 4, Address, Decoder) ==
+      MCDisassembler::Fail)
+    return MCDisassembler::Fail;
+  MI.addOperand(MCOperand::createImm((Value & 0xf) * Scale));
+  return MCDisassembler::Success;
+}
+
+static MCDisassembler::DecodeStatus
+decodeByteDispMemOperand(MCInst &MI, uint64_t Value, uint64_t Address,
+                         const MCDisassembler *Decoder) {
+  return decodeNarrowDispMemOperand<1>(MI, Value, Address, Decoder);
+}
+
+static MCDisassembler::DecodeStatus
+decodeWordDispMemOperand(MCInst &MI, uint64_t Value, uint64_t Address,
+                         const MCDisassembler *Decoder) {
+  return decodeNarrowDispMemOperand<2>(MI, Value, Address, Decoder);
 }
 
 #include "SHGenDisassemblerTables.inc"

@@ -50,6 +50,63 @@ void SHInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
       .addReg(SrcReg, getKillRegState(KillSrc));
 }
 
+bool SHInstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
+  unsigned Opcode = MI.getOpcode();
+  bool IsLoad = Opcode == SH::MOVB_load_frame || Opcode == SH::MOVW_load_frame;
+  bool IsStore =
+      Opcode == SH::MOVB_store_frame || Opcode == SH::MOVW_store_frame;
+  if (!IsLoad && !IsStore)
+    return false;
+
+  MachineBasicBlock &MBB = *MI.getParent();
+  MachineBasicBlock::iterator Insert = MI.getIterator();
+  const DebugLoc &DL = MI.getDebugLoc();
+  unsigned RealOpcode;
+  if (Opcode == SH::MOVB_load_frame)
+    RealOpcode = SH::MOVB_load_disp;
+  else if (Opcode == SH::MOVW_load_frame)
+    RealOpcode = SH::MOVW_load_disp;
+  else if (Opcode == SH::MOVB_store_frame)
+    RealOpcode = SH::MOVB_store_disp;
+  else
+    RealOpcode = SH::MOVW_store_disp;
+
+  if (IsLoad) {
+    MachineOperand &Dest = MI.getOperand(0);
+    Register DestReg = Dest.getReg();
+    MachineInstrBuilder Load = BuildMI(MBB, Insert, DL, get(RealOpcode), SH::R0)
+                                   .add(MI.getOperand(1))
+                                   .add(MI.getOperand(2))
+                                   .setMIFlags(MI.getFlags())
+                                   .cloneMemRefs(MI);
+    if (DestReg == SH::R0) {
+      Load->getOperand(0).setIsDead(Dest.isDead());
+    } else {
+      MachineInstrBuilder Copy =
+          BuildMI(MBB, Insert, DL, get(SH::MOVrr), DestReg)
+              .addReg(SH::R0, RegState::Kill);
+      Copy->getOperand(0).setIsDead(Dest.isDead());
+    }
+  } else {
+    MachineOperand &Src = MI.getOperand(0);
+    Register SrcReg = Src.getReg();
+    if (SrcReg != SH::R0)
+      BuildMI(MBB, Insert, DL, get(SH::MOVrr), SH::R0)
+          .addReg(SrcReg, getKillRegState(Src.isKill()));
+    RegState R0State =
+        SrcReg == SH::R0 ? getKillRegState(Src.isKill()) : RegState::Kill;
+    BuildMI(MBB, Insert, DL, get(RealOpcode))
+        .addReg(SH::R0, R0State)
+        .add(MI.getOperand(1))
+        .add(MI.getOperand(2))
+        .setMIFlags(MI.getFlags())
+        .cloneMemRefs(MI);
+  }
+
+  MI.eraseFromParent();
+  return true;
+}
+
 Register SHInstrInfo::isLoadFromStackSlot(const MachineInstr &MI,
                                           int &FrameIndex) const {
   if (MI.getOpcode() == SH::MOVL_load_disp && MI.getOperand(1).isFI() &&
