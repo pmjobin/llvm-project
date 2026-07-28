@@ -15,7 +15,7 @@
 
 ; OUTGOING64: LLVM ERROR: SH outgoing call frame size cannot exceed 60 bytes
 ; INCOMING64: LLVM ERROR: SH finalized frame reference offset 64 must be four-byte aligned and in [0, 60] from r15
-; ARGUMENT: LLVM ERROR: SH calls only support scalar i32 and pointer arguments
+; ARGUMENT: LLVM ERROR: SH calls only support scalar i32, i64, and pointer arguments
 ; DYNAMIC: LLVM ERROR: SH dynamic alloca is not supported
 ; REALIGN: LLVM ERROR: SH stack realignment is not supported
 

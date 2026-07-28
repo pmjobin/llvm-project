@@ -12,7 +12,7 @@ def CC_SH : CallingConv<[
 ]>;
 
 def RetCC_SH : CallingConv<[
-  CCIfType<[i32], CCAssignToReg<[R0]>>
+  CCIfType<[i32], CCAssignToReg<[R0, R1]>>
 ]>;
 
 def CSR_SH_Save : CalleeSavedRegs<(add PR, R8, R9, R10, R11, R12, R13, R14)>;

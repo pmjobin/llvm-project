@@ -1,12 +1,10 @@
 ; RUN: split-file %s %t
 ; RUN: not --crash llc -mtriple=shle-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/varargs-call.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VARARGS-CALL
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/varargs-definition.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VARARGS
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/i64-argument.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ARGUMENT
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/float-argument.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ARGUMENT
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/aggregate-argument.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ARGUMENT
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/byval.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ARGUMENT
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/sret.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ARGUMENT
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/i64-return.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=RETURN
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/float-return.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=RETURN
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/aggregate-return.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=RETURN
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/tail.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=TAIL
@@ -27,8 +25,8 @@
 
 ; VARARGS-CALL: LLVM ERROR: SH varargs calls are not supported
 ; VARARGS: LLVM ERROR: SH varargs are not supported
-; ARGUMENT: LLVM ERROR: SH calls only support scalar i32 and pointer arguments
-; RETURN: LLVM ERROR: SH calls only support void, i32, and pointer return values
+; ARGUMENT: LLVM ERROR: SH calls only support scalar i32, i64, and pointer arguments
+; RETURN: LLVM ERROR: SH calls only support void, i32, i64, and pointer return values
 ; TAIL: LLVM ERROR: SH tail calls are not supported
 ; MUSTTAIL: LLVM ERROR: SH musttail calls are not supported
 ; EXTERNAL: LLVM ERROR: SH unresolved or interposable direct calls are not supported
@@ -50,12 +48,6 @@ define i32 @varargs_call(ptr %fn) {
 define i32 @varargs_definition(ptr %fn, ...) {
 	%result = call i32 %fn()
 	ret i32 %result
-}
-
-;--- i64-argument.ll
-define void @i64_argument(ptr %fn) {
-	call void %fn(i64 1)
-	ret void
 }
 
 ;--- float-argument.ll
@@ -80,13 +72,6 @@ define void @byval_argument(ptr %fn, ptr %value) {
 define void @sret_argument(ptr %fn, ptr %value) {
 	call void %fn(ptr sret(i32) %value)
 	ret void
-}
-
-;--- i64-return.ll
-define i32 @i64_return(ptr %fn) {
-	%value = call i64 %fn()
-	%result = trunc i64 %value to i32
-	ret i32 %result
 }
 
 ;--- float-return.ll

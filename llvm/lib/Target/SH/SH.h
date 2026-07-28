@@ -21,12 +21,22 @@ class FunctionPass;
 class PassRegistry;
 class SHTargetMachine;
 
+void validateSHIR(const Function &F);
+
 class SHDAGToDAGISelPass : public SelectionDAGISelPass {
 public:
   explicit SHDAGToDAGISelPass(SHTargetMachine &TM);
 };
 
 FunctionPass *createSHISelDagLegacyPass(SHTargetMachine &TM);
+
+class SHLowerI64StackAlignPass
+    : public PassInfoMixin<SHLowerI64StackAlignPass> {
+public:
+  PreservedAnalyses run(Function &F, FunctionAnalysisManager &FAM);
+};
+
+FunctionPass *createSHLowerI64StackAlignLegacyPass();
 
 class SHDelaySlotFillerPass : public PassInfoMixin<SHDelaySlotFillerPass> {
 public:
@@ -38,6 +48,7 @@ FunctionPass *createSHDelaySlotFillerLegacyPass();
 
 void initializeSHAsmPrinterPass(PassRegistry &);
 void initializeSHDAGToDAGISelLegacyPass(PassRegistry &);
+void initializeSHLowerI64StackAlignLegacyPass(PassRegistry &);
 void initializeSHDelaySlotFillerLegacyPass(PassRegistry &);
 
 } // namespace llvm

@@ -23,6 +23,7 @@ add_llvm_target(SHCodeGen
   SHISelDAGToDAG.cpp
   SHISelLowering.cpp
   SHInstrInfo.cpp
+  SHLowerI64StackAlign.cpp
   SHMCInstLower.cpp
   SHRegisterInfo.cpp
   SHSelectionDAGInfo.cpp

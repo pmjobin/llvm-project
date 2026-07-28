@@ -1,5 +1,4 @@
 ; RUN: split-file %s %t
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/i64.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=I64
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/funnel.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INTRINSIC
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/ctpop.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INTRINSIC
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/ctlz.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INTRINSIC
@@ -13,19 +12,9 @@
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/function-address.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ADDRESS
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/block-address.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ADDRESS
 
-; I64: LLVM ERROR: SH only supports i8, i16, and i32 integer operations
 ; INTRINSIC: LLVM ERROR: SH intrinsics are not supported
-; VECTOR: LLVM ERROR: SH only supports i8, i16, and i32 integer operations
+; VECTOR: LLVM ERROR: SH only supports i8, i16, i32, and selected i64 integer operations
 ; ADDRESS: LLVM ERROR: SH global, function, and block address constants are not supported
-
-;--- i64.ll
-define i32 @wide_alu(i32 %a, i32 %b) {
-	%wide_a = zext i32 %a to i64
-	%wide_b = zext i32 %b to i64
-	%wide = xor i64 %wide_a, %wide_b
-	%result = trunc i64 %wide to i32
-	ret i32 %result
-}
 
 ;--- funnel.ll
 declare i32 @llvm.fshl.i32(i32, i32, i32)

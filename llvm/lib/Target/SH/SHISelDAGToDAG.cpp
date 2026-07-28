@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SH.h"
+#include "SHISelLowering.h"
 #include "SHTargetMachine.h"
 #include "llvm/CodeGen/SelectionDAGISel.h"
 #include "llvm/Support/Debug.h"
@@ -129,6 +130,16 @@ public:
   void Select(SDNode *N) override {
     if (N->isMachineOpcode()) {
       N->setNodeId(-1);
+      return;
+    }
+    if (N->getOpcode() == ISD::BRCOND &&
+        N->getOperand(1).getOpcode() == SHISD::SETCC64) {
+      SDValue Condition = N->getOperand(1);
+      SDValue Operands[] = {Condition.getOperand(0), Condition.getOperand(1),
+                            Condition.getOperand(2), Condition.getOperand(3),
+                            Condition.getOperand(4), N->getOperand(2),
+                            N->getOperand(0)};
+      CurDAG->SelectNodeTo(N, SH::BR_CC64_PSEUDO, MVT::Other, Operands);
       return;
     }
     SelectCode(N);

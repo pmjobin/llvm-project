@@ -1,9 +1,9 @@
 ; RUN: split-file %s %t
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/i64-mul.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=WIDE
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/i64-udiv.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=WIDE
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/i64-sdiv.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=WIDE
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/i64-urem.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=WIDE
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/i64-srem.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=WIDE
+; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/i64-mul.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=WIDE-MUL
+; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/i64-udiv.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=WIDE-DIV
+; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/i64-sdiv.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=WIDE-DIV
+; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/i64-urem.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=WIDE-DIV
+; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/i64-srem.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=WIDE-DIV
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/i8-udiv.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=NARROW
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/i16-sdiv.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=NARROW
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/i8-urem.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=NARROW
@@ -14,9 +14,10 @@
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/multiply-overflow.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INTRINSIC
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/saturating.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INTRINSIC
 
-; WIDE: LLVM ERROR: SH only supports i8, i16, and i32 integer {{operations|comparisons}}
+; WIDE-MUL: LLVM ERROR: SH i64 multiplication is not supported
+; WIDE-DIV: LLVM ERROR: SH i64 division and remainder are not supported
 ; NARROW: LLVM ERROR: SH narrow integer division and remainder are not supported
-; TYPE: LLVM ERROR: SH only supports i8, i16, and i32 integer operations
+; TYPE: LLVM ERROR: SH only supports i8, i16, i32, and selected i64 integer operations
 ; INTRINSIC: LLVM ERROR: SH intrinsics are not supported
 
 ;--- i64-mul.ll

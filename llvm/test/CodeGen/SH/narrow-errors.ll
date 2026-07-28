@@ -26,13 +26,13 @@
 ; UNALIGNED-STORE: LLVM ERROR: SH requires 2-byte alignment for 16-bit stores
 ; ATOMIC-LOAD: LLVM ERROR: SH atomic loads are not supported
 ; ATOMIC-STORE: LLVM ERROR: SH atomic stores are not supported
-; ARGUMENT: LLVM ERROR: SH function arguments must be scalar i32 or pointers
-; RETURN: LLVM ERROR: SH functions only support void, i32, and pointer return values
-; CALL-ARGUMENT: LLVM ERROR: SH calls only support scalar i32 and pointer arguments
+; ARGUMENT: LLVM ERROR: SH function arguments must be scalar i32, i64, or pointers
+; RETURN: LLVM ERROR: SH functions only support void, i32, i64, and pointer return values
+; CALL-ARGUMENT: LLVM ERROR: SH calls only support scalar i32, i64, and pointer arguments
 ; VARARG: LLVM ERROR: SH varargs calls are not supported
 ; ARITHMETIC: LLVM ERROR: SH variable narrow integer shifts are not supported
 ; GLOBAL: LLVM ERROR: SH global, function, and block address constants are not supported
-; VECTOR: LLVM ERROR: SH only supports 8-, 16-, and 32-bit integer and pointer loads
+; VECTOR: LLVM ERROR: SH only supports 8-, 16-, 32-, and 64-bit integer and pointer loads
 ; MATERIALIZED: LLVM ERROR: SH comparison results may only be used by conditional branches
 ; INTRINSIC: LLVM ERROR: SH intrinsics are not supported
 

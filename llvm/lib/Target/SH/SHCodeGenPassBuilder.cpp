@@ -28,6 +28,10 @@ public:
   SHCodeGenPassBuilder(SHTargetMachine &TM, const CGPassBuilderOption &Opts,
                        PassInstrumentationCallbacks *PIC)
       : Base(TM, Opts, PIC) {}
+  void addIRPasses(PassManagerWrapper &PMW) const {
+    addFunctionPass(SHLowerI64StackAlignPass(), PMW);
+    Base::addIRPasses(PMW);
+  }
   Error addInstSelector(PassManagerWrapper &PMW) const {
     addMachineFunctionPass(SHDAGToDAGISelPass(TM), PMW);
     return Error::success();
@@ -57,6 +61,8 @@ void SHTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
                             "sh-asm-printer-begin");
     PIC->addClassToPassName(SHAsmPrinterPass::name(), "sh-asm-printer");
     PIC->addClassToPassName(SHAsmPrinterEndPass::name(), "sh-asm-printer-end");
+    PIC->addClassToPassName(SHLowerI64StackAlignPass::name(),
+                            "sh-lower-i64-stack-align");
   }
 }
 

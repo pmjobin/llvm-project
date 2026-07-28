@@ -75,8 +75,5 @@ mac.l @r5+,@r4+
 mac.w @r5+,@r4+
 ! CHECK: :[[@LINE-1]]:10: error: expected comma
 
-rotcr r4
-! CHECK: :[[@LINE-1]]:1: error: unrecognized instruction mnemonic
-
 negc r5,r4
 ! CHECK: :[[@LINE-1]]:1: error: unrecognized instruction mnemonic

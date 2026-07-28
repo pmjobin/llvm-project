@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SHISelLowering.h"
+#include "SH.h"
 #include "SHSubtarget.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/CodeGen/CallingConvLower.h"
@@ -38,13 +39,23 @@ SHTargetLowering::SHTargetLowering(const TargetMachine &TM,
   for (unsigned Opcode :
        {ISD::ADD, ISD::SUB, ISD::MUL, ISD::XOR, ISD::SHL, ISD::SRA, ISD::SRL})
     setOperationAction(Opcode, MVT::i32, Legal);
+  for (unsigned Opcode : {ISD::ADDC, ISD::ADDE, ISD::SUBC, ISD::SUBE})
+    setOperationAction(Opcode, MVT::i32, Legal);
+  for (unsigned Opcode : {ISD::SHL_PARTS, ISD::SRL_PARTS, ISD::SRA_PARTS})
+    setOperationAction(Opcode, MVT::i32, Custom);
+  setOperationAction(ISD::SETCC, MVT::i64, Custom);
+  setOperationAction(ISD::LOAD, MVT::i64, Custom);
+  setOperationAction(ISD::STORE, MVT::i64, Custom);
   setOperationAction(ISD::Constant, MVT::i32, Legal);
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i32, Legal);
   for (unsigned Opcode : {ISD::SDIV, ISD::UDIV, ISD::SREM, ISD::UREM})
     setOperationAction(Opcode, MVT::i32, Expand);
   setOperationAction(ISD::SDIVREM, MVT::i32, Custom);
   setOperationAction(ISD::UDIVREM, MVT::i32, Custom);
-  setMaxDivRemBitWidthSupported(32);
+  // Preserve i64 div/rem in IR until SH can diagnose the unsupported
+  // operation instead of letting generic expansion create an apparent
+  // supported implementation.
+  setMaxDivRemBitWidthSupported(64);
 
   for (MVT MemVT : {MVT::i8, MVT::i16}) {
     setLoadExtAction(ISD::EXTLOAD, MVT::i32, MemVT, Legal);
@@ -70,7 +81,11 @@ static void requireSupportedCallingConvention(CallingConv::ID CallConv) {
 
 static bool isSupportedSHMemoryType(Type *Ty) {
   return Ty->isIntegerTy(8) || Ty->isIntegerTy(16) || Ty->isIntegerTy(32) ||
-         Ty->isPointerTy();
+         Ty->isIntegerTy(64) || Ty->isPointerTy();
+}
+
+static bool isSupportedSHScalarType(Type *Ty) {
+  return Ty->isIntegerTy(32) || Ty->isIntegerTy(64) || Ty->isPointerTy();
 }
 
 static bool isSupportedSHStackType(Type *Ty) {
@@ -101,9 +116,9 @@ static void requireSupportedSHMemoryAlignment(Type *Ty, Align Alignment,
     return;
   }
   if (Alignment < Align(4))
-    report_fatal_error(IsLoad
-                           ? "SH requires 4-byte alignment for 32-bit loads"
-                           : "SH requires 4-byte alignment for 32-bit stores");
+    report_fatal_error(
+        IsLoad ? "SH requires 4-byte alignment for 32- and 64-bit loads"
+               : "SH requires 4-byte alignment for 32- and 64-bit stores");
 }
 
 static void validateSHAllocaUses(const AllocaInst &Alloca) {
@@ -149,15 +164,18 @@ static bool containsUnsupportedSHAddressConstant(const Value *V) {
   return false;
 }
 
-static void validateSHIR(const Function &F) {
-  if (!F.getReturnType()->isVoidTy() && !F.getReturnType()->isIntegerTy(32) &&
-      !F.getReturnType()->isPointerTy())
+void llvm::validateSHIR(const Function &F) {
+  if (F.getReturnType()->isIntegerTy(1))
     report_fatal_error(
-        "SH functions only support void, i32, and pointer return values");
+        "SH comparison results may only be used by conditional branches");
+  if (!F.getReturnType()->isVoidTy() &&
+      !isSupportedSHScalarType(F.getReturnType()))
+    report_fatal_error(
+        "SH functions only support void, i32, i64, and pointer return values");
   for (const Argument &Arg : F.args())
-    if (!Arg.getType()->isIntegerTy(32) && !Arg.getType()->isPointerTy())
+    if (!isSupportedSHScalarType(Arg.getType()))
       report_fatal_error(
-          "SH function arguments must be scalar i32 or pointers");
+          "SH function arguments must be scalar i32, i64, or pointers");
   if (F.isVarArg())
     report_fatal_error("SH varargs are not supported");
   if (F.hasFnAttribute("stackrealign") ||
@@ -184,6 +202,9 @@ static void validateSHIR(const Function &F) {
         report_fatal_error("SH callbr is not supported");
       if (isa<SelectInst>(&I))
         report_fatal_error("SH select is not supported");
+      if (isa<AtomicRMWInst>(&I) || isa<AtomicCmpXchgInst>(&I))
+        report_fatal_error(
+            "SH atomic read-modify-write operations are not supported");
       if (Call) {
         requireSupportedCallingConvention(Call->getCallingConv());
         if (isa<InvokeInst>(Call))
@@ -202,13 +223,13 @@ static void validateSHIR(const Function &F) {
         }
 
         Type *ReturnTy = Call->getType();
-        if (!ReturnTy->isVoidTy() && !ReturnTy->isIntegerTy(32) &&
-            !ReturnTy->isPointerTy())
+        if (!ReturnTy->isVoidTy() && !isSupportedSHScalarType(ReturnTy))
           report_fatal_error(
-              "SH calls only support void, i32, and pointer return values");
+              "SH calls only support void, i32, i64, and pointer return "
+              "values");
         for (unsigned ArgNo = 0; ArgNo != Call->arg_size(); ++ArgNo) {
           Type *ArgTy = Call->getArgOperand(ArgNo)->getType();
-          if ((!ArgTy->isIntegerTy(32) && !ArgTy->isPointerTy()) ||
+          if (!isSupportedSHScalarType(ArgTy) ||
               Call->paramHasAttr(ArgNo, Attribute::ByVal) ||
               Call->paramHasAttr(ArgNo, Attribute::StructRet) ||
               Call->paramHasAttr(ArgNo, Attribute::InAlloca) ||
@@ -220,7 +241,8 @@ static void validateSHIR(const Function &F) {
               Call->paramHasAttr(ArgNo, Attribute::SwiftAsync) ||
               Call->paramHasAttr(ArgNo, Attribute::SwiftError))
             report_fatal_error(
-                "SH calls only support scalar i32 and pointer arguments");
+                "SH calls only support scalar i32, i64, and pointer "
+                "arguments");
         }
       }
       if (const auto *Phi = dyn_cast<PHINode>(&I)) {
@@ -228,8 +250,9 @@ static void validateSHIR(const Function &F) {
           report_fatal_error("SH i1 PHIs are not supported");
         if (!Phi->getType()->isIntegerTy(8) &&
             !Phi->getType()->isIntegerTy(16) &&
-            !Phi->getType()->isIntegerTy(32))
-          report_fatal_error("SH only supports i8, i16, and i32 PHIs");
+            !Phi->getType()->isIntegerTy(32) &&
+            !Phi->getType()->isIntegerTy(64))
+          report_fatal_error("SH only supports i8, i16, i32, and i64 PHIs");
       }
 
       if (const auto *Cmp = dyn_cast<ICmpInst>(&I)) {
@@ -237,9 +260,9 @@ static void validateSHIR(const Function &F) {
         if (OperandTy->isPointerTy())
           report_fatal_error("SH pointer comparisons are not supported");
         if (!OperandTy->isIntegerTy(8) && !OperandTy->isIntegerTy(16) &&
-            !OperandTy->isIntegerTy(32))
+            !OperandTy->isIntegerTy(32) && !OperandTy->isIntegerTy(64))
           report_fatal_error(
-              "SH only supports i8, i16, and i32 integer comparisons");
+              "SH only supports i8, i16, i32, and i64 integer comparisons");
         for (const User *Use : Cmp->users()) {
           const auto *Branch = dyn_cast<CondBrInst>(Use);
           if (!Branch || Branch->getCondition() != Cmp)
@@ -253,7 +276,8 @@ static void validateSHIR(const Function &F) {
       if (const auto *Load = dyn_cast<LoadInst>(&I)) {
         if (!isSupportedSHMemoryType(Load->getType()))
           report_fatal_error(
-              "SH only supports 8-, 16-, and 32-bit integer and pointer loads");
+              "SH only supports 8-, 16-, 32-, and 64-bit integer and pointer "
+              "loads");
         if (Load->isAtomic())
           report_fatal_error("SH atomic loads are not supported");
         requireSupportedSHMemoryAlignment(Load->getType(), Load->getAlign(),
@@ -264,7 +288,7 @@ static void validateSHIR(const Function &F) {
       if (const auto *Store = dyn_cast<StoreInst>(&I)) {
         if (!isSupportedSHMemoryType(Store->getValueOperand()->getType()))
           report_fatal_error(
-              "SH only supports 8-, 16-, and 32-bit integer and pointer "
+              "SH only supports 8-, 16-, 32-, and 64-bit integer and pointer "
               "stores");
         if (Store->isAtomic())
           report_fatal_error("SH atomic stores are not supported");
@@ -275,9 +299,34 @@ static void validateSHIR(const Function &F) {
 
       if (const auto *BinOp = dyn_cast<BinaryOperator>(&I)) {
         Type *Ty = BinOp->getType();
-        if (!Ty->isIntegerTy(8) && !Ty->isIntegerTy(16) && !Ty->isIntegerTy(32))
+        if (!Ty->isIntegerTy(8) && !Ty->isIntegerTy(16) &&
+            !Ty->isIntegerTy(32) && !Ty->isIntegerTy(64))
           report_fatal_error(
-              "SH only supports i8, i16, and i32 integer operations");
+              "SH only supports i8, i16, i32, and selected i64 integer "
+              "operations");
+        if (Ty->isIntegerTy(64)) {
+          switch (BinOp->getOpcode()) {
+          default:
+            report_fatal_error("SH i64 operation is not supported");
+          case Instruction::Add:
+          case Instruction::Sub:
+          case Instruction::And:
+          case Instruction::Or:
+          case Instruction::Xor:
+          case Instruction::Shl:
+          case Instruction::LShr:
+          case Instruction::AShr:
+            break;
+          case Instruction::Mul:
+            report_fatal_error("SH i64 multiplication is not supported");
+          case Instruction::SDiv:
+          case Instruction::UDiv:
+          case Instruction::SRem:
+          case Instruction::URem:
+            report_fatal_error(
+                "SH i64 division and remainder are not supported");
+          }
+        }
         if (Ty->isIntegerTy(8) || Ty->isIntegerTy(16)) {
           switch (BinOp->getOpcode()) {
           default:
@@ -315,7 +364,7 @@ static void validateSHIR(const Function &F) {
       if (!Count || !isSupportedSHStackType(Alloca->getAllocatedType()))
         report_fatal_error(
             "SH only supports fixed stack objects containing i8, i16, i32, "
-            "and pointers");
+            "i64, and pointers");
       if (Alloca->getAlign() > Align(4))
         report_fatal_error("SH stack object alignment cannot exceed 4 bytes");
       validateSHAllocaUses(*Alloca);
@@ -331,7 +380,11 @@ bool SHTargetLowering::CanLowerReturn(
     report_fatal_error(
         "SH comparison results may only be used by conditional branches");
   if (CallConv != CallingConv::C || IsVarArg || Outs.size() > 1)
-    return false;
+    return RetTy->isIntegerTy(64) && CallConv == CallingConv::C && !IsVarArg &&
+           Outs.size() == 2 &&
+           llvm::all_of(Outs, [](const ISD::OutputArg &Out) {
+             return Out.VT == MVT::i32;
+           });
   if (RetTy->isVoidTy())
     return Outs.empty();
   return (RetTy->isIntegerTy(32) || RetTy->isPointerTy()) && Outs.size() == 1 &&
@@ -350,19 +403,21 @@ SDValue SHTargetLowering::LowerFormalArguments(
     report_fatal_error("SH varargs are not supported");
   if (F.hasStructRetAttr())
     report_fatal_error("SH structure returns are not supported");
-  if (F.arg_size() != Ins.size())
-    report_fatal_error("SH only supports scalar i32 and pointer arguments");
+  unsigned ExpectedParts = 0;
+  for (const Argument &Arg : F.args())
+    ExpectedParts += Arg.getType()->isIntegerTy(64) ? 2 : 1;
+  if (ExpectedParts != Ins.size())
+    report_fatal_error(
+        "SH failed to split scalar arguments into 32-bit ABI words");
 
-  unsigned Index = 0;
-  for (const Argument &Arg : F.args()) {
-    const ISD::InputArg &In = Ins[Index++];
-    if ((!Arg.getType()->isIntegerTy(32) && !Arg.getType()->isPointerTy()) ||
-        In.VT != MVT::i32 || In.Flags.isByVal() || In.Flags.isSRet() ||
-        In.Flags.isByRef() || In.Flags.isInAlloca() ||
-        In.Flags.isPreallocated() || In.Flags.isNest() ||
-        In.Flags.isReturned() || In.Flags.isSwiftSelf() ||
+  for (const ISD::InputArg &In : Ins) {
+    if (!isSupportedSHScalarType(In.OrigTy) || In.VT != MVT::i32 ||
+        In.Flags.isByVal() || In.Flags.isSRet() || In.Flags.isByRef() ||
+        In.Flags.isInAlloca() || In.Flags.isPreallocated() ||
+        In.Flags.isNest() || In.Flags.isReturned() || In.Flags.isSwiftSelf() ||
         In.Flags.isSwiftAsync() || In.Flags.isSwiftError())
-      report_fatal_error("SH only supports scalar i32 and pointer arguments");
+      report_fatal_error(
+          "SH only supports scalar i32, i64, and pointer arguments");
   }
 
   SmallVector<CCValAssign, 4> ArgLocs;
@@ -374,9 +429,11 @@ SDValue SHTargetLowering::LowerFormalArguments(
   MachineRegisterInfo &MRI = MF.getRegInfo();
   MachineFrameInfo &MFI = MF.getFrameInfo();
   SmallVector<SDValue, 4> ArgChains;
-  for (const CCValAssign &VA : ArgLocs) {
+  SmallVector<SDValue, 8> ABIValues(Ins.size());
+  for (unsigned I = 0; I != ArgLocs.size(); ++I) {
+    const CCValAssign &VA = ArgLocs[I];
     if (VA.getLocVT() != MVT::i32 || VA.getLocInfo() != CCValAssign::Full)
-      report_fatal_error("SH only supports unextended i32 arguments");
+      report_fatal_error("SH only supports unextended 32-bit ABI words");
     SDValue Value;
     if (VA.isRegLoc()) {
       Register VReg = MRI.createVirtualRegister(&SH::GPRRegClass);
@@ -394,8 +451,13 @@ SDValue SHTargetLowering::LowerFormalArguments(
       Value = DAG.getLoad(MVT::i32, DL, Chain, FrameIndex,
                           MachinePointerInfo::getFixedStack(MF, FI), Align(4));
     }
-    InVals.push_back(Value);
+    ABIValues[I] = Value;
     ArgChains.push_back(Value.getValue(1));
+  }
+  for (SDValue Value : ABIValues) {
+    if (!Value)
+      report_fatal_error("SH failed to assign an incoming ABI word");
+    InVals.push_back(Value);
   }
   if (!ArgChains.empty())
     Chain = DAG.getNode(ISD::TokenFactor, DL, MVT::Other, ArgChains);
@@ -416,9 +478,10 @@ SHTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
   bool IsSupportedScalar = (F.getReturnType()->isIntegerTy(32) ||
                             F.getReturnType()->isPointerTy()) &&
                            Outs.size() == 1;
+  IsSupportedScalar |= F.getReturnType()->isIntegerTy(64) && Outs.size() == 2;
   if ((!IsSupportedVoid && !IsSupportedScalar) || Outs.size() != OutVals.size())
     report_fatal_error(
-        "SH only supports zero or one scalar i32 or pointer return value");
+        "SH only supports scalar i32, i64, and pointer return values");
 
   SmallVector<CCValAssign, 1> RetLocs;
   CCState CCInfo(CallConv, IsVarArg, DAG.getMachineFunction(), RetLocs,
@@ -429,12 +492,13 @@ SHTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
   SmallVector<SDValue, 4> RetOps(1, Chain);
   for (unsigned I = 0; I != RetLocs.size(); ++I) {
     const CCValAssign &VA = RetLocs[I];
-    if (!VA.isRegLoc() || VA.getLocReg() != SH::R0 ||
+    MCRegister ExpectedReg = I == 0 ? SH::R0 : SH::R1;
+    if (!VA.isRegLoc() || VA.getLocReg() != ExpectedReg ||
         VA.getLocVT() != MVT::i32 || VA.getLocInfo() != CCValAssign::Full)
-      report_fatal_error("SH only supports 32-bit returns in r0");
-    Chain = DAG.getCopyToReg(Chain, DL, SH::R0, OutVals[I], Glue);
+      report_fatal_error("SH scalar returns must use r0 and optionally r1");
+    Chain = DAG.getCopyToReg(Chain, DL, ExpectedReg, OutVals[I], Glue);
     Glue = Chain.getValue(1);
-    RetOps.push_back(DAG.getRegister(SH::R0, MVT::i32));
+    RetOps.push_back(DAG.getRegister(ExpectedReg, MVT::i32));
   }
   RetOps[0] = Chain;
   if (Glue)
@@ -464,31 +528,34 @@ SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
   bool SupportedScalarReturn =
       ReturnTy && (ReturnTy->isIntegerTy(32) || ReturnTy->isPointerTy()) &&
       CLI.Ins.size() == 1 && CLI.Ins[0].VT == MVT::i32;
+  SupportedScalarReturn |=
+      ReturnTy && ReturnTy->isIntegerTy(64) && CLI.Ins.size() == 2 &&
+      llvm::all_of(CLI.Ins,
+                   [](const ISD::InputArg &In) { return In.VT == MVT::i32; });
   if (!SupportedVoidReturn && !SupportedScalarReturn)
     report_fatal_error(
-        "SH calls only support void, i32, and pointer return values");
+        "SH calls only support void, i32, i64, and pointer return values");
 
   for (const ArgListEntry &Arg : CLI.Args) {
-    if (!Arg.OrigTy ||
-        (!Arg.OrigTy->isIntegerTy(32) && !Arg.OrigTy->isPointerTy()) ||
-        Arg.IsByVal || Arg.IsSRet || Arg.IsInAlloca || Arg.IsPreallocated ||
-        Arg.IsByRef || Arg.IsNest || Arg.IsReturned || Arg.IsSwiftSelf ||
-        Arg.IsSwiftAsync || Arg.IsSwiftError)
+    if (!Arg.OrigTy || !isSupportedSHScalarType(Arg.OrigTy) || Arg.IsByVal ||
+        Arg.IsSRet || Arg.IsInAlloca || Arg.IsPreallocated || Arg.IsByRef ||
+        Arg.IsNest || Arg.IsReturned || Arg.IsSwiftSelf || Arg.IsSwiftAsync ||
+        Arg.IsSwiftError)
       report_fatal_error(
-          "SH calls only support scalar i32 and pointer arguments");
+          "SH calls only support scalar i32, i64, and pointer arguments");
   }
-  if (CLI.Outs.size() != CLI.Args.size() ||
-      CLI.OutVals.size() != CLI.Outs.size())
+  if (CLI.OutVals.size() != CLI.Outs.size())
     report_fatal_error(
-        "SH calls only support unsplit scalar i32 and pointer arguments");
+        "SH failed to split call arguments into 32-bit ABI words");
   for (const ISD::OutputArg &Out : CLI.Outs) {
-    if (Out.VT != MVT::i32 || Out.Flags.isByVal() || Out.Flags.isSRet() ||
-        Out.Flags.isByRef() || Out.Flags.isInAlloca() ||
-        Out.Flags.isPreallocated() || Out.Flags.isNest() ||
-        Out.Flags.isReturned() || Out.Flags.isSwiftSelf() ||
-        Out.Flags.isSwiftAsync() || Out.Flags.isSwiftError())
+    if (!isSupportedSHScalarType(Out.OrigTy) || Out.VT != MVT::i32 ||
+        Out.Flags.isByVal() || Out.Flags.isSRet() || Out.Flags.isByRef() ||
+        Out.Flags.isInAlloca() || Out.Flags.isPreallocated() ||
+        Out.Flags.isNest() || Out.Flags.isReturned() ||
+        Out.Flags.isSwiftSelf() || Out.Flags.isSwiftAsync() ||
+        Out.Flags.isSwiftError())
       report_fatal_error(
-          "SH calls only support unextended scalar i32 and pointer arguments");
+          "SH calls only support unextended 32-bit scalar ABI words");
   }
 
   SelectionDAG &DAG = CLI.DAG;
@@ -518,7 +585,7 @@ SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
     const CCValAssign &VA = ArgLocs[I];
     if (VA.getLocVT() != MVT::i32 || VA.getLocInfo() != CCValAssign::Full)
       report_fatal_error(
-          "SH calls only support unextended scalar i32 and pointer arguments");
+          "SH calls only support unextended 32-bit scalar ABI words");
     if (VA.isRegLoc()) {
       RegsToPass.emplace_back(VA.getLocReg(), CLI.OutVals[I]);
       continue;
@@ -589,14 +656,24 @@ SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
   Chain = DAG.getCALLSEQ_END(Chain, StackBytes, 0, Glue, CLI.DL);
   Glue = Chain.getValue(1);
 
-  for (const CCValAssign &VA : RetLocs) {
-    if (!VA.isRegLoc() || VA.getLocReg() != SH::R0 ||
+  SmallVector<SDValue, 2> ABIResults(CLI.Ins.size());
+  for (unsigned I = 0; I != RetLocs.size(); ++I) {
+    const CCValAssign &VA = RetLocs[I];
+    MCRegister ExpectedReg = I == 0 ? SH::R0 : SH::R1;
+    if (!VA.isRegLoc() || VA.getLocReg() != ExpectedReg ||
         VA.getLocVT() != MVT::i32 || VA.getLocInfo() != CCValAssign::Full)
-      report_fatal_error("SH calls only support 32-bit return values in r0");
-    SDValue Result = DAG.getCopyFromReg(Chain, CLI.DL, SH::R0, MVT::i32, Glue);
-    InVals.push_back(Result);
+      report_fatal_error(
+          "SH scalar call results must use r0 and optionally r1");
+    SDValue Result =
+        DAG.getCopyFromReg(Chain, CLI.DL, ExpectedReg, MVT::i32, Glue);
+    ABIResults[I] = Result;
     Chain = Result.getValue(1);
     Glue = Result.getValue(2);
+  }
+  for (SDValue Result : ABIResults) {
+    if (!Result)
+      report_fatal_error("SH failed to assign a returned ABI word");
+    InVals.push_back(Result);
   }
 
   return Chain;
@@ -665,14 +742,133 @@ static SDValue lowerSHDivRem(SDValue Op, SelectionDAG &DAG) {
   return DAG.getMergeValues({Undef, Undef}, DL);
 }
 
+static SDValue getI64Part(SDValue Value, unsigned Part, const SDLoc &DL,
+                          SelectionDAG &DAG) {
+  return DAG.getNode(ISD::EXTRACT_ELEMENT, DL, MVT::i32, Value,
+                     DAG.getConstant(Part, DL, MVT::i32));
+}
+
+static SDValue lowerSHI64Load(SDValue Op, SelectionDAG &DAG) {
+  const auto *Load = cast<LoadSDNode>(Op);
+  if (Load->getAlign() < Align(4))
+    report_fatal_error("SH requires 4-byte alignment for i64 loads");
+  if (!isSupportedSHAddress(Load->getBasePtr()))
+    report_fatal_error(
+        "SH i64 load address must be a register or supported 32-bit constant "
+        "address addition");
+
+  SDLoc DL(Op);
+  SDValue Chain = Load->getChain();
+  SDValue Base = Load->getBasePtr();
+  SDValue Other = DAG.getObjectPtrOffset(DL, Base, TypeSize::getFixed(4));
+  SDValue First = DAG.getLoad(
+      MVT::i32, DL, Chain, Base, Load->getPointerInfo(), Load->getBaseAlign(),
+      Load->getMemOperand()->getFlags(), Load->getAAInfo());
+  SDValue SecondChain = Load->isVolatile() ? First.getValue(1) : Chain;
+  SDValue Second = DAG.getLoad(
+      MVT::i32, DL, SecondChain, Other, Load->getPointerInfo().getWithOffset(4),
+      commonAlignment(Load->getBaseAlign(), 4),
+      Load->getMemOperand()->getFlags(), Load->getAAInfo());
+  SDValue ResultChain =
+      Load->isVolatile() ? Second.getValue(1)
+                         : DAG.getNode(ISD::TokenFactor, DL, MVT::Other,
+                                       First.getValue(1), Second.getValue(1));
+
+  SDValue Lo = DAG.getDataLayout().isLittleEndian() ? First : Second;
+  SDValue Hi = DAG.getDataLayout().isLittleEndian() ? Second : First;
+  SDValue Value = DAG.getNode(ISD::BUILD_PAIR, DL, MVT::i64, Lo, Hi);
+  return DAG.getMergeValues({Value, ResultChain}, DL);
+}
+
+static SDValue lowerSHI64Store(SDValue Op, SelectionDAG &DAG) {
+  const auto *Store = cast<StoreSDNode>(Op);
+  if (Store->getAlign() < Align(4))
+    report_fatal_error("SH requires 4-byte alignment for i64 stores");
+  if (!isSupportedSHAddress(Store->getBasePtr()))
+    report_fatal_error(
+        "SH i64 store address must be a register or supported 32-bit constant "
+        "address addition");
+
+  SDLoc DL(Op);
+  SDValue Lo = getI64Part(Store->getValue(), 0, DL, DAG);
+  SDValue Hi = getI64Part(Store->getValue(), 1, DL, DAG);
+  SDValue FirstValue = DAG.getDataLayout().isLittleEndian() ? Lo : Hi;
+  SDValue SecondValue = DAG.getDataLayout().isLittleEndian() ? Hi : Lo;
+  SDValue Chain = Store->getChain();
+  SDValue Base = Store->getBasePtr();
+  SDValue Other = DAG.getObjectPtrOffset(DL, Base, TypeSize::getFixed(4));
+  SDValue First =
+      DAG.getStore(Chain, DL, FirstValue, Base, Store->getPointerInfo(),
+                   Store->getBaseAlign(), Store->getMemOperand()->getFlags(),
+                   Store->getAAInfo());
+  SDValue SecondChain = Store->isVolatile() ? First : Chain;
+  SDValue Second =
+      DAG.getStore(SecondChain, DL, SecondValue, Other,
+                   Store->getPointerInfo().getWithOffset(4),
+                   commonAlignment(Store->getBaseAlign(), 4),
+                   Store->getMemOperand()->getFlags(), Store->getAAInfo());
+  if (Store->isVolatile())
+    return Second;
+  return DAG.getNode(ISD::TokenFactor, DL, MVT::Other, First, Second);
+}
+
+static SDValue lowerSHShiftParts(SDValue Op, SelectionDAG &DAG) {
+  unsigned Opcode;
+  switch (Op.getOpcode()) {
+  default:
+    llvm_unreachable("unexpected SH shift-parts node");
+  case ISD::SHL_PARTS:
+    Opcode = SHISD::SHL_PARTS;
+    break;
+  case ISD::SRL_PARTS:
+    Opcode = SHISD::SRL_PARTS;
+    break;
+  case ISD::SRA_PARTS:
+    Opcode = SHISD::SRA_PARTS;
+    break;
+  }
+  return DAG.getNode(Opcode, SDLoc(Op), Op->getVTList(),
+                     {Op.getOperand(0), Op.getOperand(1), Op.getOperand(2)});
+}
+
+void SHTargetLowering::ReplaceNodeResults(SDNode *N,
+                                          SmallVectorImpl<SDValue> &Results,
+                                          SelectionDAG &DAG) const {
+  if (N->getOpcode() != ISD::LOAD ||
+      cast<LoadSDNode>(N)->getMemoryVT() != MVT::i64)
+    return;
+  SDValue Lowered = lowerSHI64Load(SDValue(N, 0), DAG);
+  Results.push_back(Lowered);
+  Results.push_back(Lowered.getValue(1));
+}
+
 SDValue SHTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
+  if (Op.getOpcode() == ISD::SETCC &&
+      Op.getOperand(0).getValueType() == MVT::i64) {
+    SDLoc DL(Op);
+    SDValue LHS = Op.getOperand(0);
+    SDValue RHS = Op.getOperand(1);
+    ISD::CondCode CC = cast<CondCodeSDNode>(Op.getOperand(2))->get();
+    SDValue Predicate =
+        DAG.getTargetConstant(static_cast<unsigned>(CC), DL, MVT::i32);
+    return DAG.getNode(
+        SHISD::SETCC64, DL, MVT::i32,
+        {getI64Part(LHS, 0, DL, DAG), getI64Part(LHS, 1, DL, DAG),
+         getI64Part(RHS, 0, DL, DAG), getI64Part(RHS, 1, DL, DAG), Predicate});
+  }
   if (Op.getOpcode() == ISD::BR_CC)
     return LowerBR_CC(Op, DAG);
+  if (Op.getOpcode() == ISD::SHL_PARTS || Op.getOpcode() == ISD::SRL_PARTS ||
+      Op.getOpcode() == ISD::SRA_PARTS)
+    return lowerSHShiftParts(Op, DAG);
   if (Op.getOpcode() == ISD::SDIVREM || Op.getOpcode() == ISD::UDIVREM)
     return lowerSHDivRem(Op, DAG);
   if (Op.getOpcode() == ISD::LOAD || Op.getOpcode() == ISD::STORE) {
     const auto *Mem = cast<MemSDNode>(Op);
     EVT MemoryVT = Mem->getMemoryVT();
+    if (MemoryVT == MVT::i64)
+      return Op.getOpcode() == ISD::LOAD ? lowerSHI64Load(Op, DAG)
+                                         : lowerSHI64Store(Op, DAG);
     if (MemoryVT == MVT::i32) {
       if (Mem->getAlign() < Align(4))
         report_fatal_error("SH requires 4-byte alignment for mov.l");
@@ -684,7 +880,7 @@ SDValue SHTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
     }
     if (MemoryVT != MVT::i8 && MemoryVT != MVT::i16)
       report_fatal_error(
-          "SH only supports 8-, 16-, and 32-bit memory operations");
+          "SH only supports 8-, 16-, 32-, and 64-bit memory operations");
     if (MemoryVT == MVT::i16 && Mem->getAlign() < Align(2))
       report_fatal_error("SH requires 2-byte alignment for mov.w");
     if (!isSupportedSHNarrowAddress(Mem->getBasePtr()))
@@ -734,6 +930,23 @@ static MachineBasicBlock *emitMultiply(MachineInstr &MI,
 
   BuildMI(*MBB, MI, DL, TII.get(SH::MUL_L)).addReg(LHS).addReg(RHS);
   BuildMI(*MBB, MI, DL, TII.get(SH::STS_MACL), Dest);
+
+  MI.eraseFromParent();
+  return MBB;
+}
+
+static MachineBasicBlock *emitLowCarry(MachineInstr &MI,
+                                       MachineBasicBlock *MBB) {
+  MachineFunction &MF = *MBB->getParent();
+  const SHInstrInfo &TII = *MF.getSubtarget<SHSubtarget>().getInstrInfo();
+  const DebugLoc &DL = MI.getDebugLoc();
+  Register Dest = MI.getOperand(0).getReg();
+  Register LHS = MI.getOperand(1).getReg();
+  Register RHS = MI.getOperand(2).getReg();
+  unsigned Opcode = MI.getOpcode() == SH::ADDC_LO_PSEUDO ? SH::ADDC : SH::SUBC;
+
+  BuildMI(*MBB, MI, DL, TII.get(SH::CLRT));
+  BuildMI(*MBB, MI, DL, TII.get(Opcode), Dest).addReg(LHS).addReg(RHS);
 
   MI.eraseFromParent();
   return MBB;
@@ -1045,12 +1258,263 @@ static MachineBasicBlock *emitVariableShift(MachineInstr &MI,
   return DoneMBB;
 }
 
+static MachineBasicBlock *emitVariableI64Shift(MachineInstr &MI,
+                                               MachineBasicBlock *EntryMBB) {
+  MachineFunction &MF = *EntryMBB->getParent();
+  MachineRegisterInfo &MRI = MF.getRegInfo();
+  const SHInstrInfo &TII = *MF.getSubtarget<SHSubtarget>().getInstrInfo();
+  const DebugLoc &DL = MI.getDebugLoc();
+  const BasicBlock *IRBB = EntryMBB->getBasicBlock();
+  MachineFunction::iterator Insert = std::next(EntryMBB->getIterator());
+
+  MachineBasicBlock *LoopMBB = MF.CreateMachineBasicBlock(IRBB);
+  MachineBasicBlock *DoneMBB = MF.CreateMachineBasicBlock(IRBB);
+  MF.insert(Insert, LoopMBB);
+  MF.insert(Insert, DoneMBB);
+
+  DoneMBB->splice(DoneMBB->begin(), EntryMBB,
+                  std::next(MachineBasicBlock::iterator(MI)), EntryMBB->end());
+  DoneMBB->transferSuccessorsAndUpdatePHIs(EntryMBB);
+
+  EntryMBB->addSuccessor(LoopMBB);
+  EntryMBB->addSuccessor(DoneMBB);
+  LoopMBB->addSuccessor(LoopMBB);
+  LoopMBB->addSuccessor(DoneMBB);
+
+  Register DestLo = MI.getOperand(0).getReg();
+  Register DestHi = MI.getOperand(1).getReg();
+  Register SourceLo = MI.getOperand(2).getReg();
+  Register SourceHi = MI.getOperand(3).getReg();
+  Register Count = MI.getOperand(4).getReg();
+  Register Mask = createGPR(MRI);
+  Register MaskedCount = createGPR(MRI);
+  Register LoPhi = createGPR(MRI);
+  Register HiPhi = createGPR(MRI);
+  Register CountPhi = createGPR(MRI);
+  Register NextLo = createGPR(MRI);
+  Register NextHi = createGPR(MRI);
+  Register NextCount = createGPR(MRI);
+
+  BuildMI(*EntryMBB, MI, DL, TII.get(SH::MOVri), Mask).addImm(63);
+  BuildMI(*EntryMBB, MI, DL, TII.get(SH::ANDrr), MaskedCount)
+      .addReg(Mask)
+      .addReg(Count);
+  BuildMI(*EntryMBB, MI, DL, TII.get(SH::TST))
+      .addReg(MaskedCount)
+      .addReg(MaskedCount);
+  BuildMI(*EntryMBB, MI, DL, TII.get(SH::BT)).addMBB(DoneMBB);
+
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(TargetOpcode::PHI), LoPhi)
+      .addReg(SourceLo)
+      .addMBB(EntryMBB)
+      .addReg(NextLo)
+      .addMBB(LoopMBB);
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(TargetOpcode::PHI), HiPhi)
+      .addReg(SourceHi)
+      .addMBB(EntryMBB)
+      .addReg(NextHi)
+      .addMBB(LoopMBB);
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(TargetOpcode::PHI), CountPhi)
+      .addReg(MaskedCount)
+      .addMBB(EntryMBB)
+      .addReg(NextCount)
+      .addMBB(LoopMBB);
+
+  switch (MI.getOpcode()) {
+  default:
+    llvm_unreachable("unexpected SH i64 variable shift pseudo");
+  case SH::SHL64_PSEUDO:
+    BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SH::SHLL), NextLo)
+        .addReg(LoPhi);
+    BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SH::ROTCL), NextHi)
+        .addReg(HiPhi);
+    break;
+  case SH::SRL64_PSEUDO:
+    BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SH::SHLR), NextHi)
+        .addReg(HiPhi);
+    BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SH::ROTCR), NextLo)
+        .addReg(LoPhi);
+    break;
+  case SH::SRA64_PSEUDO:
+    BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SH::SHAR), NextHi)
+        .addReg(HiPhi);
+    BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SH::ROTCR), NextLo)
+        .addReg(LoPhi);
+    break;
+  }
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SH::DT), NextCount)
+      .addReg(CountPhi);
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SH::BF)).addMBB(LoopMBB);
+
+  BuildMI(*DoneMBB, DoneMBB->begin(), DL, TII.get(TargetOpcode::PHI), DestLo)
+      .addReg(SourceLo)
+      .addMBB(EntryMBB)
+      .addReg(NextLo)
+      .addMBB(LoopMBB);
+  BuildMI(*DoneMBB, DoneMBB->begin(), DL, TII.get(TargetOpcode::PHI), DestHi)
+      .addReg(SourceHi)
+      .addMBB(EntryMBB)
+      .addReg(NextHi)
+      .addMBB(LoopMBB);
+
+  MI.eraseFromParent();
+  return DoneMBB;
+}
+
+struct SHCompareBranch {
+  unsigned CompareOpcode;
+  bool BranchOnSet;
+};
+
+static SHCompareBranch getSHCompareBranch(ISD::CondCode CC) {
+  switch (CC) {
+  default:
+    report_fatal_error("SH i64 comparison predicate is not supported");
+  case ISD::SETEQ:
+    return {SH::CMP_EQ, true};
+  case ISD::SETNE:
+    return {SH::CMP_EQ, false};
+  case ISD::SETGE:
+    return {SH::CMP_GE, true};
+  case ISD::SETLT:
+    return {SH::CMP_GE, false};
+  case ISD::SETGT:
+    return {SH::CMP_GT, true};
+  case ISD::SETLE:
+    return {SH::CMP_GT, false};
+  case ISD::SETUGE:
+    return {SH::CMP_HS, true};
+  case ISD::SETULT:
+    return {SH::CMP_HS, false};
+  case ISD::SETUGT:
+    return {SH::CMP_HI, true};
+  case ISD::SETULE:
+    return {SH::CMP_HI, false};
+  }
+}
+
+static ISD::CondCode getSHUnsignedLowPredicate(ISD::CondCode CC) {
+  switch (CC) {
+  default:
+    return CC;
+  case ISD::SETGE:
+    return ISD::SETUGE;
+  case ISD::SETLT:
+    return ISD::SETULT;
+  case ISD::SETGT:
+    return ISD::SETUGT;
+  case ISD::SETLE:
+    return ISD::SETULE;
+  }
+}
+
+static void
+emitCompareBranch(MachineBasicBlock &MBB, const DebugLoc &DL,
+                  const SHInstrInfo &TII, Register LHS, Register RHS,
+                  ISD::CondCode CC, MachineBasicBlock *TrueMBB,
+                  MachineBasicBlock *FalseMBB,
+                  BranchProbability TrueProbability = BranchProbability(1, 2)) {
+  SHCompareBranch Info = getSHCompareBranch(CC);
+  BuildMI(MBB, MBB.end(), DL, TII.get(Info.CompareOpcode))
+      .addReg(RHS)
+      .addReg(LHS);
+  BuildMI(MBB, MBB.end(), DL, TII.get(Info.BranchOnSet ? SH::BT : SH::BF))
+      .addMBB(TrueMBB);
+  BuildMI(MBB, MBB.end(), DL, TII.get(SH::BRA)).addMBB(FalseMBB);
+  MBB.addSuccessor(TrueMBB, TrueProbability);
+  MBB.addSuccessor(FalseMBB, TrueProbability.getCompl());
+}
+
+static MachineBasicBlock *emitI64CompareBranch(MachineInstr &MI,
+                                               MachineBasicBlock *EntryMBB) {
+  MachineFunction &MF = *EntryMBB->getParent();
+  const SHInstrInfo &TII = *MF.getSubtarget<SHSubtarget>().getInstrInfo();
+  const DebugLoc &DL = MI.getDebugLoc();
+  const BasicBlock *IRBB = EntryMBB->getBasicBlock();
+  MachineBasicBlock *BranchDest = MI.getOperand(5).getMBB();
+  ISD::CondCode CC = static_cast<ISD::CondCode>(MI.getOperand(4).getImm());
+
+  MachineBasicBlock *OtherDest = nullptr;
+  BranchProbability BranchDestProbability = BranchProbability(1, 2);
+  for (auto Succ = EntryMBB->succ_begin(); Succ != EntryMBB->succ_end();
+       ++Succ) {
+    MachineBasicBlock *Successor = *Succ;
+    if (Successor == BranchDest)
+      BranchDestProbability = EntryMBB->getSuccProbability(Succ);
+    if (Successor != BranchDest) {
+      if (OtherDest)
+        report_fatal_error("SH i64 comparison has too many false successors");
+      OtherDest = Successor;
+    }
+  }
+  if (!EntryMBB->isSuccessor(BranchDest) || !OtherDest)
+    report_fatal_error("SH i64 comparison requires true and false successors");
+
+  MachineBasicBlock *LowMBB = MF.CreateMachineBasicBlock(IRBB);
+  MachineBasicBlock *HighMBB = nullptr;
+  bool IsEquality = CC == ISD::SETEQ || CC == ISD::SETNE;
+  if (!IsEquality)
+    HighMBB = MF.CreateMachineBasicBlock(IRBB);
+  MachineBasicBlock *TrueMBB = MF.CreateMachineBasicBlock(IRBB);
+  MachineBasicBlock *FalseMBB = MF.CreateMachineBasicBlock(IRBB);
+
+  MachineFunction::iterator Insert = std::next(EntryMBB->getIterator());
+  if (HighMBB)
+    MF.insert(Insert, HighMBB);
+  MF.insert(Insert, LowMBB);
+  MF.insert(Insert, TrueMBB);
+  MF.insert(Insert, FalseMBB);
+
+  FalseMBB->splice(FalseMBB->begin(), EntryMBB,
+                   std::next(MachineBasicBlock::iterator(MI)), EntryMBB->end());
+
+  BranchDest->replacePhiUsesWith(EntryMBB, TrueMBB);
+  OtherDest->replacePhiUsesWith(EntryMBB, FalseMBB);
+  while (!EntryMBB->succ_empty())
+    EntryMBB->removeSuccessor(*EntryMBB->succ_begin());
+  TrueMBB->addSuccessor(BranchDest, BranchProbability::getOne());
+  FalseMBB->addSuccessor(OtherDest, BranchProbability::getOne());
+
+  Register LHSLo = MI.getOperand(0).getReg();
+  Register LHSHi = MI.getOperand(1).getReg();
+  Register RHSLo = MI.getOperand(2).getReg();
+  Register RHSHi = MI.getOperand(3).getReg();
+
+  BuildMI(*TrueMBB, TrueMBB->end(), DL, TII.get(SH::BRA)).addMBB(BranchDest);
+
+  if (IsEquality) {
+    MachineBasicBlock *HighEqualMBB = LowMBB;
+    MachineBasicBlock *HighUnequalMBB = CC == ISD::SETEQ ? FalseMBB : TrueMBB;
+    BranchProbability HighEqualityProbability =
+        CC == ISD::SETEQ ? BranchDestProbability
+                         : BranchDestProbability.getCompl();
+    emitCompareBranch(*EntryMBB, DL, TII, LHSHi, RHSHi, ISD::SETEQ,
+                      HighEqualMBB, HighUnequalMBB, HighEqualityProbability);
+    emitCompareBranch(*LowMBB, DL, TII, LHSLo, RHSLo, CC, TrueMBB, FalseMBB,
+                      BranchDestProbability);
+  } else {
+    emitCompareBranch(*EntryMBB, DL, TII, LHSHi, RHSHi, ISD::SETEQ, LowMBB,
+                      HighMBB);
+    emitCompareBranch(*HighMBB, DL, TII, LHSHi, RHSHi, CC, TrueMBB, FalseMBB,
+                      BranchDestProbability);
+    emitCompareBranch(*LowMBB, DL, TII, LHSLo, RHSLo,
+                      getSHUnsignedLowPredicate(CC), TrueMBB, FalseMBB,
+                      BranchDestProbability);
+  }
+
+  MI.eraseFromParent();
+  return FalseMBB;
+}
+
 MachineBasicBlock *
 SHTargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
                                               MachineBasicBlock *MBB) const {
   switch (MI.getOpcode()) {
   default:
     llvm_unreachable("unexpected SH custom inserter opcode");
+  case SH::ADDC_LO_PSEUDO:
+  case SH::SUBC_LO_PSEUDO:
+    return emitLowCarry(MI, MBB);
   case SH::MUL32_PSEUDO:
     return emitMultiply(MI, MBB);
   case SH::UDIV32_PSEUDO:
@@ -1070,6 +1534,12 @@ SHTargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
   case SH::SRLrr:
   case SH::SRArr:
     return emitVariableShift(MI, MBB);
+  case SH::SHL64_PSEUDO:
+  case SH::SRL64_PSEUDO:
+  case SH::SRA64_PSEUDO:
+    return emitVariableI64Shift(MI, MBB);
+  case SH::BR_CC64_PSEUDO:
+    return emitI64CompareBranch(MI, MBB);
   }
 }
 
@@ -1199,6 +1669,14 @@ const char *SHTargetLowering::getTargetNodeName(unsigned Opcode) const {
     return "SHISD::SREM";
   case SHISD::SDIVREM:
     return "SHISD::SDIVREM";
+  case SHISD::SHL_PARTS:
+    return "SHISD::SHL_PARTS";
+  case SHISD::SRL_PARTS:
+    return "SHISD::SRL_PARTS";
+  case SHISD::SRA_PARTS:
+    return "SHISD::SRA_PARTS";
+  case SHISD::SETCC64:
+    return "SHISD::SETCC64";
   default:
     return nullptr;
   }

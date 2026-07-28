@@ -302,9 +302,9 @@ TEST_F(SHInstrInfoTest, IntegerALUAndShiftPropertiesArePrecise) {
 }
 
 TEST_F(SHInstrInfoTest, MultiplyAndDivideInstructionsHavePreciseProperties) {
-  constexpr unsigned RealOpcodes[] = {SH::MUL_L, SH::STS_MACL, SH::DIV0U,
-                                      SH::DIV0S, SH::DIV1,     SH::ROTCL,
-                                      SH::ADDC,  SH::SUBC};
+  constexpr unsigned RealOpcodes[] = {
+      SH::CLRT, SH::MUL_L, SH::STS_MACL, SH::DIV0U, SH::DIV0S,
+      SH::DIV1, SH::ROTCL, SH::ROTCR,    SH::ADDC,  SH::SUBC};
   for (unsigned Opcode : RealOpcodes) {
     const MCInstrDesc &Desc = TII->get(Opcode);
     EXPECT_EQ(2u, Desc.getSize());
@@ -338,7 +338,12 @@ TEST_F(SHInstrInfoTest, MultiplyAndDivideInstructionsHavePreciseProperties) {
     EXPECT_TRUE(Div1.hasImplicitDefOfPhysReg(Reg));
   }
 
-  for (unsigned Opcode : {SH::ROTCL, SH::ADDC, SH::SUBC}) {
+  const MCInstrDesc &ClearT = TII->get(SH::CLRT);
+  EXPECT_EQ(0u, ClearT.getNumOperands());
+  EXPECT_TRUE(ClearT.hasImplicitDefOfPhysReg(SH::TBit));
+  EXPECT_TRUE(ClearT.implicit_uses().empty());
+
+  for (unsigned Opcode : {SH::ROTCL, SH::ROTCR, SH::ADDC, SH::SUBC}) {
     const MCInstrDesc &Desc = TII->get(Opcode);
     EXPECT_TRUE(is_contained(Desc.implicit_uses(), SH::TBit));
     EXPECT_TRUE(Desc.hasImplicitDefOfPhysReg(SH::TBit));
@@ -351,7 +356,9 @@ TEST_F(SHInstrInfoTest, MultiplyAndDivideInstructionsHavePreciseProperties) {
   for (unsigned Opcode :
        {SH::MUL32_PSEUDO, SH::UDIV32_PSEUDO, SH::UREM32_PSEUDO,
         SH::UDIVREM32_PSEUDO, SH::SDIV32_PSEUDO, SH::SREM32_PSEUDO,
-        SH::SDIVREM32_PSEUDO})
+        SH::SDIVREM32_PSEUDO, SH::ADDC_LO_PSEUDO, SH::SUBC_LO_PSEUDO,
+        SH::SHL64_PSEUDO, SH::SRL64_PSEUDO, SH::SRA64_PSEUDO,
+        SH::BR_CC64_PSEUDO})
     EXPECT_EQ(0u, TII->get(Opcode).getSize());
 }
 
@@ -538,6 +545,313 @@ TEST_F(SHInstrInfoTest, DivisionSequencesMatchArchitecturalSemantics) {
     if (Dividend == std::numeric_limits<int32_t>::min() && Divisor == -1)
       Divisor = 1;
     verifySignedDivision(Dividend, Divisor);
+  }
+}
+
+namespace {
+
+struct PairedI64 {
+  uint32_t Lo;
+  uint32_t Hi;
+
+  static PairedI64 split(uint64_t Value) {
+    return {static_cast<uint32_t>(Value), static_cast<uint32_t>(Value >> 32)};
+  }
+
+  uint64_t join() const {
+    return static_cast<uint64_t>(Lo) | (static_cast<uint64_t>(Hi) << 32);
+  }
+};
+
+static bool operator==(PairedI64 LHS, PairedI64 RHS) {
+  return LHS.Lo == RHS.Lo && LHS.Hi == RHS.Hi;
+}
+
+static PairedI64 addPairs(PairedI64 LHS, PairedI64 RHS) {
+  PairedI64 Result;
+  Result.Lo = LHS.Lo + RHS.Lo;
+  uint32_t Carry = Result.Lo < LHS.Lo;
+  Result.Hi = LHS.Hi + RHS.Hi + Carry;
+  return Result;
+}
+
+static PairedI64 subtractPairs(PairedI64 LHS, PairedI64 RHS) {
+  PairedI64 Result;
+  Result.Lo = LHS.Lo - RHS.Lo;
+  uint32_t Borrow = LHS.Lo < RHS.Lo;
+  Result.Hi = LHS.Hi - RHS.Hi - Borrow;
+  return Result;
+}
+
+static uint32_t arithmeticShiftRight32(uint32_t Value, unsigned Amount) {
+  if (Amount == 0)
+    return Value;
+  uint32_t Shifted = Value >> Amount;
+  if ((Value & 0x80000000U) != 0)
+    Shifted |= ~uint32_t(0) << (32 - Amount);
+  return Shifted;
+}
+
+static PairedI64 shiftLeftPairs(PairedI64 Value, unsigned Amount) {
+  if (Amount == 0)
+    return Value;
+  if (Amount < 32)
+    return {Value.Lo << Amount,
+            (Value.Hi << Amount) | (Value.Lo >> (32 - Amount))};
+  if (Amount == 32)
+    return {0, Value.Lo};
+  return {0, Value.Lo << (Amount - 32)};
+}
+
+static PairedI64 shiftRightLogicalPairs(PairedI64 Value, unsigned Amount) {
+  if (Amount == 0)
+    return Value;
+  if (Amount < 32)
+    return {(Value.Lo >> Amount) | (Value.Hi << (32 - Amount)),
+            Value.Hi >> Amount};
+  if (Amount == 32)
+    return {Value.Hi, 0};
+  return {Value.Hi >> (Amount - 32), 0};
+}
+
+static PairedI64 shiftRightArithmeticPairs(PairedI64 Value, unsigned Amount) {
+  if (Amount == 0)
+    return Value;
+  uint32_t Sign = arithmeticShiftRight32(Value.Hi, 31);
+  if (Amount < 32)
+    return {(Value.Lo >> Amount) | (Value.Hi << (32 - Amount)),
+            arithmeticShiftRight32(Value.Hi, Amount)};
+  if (Amount == 32)
+    return {Value.Hi, Sign};
+  return {arithmeticShiftRight32(Value.Hi, Amount - 32), Sign};
+}
+
+static PairedI64 shiftLeftPairsIteratively(PairedI64 Value, unsigned Amount) {
+  for (unsigned I = 0; I != Amount; ++I) {
+    bool Carry = (Value.Lo >> 31) != 0;
+    Value.Lo <<= 1;
+    Value.Hi = (Value.Hi << 1) | static_cast<uint32_t>(Carry);
+  }
+  return Value;
+}
+
+static PairedI64 shiftRightLogicalPairsIteratively(PairedI64 Value,
+                                                   unsigned Amount) {
+  for (unsigned I = 0; I != Amount; ++I) {
+    bool Carry = (Value.Hi & 1) != 0;
+    Value.Hi >>= 1;
+    Value.Lo = (Value.Lo >> 1) | (static_cast<uint32_t>(Carry) << 31);
+  }
+  return Value;
+}
+
+static PairedI64 shiftRightArithmeticPairsIteratively(PairedI64 Value,
+                                                      unsigned Amount) {
+  for (unsigned I = 0; I != Amount; ++I) {
+    bool Carry = (Value.Hi & 1) != 0;
+    Value.Hi = arithmeticShiftRight32(Value.Hi, 1);
+    Value.Lo = (Value.Lo >> 1) | (static_cast<uint32_t>(Carry) << 31);
+  }
+  return Value;
+}
+
+static bool signedLessThan64(uint64_t LHS, uint64_t RHS) {
+  bool LHSSign = (LHS >> 63) != 0;
+  bool RHSSign = (RHS >> 63) != 0;
+  return LHSSign != RHSSign ? LHSSign : LHS < RHS;
+}
+
+static bool comparePairs(PairedI64 LHS, PairedI64 RHS, ISD::CondCode CC) {
+  bool Equal = LHS == RHS;
+  bool UnsignedLess = LHS.Hi != RHS.Hi ? LHS.Hi < RHS.Hi : LHS.Lo < RHS.Lo;
+  bool SignedLess;
+  bool LHSSign = (LHS.Hi >> 31) != 0;
+  bool RHSSign = (RHS.Hi >> 31) != 0;
+  if (LHSSign != RHSSign)
+    SignedLess = LHSSign;
+  else
+    SignedLess = LHS.Hi != RHS.Hi ? LHS.Hi < RHS.Hi : LHS.Lo < RHS.Lo;
+
+  switch (CC) {
+  default:
+    llvm_unreachable("unexpected i64 comparison predicate");
+  case ISD::SETEQ:
+    return Equal;
+  case ISD::SETNE:
+    return !Equal;
+  case ISD::SETLT:
+    return SignedLess;
+  case ISD::SETLE:
+    return SignedLess || Equal;
+  case ISD::SETGT:
+    return !SignedLess && !Equal;
+  case ISD::SETGE:
+    return !SignedLess;
+  case ISD::SETULT:
+    return UnsignedLess;
+  case ISD::SETULE:
+    return UnsignedLess || Equal;
+  case ISD::SETUGT:
+    return !UnsignedLess && !Equal;
+  case ISD::SETUGE:
+    return !UnsignedLess;
+  }
+}
+
+static bool evaluateI64EqualityComparisonCFG(PairedI64 LHS, PairedI64 RHS,
+                                             ISD::CondCode CC) {
+  assert((CC == ISD::SETEQ || CC == ISD::SETNE) &&
+         "expected equality comparison predicate");
+  if (LHS.Hi != RHS.Hi)
+    return CC == ISD::SETNE;
+  return CC == ISD::SETEQ ? LHS.Lo == RHS.Lo : LHS.Lo != RHS.Lo;
+}
+
+static void verifyPairedI64(uint64_t LHSValue, uint64_t RHSValue) {
+  PairedI64 LHS = PairedI64::split(LHSValue);
+  PairedI64 RHS = PairedI64::split(RHSValue);
+  EXPECT_EQ(LHSValue, LHS.join());
+  EXPECT_EQ(RHSValue, RHS.join());
+  EXPECT_EQ(LHSValue + RHSValue, addPairs(LHS, RHS).join());
+  EXPECT_EQ(LHSValue - RHSValue, subtractPairs(LHS, RHS).join());
+  EXPECT_EQ(uint64_t(0) - LHSValue,
+            subtractPairs(PairedI64::split(0), LHS).join());
+  EXPECT_EQ(LHSValue & RHSValue,
+            (PairedI64{LHS.Lo & RHS.Lo, LHS.Hi & RHS.Hi}.join()));
+  EXPECT_EQ(LHSValue | RHSValue,
+            (PairedI64{LHS.Lo | RHS.Lo, LHS.Hi | RHS.Hi}.join()));
+  EXPECT_EQ(LHSValue ^ RHSValue,
+            (PairedI64{LHS.Lo ^ RHS.Lo, LHS.Hi ^ RHS.Hi}.join()));
+  EXPECT_EQ(~LHSValue, (PairedI64{~LHS.Lo, ~LHS.Hi}.join()));
+
+  for (ISD::CondCode CC :
+       {ISD::SETEQ, ISD::SETNE, ISD::SETLT, ISD::SETLE, ISD::SETGT, ISD::SETGE,
+        ISD::SETULT, ISD::SETULE, ISD::SETUGT, ISD::SETUGE}) {
+    bool Expected;
+    switch (CC) {
+    default:
+      llvm_unreachable("unexpected i64 comparison predicate");
+    case ISD::SETEQ:
+      Expected = LHSValue == RHSValue;
+      break;
+    case ISD::SETNE:
+      Expected = LHSValue != RHSValue;
+      break;
+    case ISD::SETLT:
+      Expected = signedLessThan64(LHSValue, RHSValue);
+      break;
+    case ISD::SETLE:
+      Expected = signedLessThan64(LHSValue, RHSValue) || LHSValue == RHSValue;
+      break;
+    case ISD::SETGT:
+      Expected = signedLessThan64(RHSValue, LHSValue);
+      break;
+    case ISD::SETGE:
+      Expected = signedLessThan64(RHSValue, LHSValue) || LHSValue == RHSValue;
+      break;
+    case ISD::SETULT:
+      Expected = LHSValue < RHSValue;
+      break;
+    case ISD::SETULE:
+      Expected = LHSValue <= RHSValue;
+      break;
+    case ISD::SETUGT:
+      Expected = LHSValue > RHSValue;
+      break;
+    case ISD::SETUGE:
+      Expected = LHSValue >= RHSValue;
+      break;
+    }
+    EXPECT_EQ(Expected, comparePairs(LHS, RHS, CC))
+        << "predicate " << CC << ", lhs " << LHSValue << ", rhs " << RHSValue;
+  }
+
+  uint32_t LittleEndianWords[] = {LHS.Lo, LHS.Hi};
+  uint32_t BigEndianWords[] = {LHS.Hi, LHS.Lo};
+  EXPECT_EQ(LHSValue,
+            (PairedI64{LittleEndianWords[0], LittleEndianWords[1]}.join()));
+  EXPECT_EQ(LHSValue, (PairedI64{BigEndianWords[1], BigEndianWords[0]}.join()));
+
+  EXPECT_EQ(LHS.Lo, static_cast<uint32_t>(LHSValue));
+  EXPECT_EQ((PairedI64{LHS.Lo, 0}),
+            PairedI64::split(static_cast<uint64_t>(LHS.Lo)));
+  uint32_t Sign = arithmeticShiftRight32(LHS.Lo, 31);
+  EXPECT_EQ((PairedI64{LHS.Lo, Sign}),
+            PairedI64::split(static_cast<uint64_t>(LHS.Lo) |
+                             (static_cast<uint64_t>(Sign) << 32)));
+
+  for (unsigned Amount = 0; Amount != 64; ++Amount) {
+    uint64_t ExpectedLeft = LHSValue << Amount;
+    uint64_t ExpectedLogicalRight = LHSValue >> Amount;
+    uint64_t ExpectedArithmeticRight;
+    if ((LHSValue >> 63) == 0)
+      ExpectedArithmeticRight = ExpectedLogicalRight;
+    else if (Amount == 0)
+      ExpectedArithmeticRight = LHSValue;
+    else
+      ExpectedArithmeticRight =
+          ExpectedLogicalRight | (~uint64_t(0) << (64 - Amount));
+
+    EXPECT_EQ(ExpectedLeft, shiftLeftPairs(LHS, Amount).join());
+    EXPECT_EQ(ExpectedLogicalRight, shiftRightLogicalPairs(LHS, Amount).join());
+    EXPECT_EQ(ExpectedArithmeticRight,
+              shiftRightArithmeticPairs(LHS, Amount).join());
+    EXPECT_EQ(ExpectedLeft, shiftLeftPairsIteratively(LHS, Amount).join());
+    EXPECT_EQ(ExpectedLogicalRight,
+              shiftRightLogicalPairsIteratively(LHS, Amount).join());
+    EXPECT_EQ(ExpectedArithmeticRight,
+              shiftRightArithmeticPairsIteratively(LHS, Amount).join());
+  }
+}
+
+} // namespace
+
+TEST_F(SHInstrInfoTest, PairedI64ModelMatchesScalarSemantics) {
+  constexpr uint64_t Values[] = {
+      0,
+      1,
+      ~uint64_t(0),
+      uint64_t(1) << 63,
+      (uint64_t(1) << 63) - 1,
+      0x00000000ffffffffULL,
+      0xffffffff00000000ULL,
+      0x123456789abcdef0ULL,
+      0x8000000000000001ULL,
+      0xdeadbeef01234567ULL,
+  };
+  for (uint64_t LHS : Values)
+    for (uint64_t RHS : Values)
+      verifyPairedI64(LHS, RHS);
+
+  std::mt19937 Generator(0x53484339);
+  for (unsigned I = 0; I != 10000; ++I) {
+    uint64_t LHS = static_cast<uint64_t>(Generator()) |
+                   (static_cast<uint64_t>(Generator()) << 32);
+    uint64_t RHS = static_cast<uint64_t>(Generator()) |
+                   (static_cast<uint64_t>(Generator()) << 32);
+    verifyPairedI64(LHS, RHS);
+  }
+}
+
+TEST_F(SHInstrInfoTest, I64EqualityComparisonCFGRouting) {
+  struct ComparisonCase {
+    PairedI64 LHS;
+    PairedI64 RHS;
+    bool Equal;
+    bool NotEqual;
+  };
+  constexpr ComparisonCase Cases[] = {
+      {{0x01234567, 0x89abcdef}, {0x01234567, 0x89abcdef}, true, false},
+      {{0x01234567, 0x89abcdef}, {0x76543210, 0x89abcdef}, false, true},
+      {{0x01234567, 0x89abcdef}, {0x01234567, 0xfedcba98}, false, true},
+      {{0x01234567, 0x89abcdef}, {0x76543210, 0xfedcba98}, false, true},
+  };
+
+  for (const ComparisonCase &Test : Cases) {
+    EXPECT_EQ(Test.Equal,
+              evaluateI64EqualityComparisonCFG(Test.LHS, Test.RHS, ISD::SETEQ));
+    EXPECT_EQ(Test.NotEqual,
+              evaluateI64EqualityComparisonCFG(Test.LHS, Test.RHS, ISD::SETNE));
   }
 }
 
