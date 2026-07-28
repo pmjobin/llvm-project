@@ -9,6 +9,7 @@
 #include "SHTargetMachine.h"
 #include "SH.h"
 #include "TargetInfo/SHTargetInfo.h"
+#include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/MC/TargetRegistry.h"
@@ -72,6 +73,7 @@ public:
     return false;
   }
   void addPreEmitPass() override {
+    addPass(&BranchRelaxationPassID);
     addPass(createSHDelaySlotFillerLegacyPass());
   }
 };

@@ -69,6 +69,15 @@ class SHOneReg<bits<8> Suffix, dag Outs, dag Ins, string Asm,
   let Inst{7-0} = Suffix;
 }
 
+class SHSpecialToReg<bits<8> Suffix, dag Outs, dag Ins, string Asm>
+    : SHInst<Outs, Ins, Asm> {
+  bits<4> dst;
+
+  let Inst{15-12} = 0x0;
+  let Inst{11-8} = dst;
+  let Inst{7-0} = Suffix;
+}
+
 class SHBranch8<bits<8> Prefix, dag Ins, string Asm, list<dag> pattern = []>
     : SHInst<(outs), Ins, Asm> {
   bits<8> target;

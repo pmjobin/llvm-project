@@ -48,6 +48,8 @@ public:
                                      SDNode *Node) const override;
   SDValue LowerBR_CC(SDValue Op, SelectionDAG &DAG) const;
   const char *getTargetNodeName(unsigned Opcode) const override;
+  bool isIntDivCheap(EVT VT, AttributeList Attr) const override;
+  bool isSelectSupported(SelectSupportKind) const override { return false; }
   bool allowsMisalignedMemoryAccesses(
       EVT VT, unsigned AddrSpace = 0, Align Alignment = Align(1),
       MachineMemOperand::Flags Flags = MachineMemOperand::MONone,

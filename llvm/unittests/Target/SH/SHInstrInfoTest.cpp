@@ -19,6 +19,8 @@
 #include "llvm/Support/TargetSelect.h"
 
 #include "gtest/gtest.h"
+#include <limits>
+#include <random>
 
 using namespace llvm;
 
@@ -155,8 +157,9 @@ TEST_F(SHInstrInfoTest, CCallRegisterMaskMatchesABI) {
   const SHRegisterInfo &TRI = TII->getRegisterInfo();
   const uint32_t *Mask = TRI.getCallPreservedMask(*MF, CallingConv::C);
 
-  for (MCRegister Reg : {SH::R0, SH::R1, SH::R2, SH::R3, SH::R4, SH::R5, SH::R6,
-                         SH::R7, SH::PR, SH::TBit, SH::MACH, SH::MACL})
+  for (MCRegister Reg :
+       {SH::R0, SH::R1, SH::R2, SH::R3, SH::R4, SH::R5, SH::R6, SH::R7, SH::PC,
+        SH::PR, SH::TBit, SH::MBit, SH::QBit, SH::MACH, SH::MACL})
     EXPECT_TRUE(MachineOperand::clobbersPhysReg(Mask, Reg));
   for (MCRegister Reg : {SH::R8, SH::R9, SH::R10, SH::R11, SH::R12, SH::R13,
                          SH::R14, SH::R15, SH::GBR, SH::VBR, SH::SR})
@@ -296,6 +299,246 @@ TEST_F(SHInstrInfoTest, IntegerALUAndShiftPropertiesArePrecise) {
   EXPECT_FALSE(TII->get(SH::SUBrr).isCommutable());
   for (unsigned Opcode : {SH::ANDrr, SH::ORrr, SH::XORrr})
     EXPECT_TRUE(TII->get(Opcode).isCommutable());
+}
+
+TEST_F(SHInstrInfoTest, MultiplyAndDivideInstructionsHavePreciseProperties) {
+  constexpr unsigned RealOpcodes[] = {SH::MUL_L, SH::STS_MACL, SH::DIV0U,
+                                      SH::DIV0S, SH::DIV1,     SH::ROTCL,
+                                      SH::ADDC,  SH::SUBC};
+  for (unsigned Opcode : RealOpcodes) {
+    const MCInstrDesc &Desc = TII->get(Opcode);
+    EXPECT_EQ(2u, Desc.getSize());
+    EXPECT_FALSE(Desc.mayLoad());
+    EXPECT_FALSE(Desc.mayStore());
+    EXPECT_FALSE(Desc.hasUnmodeledSideEffects());
+  }
+
+  const MCInstrDesc &Multiply = TII->get(SH::MUL_L);
+  EXPECT_TRUE(Multiply.isCommutable());
+  EXPECT_TRUE(Multiply.hasImplicitDefOfPhysReg(SH::MACL));
+  EXPECT_FALSE(Multiply.hasImplicitDefOfPhysReg(SH::MACH));
+  EXPECT_FALSE(Multiply.hasImplicitDefOfPhysReg(SH::TBit));
+
+  const MCInstrDesc &Extract = TII->get(SH::STS_MACL);
+  EXPECT_EQ(1u, Extract.getNumDefs());
+  EXPECT_TRUE(is_contained(Extract.implicit_uses(), SH::MACL));
+  EXPECT_FALSE(is_contained(Extract.implicit_uses(), SH::MACH));
+  EXPECT_FALSE(is_contained(Extract.implicit_uses(), SH::TBit));
+
+  for (MCRegister Reg : {SH::MBit, SH::QBit, SH::TBit}) {
+    EXPECT_TRUE(TII->get(SH::DIV0U).hasImplicitDefOfPhysReg(Reg));
+    EXPECT_TRUE(TII->get(SH::DIV0S).hasImplicitDefOfPhysReg(Reg));
+  }
+
+  const MCInstrDesc &Div1 = TII->get(SH::DIV1);
+  EXPECT_TRUE(is_contained(Div1.implicit_uses(), SH::MBit));
+  EXPECT_FALSE(Div1.hasImplicitDefOfPhysReg(SH::MBit));
+  for (MCRegister Reg : {SH::QBit, SH::TBit}) {
+    EXPECT_TRUE(is_contained(Div1.implicit_uses(), Reg));
+    EXPECT_TRUE(Div1.hasImplicitDefOfPhysReg(Reg));
+  }
+
+  for (unsigned Opcode : {SH::ROTCL, SH::ADDC, SH::SUBC}) {
+    const MCInstrDesc &Desc = TII->get(Opcode);
+    EXPECT_TRUE(is_contained(Desc.implicit_uses(), SH::TBit));
+    EXPECT_TRUE(Desc.hasImplicitDefOfPhysReg(SH::TBit));
+    EXPECT_FALSE(Desc.isCommutable());
+    EXPECT_EQ(0, Desc.getOperandConstraint(1, MCOI::TIED_TO));
+  }
+  EXPECT_EQ(0, Div1.getOperandConstraint(1, MCOI::TIED_TO));
+  EXPECT_FALSE(Div1.isCommutable());
+
+  for (unsigned Opcode :
+       {SH::MUL32_PSEUDO, SH::UDIV32_PSEUDO, SH::UREM32_PSEUDO,
+        SH::UDIVREM32_PSEUDO, SH::SDIV32_PSEUDO, SH::SREM32_PSEUDO,
+        SH::SDIVREM32_PSEUDO})
+    EXPECT_EQ(0u, TII->get(Opcode).getSize());
+}
+
+TEST_F(SHInstrInfoTest, DivisionStateRegistersAreReservedAndUnallocatable) {
+  const SHRegisterInfo &TRI = TII->getRegisterInfo();
+  BitVector Reserved = TRI.getReservedRegs(*MF);
+  for (MCRegister Reg : {SH::MBit, SH::QBit, SH::TBit}) {
+    EXPECT_TRUE(Reserved.test(Reg));
+    EXPECT_FALSE(SH::GPRRegClass.contains(Reg));
+  }
+}
+
+namespace {
+
+struct SHDivisionState {
+  uint32_t Partial = 0;
+  uint32_t Quotient = 0;
+  uint32_t Divisor = 0;
+  bool M = false;
+  bool Q = false;
+  bool T = false;
+
+  void rotcl(uint32_t &Value) {
+    bool OldT = T;
+    T = (Value >> 31) != 0;
+    Value = (Value << 1) | static_cast<uint32_t>(OldT);
+  }
+
+  void div1() {
+    bool OldQ = Q;
+    bool ShiftedMSB = (Partial >> 31) != 0;
+    Partial = (Partial << 1) | static_cast<uint32_t>(T);
+
+    bool CarryOrBorrow;
+    if (OldQ == M) {
+      CarryOrBorrow = Partial < Divisor;
+      Partial -= Divisor;
+    } else {
+      uint32_t Before = Partial;
+      Partial += Divisor;
+      CarryOrBorrow = Partial < Before;
+    }
+
+    Q = ShiftedMSB ^ CarryOrBorrow ^ M;
+    T = Q == M;
+  }
+};
+
+static bool applySubc(uint32_t Source, uint32_t &Dest, bool CarryIn) {
+  uint64_t Subtrahend =
+      static_cast<uint64_t>(Source) + static_cast<uint64_t>(CarryIn);
+  bool Borrow = static_cast<uint64_t>(Dest) < Subtrahend;
+  Dest = static_cast<uint32_t>(static_cast<uint64_t>(Dest) - Subtrahend);
+  return Borrow;
+}
+
+static bool applyAddc(uint32_t Source, uint32_t &Dest, bool CarryIn) {
+  uint64_t Sum = static_cast<uint64_t>(Dest) + Source + CarryIn;
+  Dest = static_cast<uint32_t>(Sum);
+  return (Sum >> 32) != 0;
+}
+
+static uint32_t simulateUnsignedQuotient(uint32_t Dividend, uint32_t Divisor) {
+  SHDivisionState State;
+  State.Quotient = Dividend;
+  State.Divisor = Divisor;
+  for (unsigned I = 0; I != 32; ++I) {
+    State.rotcl(State.Quotient);
+    State.div1();
+  }
+  State.rotcl(State.Quotient);
+  return State.Quotient;
+}
+
+static uint32_t simulateSignedQuotient(uint32_t Dividend, uint32_t Divisor) {
+  SHDivisionState State;
+  State.Quotient = Dividend;
+  State.Divisor = Divisor;
+
+  uint32_t SignProbe = Dividend;
+  State.T = (SignProbe >> 31) != 0;
+  SignProbe <<= 1;
+
+  State.Partial = Dividend;
+  State.T = applySubc(State.Partial, State.Partial, State.T);
+  uint32_t Zero = SignProbe ^ SignProbe;
+  State.T = applySubc(Zero, State.Quotient, State.T);
+
+  State.Q = (State.Partial >> 31) != 0;
+  State.M = (State.Divisor >> 31) != 0;
+  State.T = State.M != State.Q;
+  for (unsigned I = 0; I != 32; ++I) {
+    State.rotcl(State.Quotient);
+    State.div1();
+  }
+  State.rotcl(State.Quotient);
+  State.T = applyAddc(Zero, State.Quotient, State.T);
+  return State.Quotient;
+}
+
+static void verifyUnsignedDivision(uint32_t Dividend, uint32_t Divisor) {
+  ASSERT_NE(0u, Divisor);
+  uint32_t Quotient = simulateUnsignedQuotient(Dividend, Divisor);
+  uint32_t Remainder = Dividend - Divisor * Quotient;
+  EXPECT_EQ(Dividend / Divisor, Quotient);
+  EXPECT_EQ(Dividend % Divisor, Remainder);
+  EXPECT_EQ(static_cast<uint64_t>(Dividend),
+            static_cast<uint64_t>(Quotient) * Divisor + Remainder);
+  EXPECT_LT(Remainder, Divisor);
+}
+
+static void verifySignedDivision(int32_t Dividend, int32_t Divisor) {
+  ASSERT_NE(0, Divisor);
+  ASSERT_FALSE(Dividend == std::numeric_limits<int32_t>::min() &&
+               Divisor == -1);
+  int64_t WideDividend = Dividend;
+  int64_t WideDivisor = Divisor;
+  int64_t ExpectedQuotient = WideDividend / WideDivisor;
+  int64_t ExpectedRemainder = WideDividend % WideDivisor;
+  int32_t Quotient = static_cast<int32_t>(simulateSignedQuotient(
+      static_cast<uint32_t>(Dividend), static_cast<uint32_t>(Divisor)));
+  int32_t Remainder = static_cast<int32_t>(static_cast<uint32_t>(Dividend) -
+                                           static_cast<uint32_t>(Divisor) *
+                                               static_cast<uint32_t>(Quotient));
+
+  EXPECT_EQ(ExpectedQuotient, Quotient);
+  EXPECT_EQ(ExpectedRemainder, Remainder);
+  EXPECT_EQ(WideDividend,
+            static_cast<int64_t>(Quotient) * WideDivisor + Remainder);
+  EXPECT_LT(std::abs(static_cast<int64_t>(Remainder)), std::abs(WideDivisor));
+  EXPECT_TRUE(Remainder == 0 || (Remainder < 0) == (Dividend < 0));
+}
+
+} // namespace
+
+TEST_F(SHInstrInfoTest, DivisionSequencesMatchArchitecturalSemantics) {
+  constexpr std::pair<uint32_t, uint32_t> UnsignedCases[] = {
+      {0, 1},
+      {1, 1},
+      {1, 2},
+      {2, 1},
+      {0xffffffff, 1},
+      {0xffffffff, 0xffffffff},
+      {0xffffffff, 2},
+      {0x80000000, 3},
+      {0x80000000, 0x7fffffff},
+      {0x7fffffff, 0x80000000},
+      {7, 31},
+      {0x87654321, 0xf0000001}};
+  for (auto [Dividend, Divisor] : UnsignedCases)
+    verifyUnsignedDivision(Dividend, Divisor);
+
+  constexpr std::pair<int32_t, int32_t> SignedCases[] = {
+      {0, 1},
+      {1, 1},
+      {-1, 1},
+      {1, -1},
+      {-1, -1},
+      {std::numeric_limits<int32_t>::min(), 1},
+      {std::numeric_limits<int32_t>::min(), 2},
+      {std::numeric_limits<int32_t>::min(),
+       std::numeric_limits<int32_t>::min()},
+      {std::numeric_limits<int32_t>::max(), -1},
+      {-1, std::numeric_limits<int32_t>::min()},
+      {-7, 3},
+      {7, -3},
+      {-7, -3}};
+  for (auto [Dividend, Divisor] : SignedCases)
+    verifySignedDivision(Dividend, Divisor);
+
+  std::mt19937 Generator(0x53484347);
+  for (unsigned I = 0; I != 10000; ++I) {
+    uint32_t Dividend = Generator();
+    uint32_t Divisor = Generator();
+    if (Divisor == 0)
+      Divisor = 1;
+    verifyUnsignedDivision(Dividend, Divisor);
+  }
+  for (unsigned I = 0; I != 10000; ++I) {
+    int32_t Dividend = static_cast<int32_t>(Generator());
+    int32_t Divisor = static_cast<int32_t>(Generator());
+    if (Divisor == 0)
+      Divisor = 1;
+    if (Dividend == std::numeric_limits<int32_t>::min() && Divisor == -1)
+      Divisor = 1;
+    verifySignedDivision(Dividend, Divisor);
+  }
 }
 
 TEST_F(SHInstrInfoTest, InsertBranchReportsFinalEmittedSize) {

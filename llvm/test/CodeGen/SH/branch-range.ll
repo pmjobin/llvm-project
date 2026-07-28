@@ -1,12 +1,15 @@
-; RUN: rm -f %t-be.o %t-le.o
-; RUN: not llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -filetype=obj < %s -o %t-be.o 2>&1 | FileCheck %s
-; RUN: not test -e %t-be.o
-; RUN: not llc -mtriple=shle-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -filetype=obj < %s -o %t-le.o 2>&1 | FileCheck %s
-; RUN: not test -e %t-le.o
+; RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -asm-verbose=false < %s | FileCheck %s
+; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -asm-verbose=false < %s | FileCheck %s
 
-; CHECK: error: SH branch target is out of range
-; CHECK-NOT: LLVM ERROR
-; CHECK-NOT: assertion
+; CHECK-LABEL: conditional_too_far:
+; CHECK: cmp/eq
+; CHECK: bf	[[NEAR:.LBB[0-9_]+]]
+; CHECK-NEXT: bra	[[FAR:.LBB[0-9_]+]]
+; CHECK-NEXT: nop
+; CHECK: [[NEAR]]:
+; CHECK: [[FAR]]:
+; CHECK: rts
+; CHECK-NEXT: nop
 
 define i32 @conditional_too_far(ptr %p, i32 %a, i32 %b) #0 {
 entry:

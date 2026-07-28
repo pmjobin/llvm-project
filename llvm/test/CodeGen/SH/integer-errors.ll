@@ -1,9 +1,4 @@
 ; RUN: split-file %s %t
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/mul.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=MUL
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/sdiv.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=SDIV
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/udiv.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=UDIV
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/srem.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=SREM
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/urem.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=UREM
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/i64.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=I64
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/funnel.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INTRINSIC
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/ctpop.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INTRINSIC
@@ -18,45 +13,10 @@
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/function-address.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ADDRESS
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/block-address.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ADDRESS
 
-; MUL: LLVM ERROR: SH operation is not supported: mul
-; SDIV: LLVM ERROR: SH operation is not supported: sdiv
-; UDIV: LLVM ERROR: SH operation is not supported: udiv
-; SREM: LLVM ERROR: SH operation is not supported: srem
-; UREM: LLVM ERROR: SH operation is not supported: urem
 ; I64: LLVM ERROR: SH only supports i8, i16, and i32 integer operations
 ; INTRINSIC: LLVM ERROR: SH intrinsics are not supported
 ; VECTOR: LLVM ERROR: SH only supports i8, i16, and i32 integer operations
 ; ADDRESS: LLVM ERROR: SH global, function, and block address constants are not supported
-
-;--- mul.ll
-define i32 @multiply(i32 %a, i32 %b) {
-	%result = mul i32 %a, %b
-	ret i32 %result
-}
-
-;--- sdiv.ll
-define i32 @signed_divide(i32 %a, i32 %b) {
-	%result = sdiv i32 %a, %b
-	ret i32 %result
-}
-
-;--- udiv.ll
-define i32 @unsigned_divide(i32 %a, i32 %b) {
-	%result = udiv i32 %a, %b
-	ret i32 %result
-}
-
-;--- srem.ll
-define i32 @signed_remainder(i32 %a, i32 %b) {
-	%result = srem i32 %a, %b
-	ret i32 %result
-}
-
-;--- urem.ll
-define i32 @unsigned_remainder(i32 %a, i32 %b) {
-	%result = urem i32 %a, %b
-	ret i32 %result
-}
 
 ;--- i64.ll
 define i32 @wide_alu(i32 %a, i32 %b) {

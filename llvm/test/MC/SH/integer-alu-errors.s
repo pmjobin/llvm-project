@@ -30,12 +30,6 @@ shll r4,r5
 shlr #1
 ! CHECK: :[[@LINE-1]]:6: error: unexpected operand
 
-subc r5,r4
-! CHECK: :[[@LINE-1]]:1: error: unrecognized instruction mnemonic
-
-addc r5,r4
-! CHECK: :[[@LINE-1]]:1: error: unrecognized instruction mnemonic
-
 negc r5,r4
 ! CHECK: :[[@LINE-1]]:1: error: unrecognized instruction mnemonic
 

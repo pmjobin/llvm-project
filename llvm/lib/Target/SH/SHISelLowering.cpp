@@ -36,10 +36,15 @@ SHTargetLowering::SHTargetLowering(const TargetMachine &TM,
   setPrefFunctionAlignment(Align(4));
 
   for (unsigned Opcode :
-       {ISD::ADD, ISD::SUB, ISD::XOR, ISD::SHL, ISD::SRA, ISD::SRL})
+       {ISD::ADD, ISD::SUB, ISD::MUL, ISD::XOR, ISD::SHL, ISD::SRA, ISD::SRL})
     setOperationAction(Opcode, MVT::i32, Legal);
   setOperationAction(ISD::Constant, MVT::i32, Legal);
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i32, Legal);
+  for (unsigned Opcode : {ISD::SDIV, ISD::UDIV, ISD::SREM, ISD::UREM})
+    setOperationAction(Opcode, MVT::i32, Expand);
+  setOperationAction(ISD::SDIVREM, MVT::i32, Custom);
+  setOperationAction(ISD::UDIVREM, MVT::i32, Custom);
+  setMaxDivRemBitWidthSupported(32);
 
   for (MVT MemVT : {MVT::i8, MVT::i16}) {
     setLoadExtAction(ISD::EXTLOAD, MVT::i32, MemVT, Legal);
@@ -48,17 +53,11 @@ SHTargetLowering::SHTargetLowering(const TargetMachine &TM,
     setTruncStoreAction(MVT::i32, MemVT, Legal);
   }
 
-  for (unsigned Opcode : {ISD::LOAD,         ISD::STORE,
-                          ISD::MUL,          ISD::MULHU,
-                          ISD::MULHS,        ISD::SDIV,
-                          ISD::UDIV,         ISD::SREM,
-                          ISD::UREM,         ISD::AND,
-                          ISD::OR,           ISD::ROTL,
-                          ISD::ROTR,         ISD::BR_CC,
-                          ISD::SELECT,       ISD::SELECT_CC,
-                          ISD::SETCC,        ISD::GlobalAddress,
-                          ISD::BlockAddress, ISD::JumpTable,
-                          ISD::ConstantPool, ISD::DYNAMIC_STACKALLOC})
+  for (unsigned Opcode :
+       {ISD::LOAD, ISD::STORE, ISD::MULHU, ISD::MULHS, ISD::AND, ISD::OR,
+        ISD::ROTL, ISD::ROTR, ISD::BR_CC, ISD::SELECT, ISD::SELECT_CC,
+        ISD::SETCC, ISD::GlobalAddress, ISD::BlockAddress, ISD::JumpTable,
+        ISD::ConstantPool, ISD::DYNAMIC_STACKALLOC})
     setOperationAction(Opcode, MVT::i32, Custom);
 
   computeRegisterProperties(STI.getRegisterInfo());
@@ -288,7 +287,14 @@ static void validateSHIR(const Function &F) {
           case Instruction::And:
           case Instruction::Or:
           case Instruction::Xor:
+          case Instruction::Mul:
             break;
+          case Instruction::SDiv:
+          case Instruction::UDiv:
+          case Instruction::SRem:
+          case Instruction::URem:
+            report_fatal_error(
+                "SH narrow integer division and remainder are not supported");
           case Instruction::Shl:
           case Instruction::LShr:
           case Instruction::AShr:
@@ -632,9 +638,38 @@ static bool isSupportedSHNarrowAddress(SDValue Addr) {
   return isa<ConstantSDNode>(Addr.getOperand(1)) || IsBase(Addr.getOperand(1));
 }
 
+static SDValue lowerSHDivRem(SDValue Op, SelectionDAG &DAG) {
+  bool IsSigned = Op.getOpcode() == ISD::SDIVREM;
+  bool QuotientUsed = Op->hasAnyUseOfValue(0);
+  bool RemainderUsed = Op->hasAnyUseOfValue(1);
+  SDLoc DL(Op);
+  SDValue Dividend = Op.getOperand(0);
+  SDValue Divisor = Op.getOperand(1);
+  const SDNodeFlags Flags = Op->getFlags();
+
+  if (QuotientUsed && RemainderUsed)
+    return DAG.getNode(IsSigned ? SHISD::SDIVREM : SHISD::UDIVREM, DL,
+                       Op->getVTList(), {Dividend, Divisor}, Flags);
+
+  SDValue Undef = DAG.getUNDEF(MVT::i32);
+  if (QuotientUsed) {
+    SDValue Quotient = DAG.getNode(IsSigned ? SHISD::SDIV : SHISD::UDIV, DL,
+                                   MVT::i32, Dividend, Divisor, Flags);
+    return DAG.getMergeValues({Quotient, Undef}, DL);
+  }
+  if (RemainderUsed) {
+    SDValue Remainder = DAG.getNode(IsSigned ? SHISD::SREM : SHISD::UREM, DL,
+                                    MVT::i32, Dividend, Divisor, Flags);
+    return DAG.getMergeValues({Undef, Remainder}, DL);
+  }
+  return DAG.getMergeValues({Undef, Undef}, DL);
+}
+
 SDValue SHTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   if (Op.getOpcode() == ISD::BR_CC)
     return LowerBR_CC(Op, DAG);
+  if (Op.getOpcode() == ISD::SDIVREM || Op.getOpcode() == ISD::UDIVREM)
+    return lowerSHDivRem(Op, DAG);
   if (Op.getOpcode() == ISD::LOAD || Op.getOpcode() == ISD::STORE) {
     const auto *Mem = cast<MemSDNode>(Op);
     EVT MemoryVT = Mem->getMemoryVT();
@@ -686,6 +721,123 @@ SDValue SHTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
 
 static Register createGPR(MachineRegisterInfo &MRI) {
   return MRI.createVirtualRegister(&SH::GPRRegClass);
+}
+
+static MachineBasicBlock *emitMultiply(MachineInstr &MI,
+                                       MachineBasicBlock *MBB) {
+  MachineFunction &MF = *MBB->getParent();
+  const SHInstrInfo &TII = *MF.getSubtarget<SHSubtarget>().getInstrInfo();
+  const DebugLoc &DL = MI.getDebugLoc();
+  Register Dest = MI.getOperand(0).getReg();
+  Register LHS = MI.getOperand(1).getReg();
+  Register RHS = MI.getOperand(2).getReg();
+
+  BuildMI(*MBB, MI, DL, TII.get(SH::MUL_L)).addReg(LHS).addReg(RHS);
+  BuildMI(*MBB, MI, DL, TII.get(SH::STS_MACL), Dest);
+
+  MI.eraseFromParent();
+  return MBB;
+}
+
+static Register emitDivisionQuotient(MachineInstr &MI, MachineBasicBlock &MBB,
+                                     const SHInstrInfo &TII,
+                                     MachineRegisterInfo &MRI, bool IsSigned,
+                                     Register Dividend, Register Divisor,
+                                     Register QuotientDest) {
+  const DebugLoc &DL = MI.getDebugLoc();
+  Register Quotient = createGPR(MRI);
+  BuildMI(MBB, MI, DL, TII.get(TargetOpcode::COPY), Quotient).addReg(Dividend);
+
+  Register Partial;
+  Register Zero;
+  if (!IsSigned) {
+    Partial = createGPR(MRI);
+    BuildMI(MBB, MI, DL, TII.get(SH::MOVri), Partial).addImm(0);
+    BuildMI(MBB, MI, DL, TII.get(SH::DIV0U));
+  } else {
+    Register SignProbe = createGPR(MRI);
+    BuildMI(MBB, MI, DL, TII.get(SH::SHLL), SignProbe).addReg(Dividend);
+
+    Partial = createGPR(MRI);
+    BuildMI(MBB, MI, DL, TII.get(SH::SUBC), Partial)
+        .addReg(Dividend)
+        .addReg(Dividend);
+
+    Zero = createGPR(MRI);
+    BuildMI(MBB, MI, DL, TII.get(SH::XORrr), Zero)
+        .addReg(SignProbe)
+        .addReg(SignProbe);
+
+    Register Magnitude = createGPR(MRI);
+    BuildMI(MBB, MI, DL, TII.get(SH::SUBC), Magnitude)
+        .addReg(Quotient)
+        .addReg(Zero);
+    Quotient = Magnitude;
+    BuildMI(MBB, MI, DL, TII.get(SH::DIV0S)).addReg(Divisor).addReg(Partial);
+  }
+
+  for (unsigned I = 0; I != 32; ++I) {
+    Register NextQuotient = createGPR(MRI);
+    BuildMI(MBB, MI, DL, TII.get(SH::ROTCL), NextQuotient).addReg(Quotient);
+    Quotient = NextQuotient;
+
+    Register NextPartial = createGPR(MRI);
+    BuildMI(MBB, MI, DL, TII.get(SH::DIV1), NextPartial)
+        .addReg(Partial)
+        .addReg(Divisor);
+    Partial = NextPartial;
+  }
+
+  Register FinalRotate = IsSigned ? createGPR(MRI) : QuotientDest;
+  BuildMI(MBB, MI, DL, TII.get(SH::ROTCL), FinalRotate).addReg(Quotient);
+  if (!IsSigned)
+    return FinalRotate;
+
+  BuildMI(MBB, MI, DL, TII.get(SH::ADDC), QuotientDest)
+      .addReg(FinalRotate)
+      .addReg(Zero);
+  return QuotientDest;
+}
+
+static MachineBasicBlock *emitDivision(MachineInstr &MI,
+                                       MachineBasicBlock *MBB) {
+  MachineFunction &MF = *MBB->getParent();
+  MachineRegisterInfo &MRI = MF.getRegInfo();
+  const SHInstrInfo &TII = *MF.getSubtarget<SHSubtarget>().getInstrInfo();
+  const DebugLoc &DL = MI.getDebugLoc();
+  unsigned Opcode = MI.getOpcode();
+  bool IsSigned = Opcode == SH::SDIV32_PSEUDO || Opcode == SH::SREM32_PSEUDO ||
+                  Opcode == SH::SDIVREM32_PSEUDO;
+  bool NeedsQuotient =
+      Opcode == SH::UDIV32_PSEUDO || Opcode == SH::SDIV32_PSEUDO ||
+      Opcode == SH::UDIVREM32_PSEUDO || Opcode == SH::SDIVREM32_PSEUDO;
+  bool NeedsRemainder =
+      Opcode == SH::UREM32_PSEUDO || Opcode == SH::SREM32_PSEUDO ||
+      Opcode == SH::UDIVREM32_PSEUDO || Opcode == SH::SDIVREM32_PSEUDO;
+
+  unsigned InputIndex = NeedsQuotient && NeedsRemainder ? 2 : 1;
+  Register QuotientDest =
+      NeedsQuotient ? MI.getOperand(0).getReg() : createGPR(MRI);
+  Register RemainderDest =
+      NeedsRemainder
+          ? MI.getOperand(NeedsQuotient && NeedsRemainder ? 1 : 0).getReg()
+          : Register();
+  Register Dividend = MI.getOperand(InputIndex).getReg();
+  Register Divisor = MI.getOperand(InputIndex + 1).getReg();
+
+  Register Quotient = emitDivisionQuotient(MI, *MBB, TII, MRI, IsSigned,
+                                           Dividend, Divisor, QuotientDest);
+  if (NeedsRemainder) {
+    Register Product = createGPR(MRI);
+    BuildMI(*MBB, MI, DL, TII.get(SH::MUL_L)).addReg(Divisor).addReg(Quotient);
+    BuildMI(*MBB, MI, DL, TII.get(SH::STS_MACL), Product);
+    BuildMI(*MBB, MI, DL, TII.get(SH::SUBrr), RemainderDest)
+        .addReg(Dividend)
+        .addReg(Product);
+  }
+
+  MI.eraseFromParent();
+  return MBB;
 }
 
 static void emitUnsignedByte(MachineBasicBlock &MBB, MachineInstr &InsertBefore,
@@ -899,6 +1051,15 @@ SHTargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
   switch (MI.getOpcode()) {
   default:
     llvm_unreachable("unexpected SH custom inserter opcode");
+  case SH::MUL32_PSEUDO:
+    return emitMultiply(MI, MBB);
+  case SH::UDIV32_PSEUDO:
+  case SH::UREM32_PSEUDO:
+  case SH::UDIVREM32_PSEUDO:
+  case SH::SDIV32_PSEUDO:
+  case SH::SREM32_PSEUDO:
+  case SH::SDIVREM32_PSEUDO:
+    return emitDivision(MI, MBB);
   case SH::MOVi32:
     return emitI32Constant(MI, MBB);
   case SH::SHLri:
@@ -992,6 +1153,10 @@ SDValue SHTargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
                      Dest, Glue);
 }
 
+bool SHTargetLowering::isIntDivCheap(EVT VT, AttributeList Attr) const {
+  return VT == MVT::i32;
+}
+
 bool SHTargetLowering::allowsMisalignedMemoryAccesses(
     EVT VT, unsigned AddrSpace, Align Alignment, MachineMemOperand::Flags Flags,
     unsigned *Fast) const {
@@ -1022,6 +1187,18 @@ const char *SHTargetLowering::getTargetNodeName(unsigned Opcode) const {
     return "SHISD::BT";
   case SHISD::BF:
     return "SHISD::BF";
+  case SHISD::UDIV:
+    return "SHISD::UDIV";
+  case SHISD::UREM:
+    return "SHISD::UREM";
+  case SHISD::UDIVREM:
+    return "SHISD::UDIVREM";
+  case SHISD::SDIV:
+    return "SHISD::SDIV";
+  case SHISD::SREM:
+    return "SHISD::SREM";
+  case SHISD::SDIVREM:
+    return "SHISD::SDIVREM";
   default:
     return nullptr;
   }

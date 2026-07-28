@@ -35,7 +35,7 @@
 ! SYNTAX: error: unrecognized instruction mnemonic
 ! SYNTAX: error: unrecognized instruction mnemonic
 ! SYNTAX: error: unrecognized instruction mnemonic
-! SYNTAX: error: unrecognized instruction mnemonic
+! SYNTAX: error: invalid operand for instruction
 ! SYNTAX: error: unrecognized instruction mnemonic
 ! SYNTAX: error: invalid register name
 ! SYNTAX: error: invalid register name

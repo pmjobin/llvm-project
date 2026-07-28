@@ -9,6 +9,7 @@
 #include "SH.h"
 #include "SHAsmPrinter.h"
 #include "SHTargetMachine.h"
+#include "llvm/CodeGen/BranchRelaxation.h"
 #include "llvm/IR/PassInstrumentation.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/Passes/CodeGenPassBuilder.h"
@@ -32,6 +33,7 @@ public:
     return Error::success();
   }
   void addPreEmitPass(PassManagerWrapper &PMW) const {
+    addMachineFunctionPass(BranchRelaxationPass(), PMW);
     addMachineFunctionPass(SHDelaySlotFillerPass(), PMW);
   }
   void addAsmPrinterBegin(PassManagerWrapper &PMW) const {

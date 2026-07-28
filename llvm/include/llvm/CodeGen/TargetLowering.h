@@ -499,6 +499,10 @@ public:
     return true;
   }
 
+  bool isDivRemSelectFoldSupported(EVT VT) const {
+    return VT.isVector() || isSelectSupported(ScalarValSelect);
+  }
+
   /// Return true if the @llvm.get.active.lane.mask intrinsic should be expanded
   /// using generic code in SelectionDAGBuilder.
   virtual bool shouldExpandGetActiveLaneMask(EVT VT, EVT OpVT) const {

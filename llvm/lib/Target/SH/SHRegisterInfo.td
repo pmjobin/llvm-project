@@ -23,6 +23,8 @@ def MACH : Register<"mach">;
 def MACL : Register<"macl">;
 def SR : Register<"sr">;
 def TBit : Register<"">;
+def MBit : Register<"">;
+def QBit : Register<"">;
 }
 
 // Keep caller-saved registers first so the narrow register-only leaf-function

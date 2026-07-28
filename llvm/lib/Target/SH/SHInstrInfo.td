@@ -157,6 +157,9 @@ def addr_word_frame
 def SDT_SHCmp : SDTypeProfile<0, 2, [SDTCisVT<0, i32>, SDTCisVT<1, i32>]>;
 def SDT_SHBrcond : SDTypeProfile<0, 1, [SDTCisVT<0, OtherVT>]>;
 def SDT_SHCall : SDTypeProfile<0, -1, [SDTCisVT<0, i32>]>;
+def SDT_SHDivRem
+    : SDTypeProfile<2, 2, [SDTCisVT<0, i32>, SDTCisSameAs<0, 1>,
+                           SDTCisSameAs<0, 2>, SDTCisSameAs<0, 3>]>;
 def SDT_SHCallSeqStart
     : SDCallSeqStart<[SDTCisVT<0, i32>, SDTCisVT<1, i32>]>;
 def SDT_SHCallSeqEnd
@@ -178,6 +181,12 @@ def SHcmpgt : SDNode<"SHISD::CMP_GT", SDT_SHCmp, [SDNPOutGlue]>;
 def SHtst : SDNode<"SHISD::TST", SDT_SHCmp, [SDNPOutGlue]>;
 def SHbt : SDNode<"SHISD::BT", SDT_SHBrcond, [SDNPHasChain, SDNPInGlue]>;
 def SHbf : SDNode<"SHISD::BF", SDT_SHBrcond, [SDNPHasChain, SDNPInGlue]>;
+def SHudiv : SDNode<"SHISD::UDIV", SDTIntBinOp>;
+def SHurem : SDNode<"SHISD::UREM", SDTIntBinOp>;
+def SHudivrem : SDNode<"SHISD::UDIVREM", SDT_SHDivRem>;
+def SHsdiv : SDNode<"SHISD::SDIV", SDTIntBinOp>;
+def SHsrem : SDNode<"SHISD::SREM", SDTIntBinOp>;
+def SHsdivrem : SDNode<"SHISD::SDIVREM", SDT_SHDivRem>;
 
 def non_simm8 : ImmLeaf<i32, [{ return !isInt<8>(Imm); }]>;
 def u5imm : ImmLeaf<i32, [{ return isUInt<5>(Imm); }]>;
@@ -272,6 +281,49 @@ def ADDri : SHRegImm<0x7, (outs GPR:$dst),
                      [(set GPR:$dst, (add GPR:$dst_in, simm8:$imm))]>;
 
 let usesCustomInserter = 1 in {
+  let isCommutable = 1 in
+  def MUL32_PSEUDO
+      : SHPseudo<(outs GPR:$dst), (ins GPR:$lhs, GPR:$rhs)> {
+    let Pattern = [(set GPR:$dst, (mul GPR:$lhs, GPR:$rhs))];
+  }
+  def UDIV32_PSEUDO
+      : SHPseudo<(outs GPR:$quotient),
+                 (ins GPR:$dividend, GPR:$divisor)> {
+    let Pattern =
+        [(set GPR:$quotient, (SHudiv GPR:$dividend, GPR:$divisor))];
+  }
+  def UREM32_PSEUDO
+      : SHPseudo<(outs GPR:$remainder),
+                 (ins GPR:$dividend, GPR:$divisor)> {
+    let Pattern =
+        [(set GPR:$remainder, (SHurem GPR:$dividend, GPR:$divisor))];
+  }
+  def UDIVREM32_PSEUDO
+      : SHPseudo<(outs GPR:$quotient, GPR:$remainder),
+                 (ins GPR:$dividend, GPR:$divisor)> {
+    let Pattern =
+        [(set GPR:$quotient, GPR:$remainder,
+              (SHudivrem GPR:$dividend, GPR:$divisor))];
+  }
+  def SDIV32_PSEUDO
+      : SHPseudo<(outs GPR:$quotient),
+                 (ins GPR:$dividend, GPR:$divisor)> {
+    let Pattern =
+        [(set GPR:$quotient, (SHsdiv GPR:$dividend, GPR:$divisor))];
+  }
+  def SREM32_PSEUDO
+      : SHPseudo<(outs GPR:$remainder),
+                 (ins GPR:$dividend, GPR:$divisor)> {
+    let Pattern =
+        [(set GPR:$remainder, (SHsrem GPR:$dividend, GPR:$divisor))];
+  }
+  def SDIVREM32_PSEUDO
+      : SHPseudo<(outs GPR:$quotient, GPR:$remainder),
+                 (ins GPR:$dividend, GPR:$divisor)> {
+    let Pattern =
+        [(set GPR:$quotient, GPR:$remainder,
+              (SHsdivrem GPR:$dividend, GPR:$divisor))];
+  }
   def MOVi32 : SHPseudo<(outs GPR:$dst), (ins i32imm:$imm)> {
     let Pattern = [(set GPR:$dst, non_simm8:$imm)];
   }
@@ -293,6 +345,37 @@ let usesCustomInserter = 1 in {
   def SRArr : SHPseudo<(outs GPR:$dst), (ins GPR:$src, GPR:$amount)> {
     let Pattern = [(set GPR:$dst, (sra GPR:$src, GPR:$amount))];
   }
+}
+
+let isCommutable = 1, Defs = [MACL] in
+def MUL_L : SHRegReg<0x0, 0x7, (outs), (ins GPR:$src, GPR:$dst),
+                     "mul.l\t$src,$dst">;
+
+let Uses = [MACL] in
+def STS_MACL
+    : SHSpecialToReg<0x1a, (outs GPR:$dst), (ins), "sts\tmacl,$dst">;
+
+let Defs = [MBit, QBit, TBit] in
+def DIV0U : SHFixed<0x0019, "div0u">;
+
+let Defs = [MBit, QBit, TBit] in
+def DIV0S : SHRegReg<0x2, 0x7, (outs), (ins GPR:$src, GPR:$dst),
+                     "div0s\t$src,$dst">;
+
+let Constraints = "$dst = $dst_in", Uses = [MBit, QBit, TBit],
+    Defs = [QBit, TBit] in
+def DIV1 : SHRegReg<0x3, 0x4, (outs GPR:$dst),
+                    (ins GPR:$dst_in, GPR:$src), "div1\t$src,$dst">;
+
+let Constraints = "$dst = $dst_in", Uses = [TBit], Defs = [TBit] in
+def ROTCL
+    : SHOneReg<0x24, (outs GPR:$dst), (ins GPR:$dst_in), "rotcl\t$dst">;
+
+let Constraints = "$dst = $dst_in", Uses = [TBit], Defs = [TBit] in {
+  def ADDC : SHRegReg<0x3, 0xe, (outs GPR:$dst),
+                      (ins GPR:$dst_in, GPR:$src), "addc\t$src,$dst">;
+  def SUBC : SHRegReg<0x3, 0xa, (outs GPR:$dst),
+                      (ins GPR:$dst_in, GPR:$src), "subc\t$src,$dst">;
 }
 
 let Defs = [TBit], isCompare = 1 in {

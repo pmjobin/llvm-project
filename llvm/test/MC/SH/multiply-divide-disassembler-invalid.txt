@@ -1,0 +1,14 @@
+# RUN: split-file %s %t
+# RUN: not llvm-mc -triple=sh-unknown-elf -disassemble %t/be.txt 2>&1 | FileCheck %s --check-prefix=BE
+# RUN: not llvm-mc -triple=shle-unknown-elf -disassemble %t/le.txt 2>&1 | FileCheck %s --check-prefix=LE
+
+#--- be.txt
+[0x04]
+
+#--- le.txt
+[0x57]
+
+# BE: be.txt:1:2: warning: invalid instruction encoding
+# BE-NOT: mul.l
+# LE: le.txt:1:2: warning: invalid instruction encoding
+# LE-NOT: mul.l
