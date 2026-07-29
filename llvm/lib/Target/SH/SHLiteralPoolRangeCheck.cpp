@@ -1,4 +1,4 @@
-//===-- SHLiteralPoolRangeCheck.cpp - Validate trailing literal pools -----===//
+//===-- SHLiteralPoolRangeCheck.cpp - Validate SH literal islands --------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -10,6 +10,9 @@
 #include "SHInstrInfo.h"
 #include "SHLiteralPool.h"
 #include "SHSubtarget.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/MachineConstantPool.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachinePassManager.h"
@@ -28,28 +31,37 @@ namespace {
 struct LiteralUse {
   uint64_t Offset;
   unsigned CPI;
+  int64_t Instance;
 };
 
-static uint64_t checkedAdd(uint64_t LHS, uint64_t RHS) {
+static void fail(const MachineFunction &MF, const Twine &Message) {
+  report_fatal_error(Twine("SH literal island validation failed: function ") +
+                     MF.getName() + ", " + Message);
+}
+
+static uint64_t entryKey(unsigned CPI, unsigned Instance) {
+  return static_cast<uint64_t>(CPI) << 32 | Instance;
+}
+
+static uint64_t checkedAdd(const MachineFunction &MF, uint64_t LHS,
+                           uint64_t RHS) {
   if (LHS > std::numeric_limits<uint64_t>::max() - RHS)
-    report_fatal_error("SH literal pool code layout overflow");
+    fail(MF, "code layout overflow");
   return LHS + RHS;
 }
 
-static uint64_t alignBlockOffset(uint64_t Offset, const MachineBasicBlock &MBB,
-                                 Align FunctionAlignment) {
+static uint64_t alignBlockOffset(const MachineFunction &MF, uint64_t Offset,
+                                 const MachineBasicBlock &MBB) {
   Align Alignment = MBB.getAlignment();
-  if (Alignment > FunctionAlignment)
-    report_fatal_error(
-        "SH literal pool cannot validate a basic-block alignment greater than "
-        "the function alignment");
+  if (Alignment > MF.getAlignment())
+    fail(MF, "basic-block alignment exceeds function alignment");
   uint64_t Aligned = alignTo(Offset, Alignment);
   uint64_t Padding = Aligned - Offset;
   unsigned MaxPadding = MBB.getMaxBytesForAlignment();
   return MaxPadding != 0 && Padding > MaxPadding ? Offset : Aligned;
 }
 
-static std::optional<bool> hasPoolBarrier(const MachineBasicBlock &MBB) {
+static std::optional<bool> hasBarrier(const MachineBasicBlock &MBB) {
   auto I = MBB.rbegin();
   while (I != MBB.rend() && I->isMetaInstruction())
     ++I;
@@ -61,7 +73,6 @@ static std::optional<bool> hasPoolBarrier(const MachineBasicBlock &MBB) {
     if (I == MBB.rend())
       return false;
   }
-
   if (!I->isBundle())
     return I->isBarrier();
 
@@ -81,110 +92,157 @@ static std::optional<bool> hasPoolBarrier(const MachineBasicBlock &MBB) {
   return false;
 }
 
-static bool hasSafePoolBarrier(const MachineFunction &MF) {
-  for (auto I = MF.rbegin(), E = MF.rend(); I != E; ++I) {
-    std::optional<bool> Barrier = hasPoolBarrier(*I);
-    if (Barrier)
-      return *Barrier;
-    if (!I->pred_empty())
-      return false;
+static bool isSafeWaterPoint(const MachineBasicBlock &MBB) {
+  if (isSHLiteralIslandBlock(MBB))
+    return false;
+  if (!MBB.isEntryBlock() && MBB.pred_empty())
+    return true;
+  std::optional<bool> Barrier = hasBarrier(MBB);
+  return Barrier && *Barrier;
+}
+
+static const MachineBasicBlock *
+getWaterBefore(const MachineBasicBlock &Island) {
+  auto I = Island.getIterator();
+  while (I != Island.getParent()->begin()) {
+    --I;
+    if (!isSHLiteralIslandBlock(*I))
+      return &*I;
   }
-  return false;
+  return nullptr;
+}
+
+static int64_t getDistance(const MachineFunction &MF, uint64_t UseOffset,
+                           uint64_t EntryOffset) {
+  uint64_t Base = (UseOffset & ~UINT64_C(3)) + 4;
+  if (EntryOffset >= Base) {
+    uint64_t Distance = EntryOffset - Base;
+    if (Distance > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+      fail(MF, "code layout overflow");
+    return Distance;
+  }
+  uint64_t Distance = Base - EntryOffset;
+  if (Distance > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+    fail(MF, "code layout overflow");
+  return -static_cast<int64_t>(Distance);
 }
 
 class RangeCheckImpl {
 public:
   void run(MachineFunction &MF) const {
     const auto &Constants = MF.getConstantPool()->getConstants();
-    if (Constants.empty())
+    bool HasLiteralContent = any_of(MF, [](const MachineBasicBlock &MBB) {
+      return any_of(MBB, [](const MachineInstr &MI) {
+        return MI.getOpcode() == SH::MOVL_load_pc_island ||
+               MI.getOpcode() == SH::SH_CONSTPOOL_ENTRY;
+      });
+    });
+    if (!HasLiteralContent)
       return;
-
-    if (MF.getAlignment() < Align(4))
-      report_fatal_error(
-          "SH literal pool function alignment must be at least four");
-    if (MF.empty() || !hasSafePoolBarrier(MF))
-      report_fatal_error("SH literal pool would be reachable by fallthrough");
+    if (MF.getAlignment() < Align(SHLiteralIslandAlignment))
+      fail(MF, "function alignment is less than four");
 
     const SHInstrInfo &TII = *MF.getSubtarget<SHSubtarget>().getInstrInfo();
-    SmallVector<LiteralUse, 8> Uses;
+    DenseMap<uint64_t, uint64_t> EntryOffsets;
+    SmallVector<LiteralUse, 16> Uses;
     uint64_t Offset = 0;
 
     for (const MachineBasicBlock &MBB : MF) {
       if (MBB.isBeginSection() && !MBB.isEntryBlock())
-        report_fatal_error(
-            "SH literal pools do not support basic-block sections");
-      Offset = alignBlockOffset(Offset, MBB, MF.getAlignment());
+        fail(MF, "basic-block sections are not supported");
+      Offset = alignBlockOffset(MF, Offset, MBB);
+      bool IsIsland = isSHLiteralIslandBlock(MBB);
+      unsigned Payload = 0;
+
+      if (IsIsland) {
+        if (MBB.getAlignment() != Align(SHLiteralIslandAlignment))
+          fail(MF, "island alignment is not four");
+        const MachineBasicBlock *Water = getWaterBefore(MBB);
+        if (!Water || !isSafeWaterPoint(*Water))
+          fail(MF, "execution can fall through into an island");
+        if (!MBB.pred_empty() || !MBB.succ_empty())
+          fail(MF, "island has a CFG predecessor or successor");
+      }
 
       for (const MachineInstr &MI : MBB) {
+        for (const MachineOperand &MO : MI.operands())
+          if (MO.isMBB() && isSHLiteralIslandBlock(*MO.getMBB()))
+            fail(MF, "a branch or instruction targets an island");
+        if (MI.isBundledWithPred() &&
+            (MI.getOpcode() == SH::MOVL_load_pc_island ||
+             MI.getOpcode() == SH::SH_CONSTPOOL_ENTRY))
+          fail(MF, "literal-island content is inside an instruction bundle");
         if (MI.isBundledWithPred())
           continue;
         if (MI.isInlineAsm())
-          report_fatal_error(
-              "SH literal pool layout does not support inline assembly");
-        if (MI.getOpcode() == SH::MOVL_load_pc) {
-          if (!MI.getOperand(1).isCPI())
-            report_fatal_error(
-                "SH PC-relative literal load must reference a constant pool");
-          Uses.push_back(
-              {Offset, static_cast<unsigned>(MI.getOperand(1).getIndex())});
+          fail(MF, "inline assembly prevents exact final layout");
+
+        if (MI.getOpcode() == SH::MOVL_load_pc_island) {
+          if (MI.getNumExplicitOperands() != 3 || !MI.getOperand(1).isCPI() ||
+              !MI.getOperand(2).isImm())
+            fail(MF, "PC-relative literal load has malformed operands");
+          int64_t Instance = MI.getOperand(2).getImm();
+          if (Instance == SHUnassignedLiteralIsland)
+            fail(MF, "literal load has an unassigned island instance");
+          if (Instance < 0 || Instance > UINT32_MAX)
+            fail(MF, "literal load has an invalid island instance");
+          unsigned CPI = MI.getOperand(1).getIndex();
+          if (CPI >= Constants.size())
+            fail(MF, "literal load has an invalid constant-pool index");
+          Uses.push_back({Offset, CPI, Instance});
+        }
+
+        if (MI.getOpcode() == SH::SH_CONSTPOOL_ENTRY) {
+          if (!IsIsland || MI.getNumExplicitOperands() != 4 ||
+              !MI.getOperand(0).isCPI() || !MI.getOperand(1).isImm() ||
+              !MI.getOperand(2).isImm() || !MI.getOperand(3).isImm())
+            fail(MF, "malformed island entry pseudo");
+          unsigned CPI = MI.getOperand(0).getIndex();
+          int64_t Instance = MI.getOperand(1).getImm();
+          int64_t Size = MI.getOperand(2).getImm();
+          int64_t Alignment = MI.getOperand(3).getImm();
+          if (CPI >= Constants.size() || Instance < 0 || Instance > UINT32_MAX)
+            fail(MF, "island entry has invalid identity");
+          if (Constants[CPI].getSizeInBytes(MF.getDataLayout()) !=
+                  SHLiteralIslandEntrySize ||
+              Constants[CPI].getAlign() > Align(SHLiteralIslandAlignment))
+            fail(MF, "constant-pool entry width or alignment is unsupported");
+          if (Size != SHLiteralIslandEntrySize)
+            fail(MF, "island entry width is not four");
+          if (Alignment != SHLiteralIslandAlignment)
+            fail(MF, "island entry alignment is not four");
+          if (Payload > SHLiteralIslandMaxPayload - SHLiteralIslandEntrySize)
+            fail(MF, "island payload exceeds 1020 bytes");
+          Payload += SHLiteralIslandEntrySize;
+          uint64_t Key = entryKey(CPI, Instance);
+          if (!EntryOffsets.try_emplace(Key, Offset).second)
+            fail(MF, Twine("duplicate island entry label for CPI ") +
+                         Twine(CPI) + ", instance " + Twine(Instance));
+        } else if (IsIsland && !MI.isMetaInstruction()) {
+          fail(MF, "island contains an executable instruction");
         }
 
         unsigned Size = TII.getInstSizeInBytes(MI);
         if (Size == 0 && !MI.isMetaInstruction())
-          report_fatal_error(
-              "SH literal pool layout encountered an unexpanded instruction");
-        Offset = checkedAdd(Offset, Size);
+          fail(MF, "encountered an unexpanded instruction");
+        Offset = checkedAdd(MF, Offset, Size);
       }
     }
 
-    uint64_t PoolStart = alignTo(Offset, Align(4));
-    SHLiteralPoolLayout Layout = computeSHLiteralPoolLayout(MF);
     for (const LiteralUse &Use : Uses) {
-      if (Use.CPI >= Layout.Entries.size())
-        report_fatal_error(
-            "SH literal load has an invalid constant-pool index");
-      uint64_t EntryOffset =
-          checkedAdd(PoolStart, Layout.Entries[Use.CPI].Offset);
-      uint64_t Base = (Use.Offset & ~UINT64_C(3)) + 4;
-      int64_t Distance;
-      if (EntryOffset >= Base) {
-        uint64_t UnsignedDistance = EntryOffset - Base;
-        if (UnsignedDistance >
-            static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
-          report_fatal_error("SH literal pool code layout overflow");
-        Distance = static_cast<int64_t>(UnsignedDistance);
-      } else {
-        uint64_t UnsignedDistance = Base - EntryOffset;
-        if (UnsignedDistance >
-            static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
-          report_fatal_error("SH literal pool code layout overflow");
-        Distance = -static_cast<int64_t>(UnsignedDistance);
-      }
-
-      if (Distance < 0)
-        report_fatal_error(Twine("SH literal pool entry is behind the "
-                                 "instruction: function ") +
-                           MF.getName() + ", constant-pool index " +
-                           Twine(Use.CPI) + ", instruction offset " +
-                           Twine(Use.Offset) + ", pool-entry offset " +
-                           Twine(EntryOffset) + ", distance " +
-                           Twine(Distance));
-      if ((Distance & 3) != 0)
-        report_fatal_error(Twine("SH literal pool entry is misaligned: "
-                                 "function ") +
-                           MF.getName() + ", constant-pool index " +
-                           Twine(Use.CPI) + ", instruction offset " +
-                           Twine(Use.Offset) + ", pool-entry offset " +
-                           Twine(EntryOffset) + ", distance " +
-                           Twine(Distance));
-      if (Distance > 1020)
-        report_fatal_error(Twine("SH literal pool entry is out of range: "
-                                 "function ") +
-                           MF.getName() + ", constant-pool index " +
-                           Twine(Use.CPI) + ", instruction offset " +
-                           Twine(Use.Offset) + ", pool-entry offset " +
-                           Twine(EntryOffset) + ", distance " +
-                           Twine(Distance) + ", allowed range 0..1020");
+      auto Entry = EntryOffsets.find(entryKey(Use.CPI, Use.Instance));
+      if (Entry == EntryOffsets.end())
+        fail(MF, Twine("referenced island entry does not exist: CPI ") +
+                     Twine(Use.CPI) + ", instance " + Twine(Use.Instance));
+      uint64_t EntryOffset = Entry->second;
+      int64_t Distance = getDistance(MF, Use.Offset, EntryOffset);
+      if (Distance < 0 || Distance > SHLiteralLoadMaxDistance ||
+          (Distance & 3) != 0)
+        fail(MF, Twine("literal distance is invalid: CPI ") + Twine(Use.CPI) +
+                     ", instance " + Twine(Use.Instance) + ", use offset " +
+                     Twine(Use.Offset) + ", entry offset " +
+                     Twine(EntryOffset) + ", distance " + Twine(Distance) +
+                     ", allowed aligned range 0..1020");
     }
   }
 };
@@ -210,7 +268,7 @@ char SHLiteralPoolRangeCheckLegacy::ID = 0;
 } // namespace
 
 INITIALIZE_PASS(SHLiteralPoolRangeCheckLegacy, DEBUG_TYPE,
-                "Validate SH trailing literal-pool ranges", false, true)
+                "Validate SH literal-island ranges", false, true)
 
 FunctionPass *llvm::createSHLiteralPoolRangeCheckLegacyPass() {
   return new SHLiteralPoolRangeCheckLegacy();

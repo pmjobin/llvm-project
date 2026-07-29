@@ -17,6 +17,7 @@ namespace SH {
 enum Fixups {
   fixup_SH_PCREL8_2 = FirstTargetFixupKind,
   fixup_SH_PCREL12_2,
+  fixup_SH_BSR12_2,
   fixup_SH_PCREL8_4,
 
   LastTargetFixupKind,

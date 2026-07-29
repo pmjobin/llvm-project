@@ -6,7 +6,7 @@ declare void @external_function()
 
 define i32 @global_equal(ptr %value) {
 ; CHECK-LABEL: global_equal:
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,[[ADDR:r[0-9]+]]
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,[[ADDR:r[0-9]+]]
 ; CHECK: cmp/eq	[[ADDR]],r4
 ; CHECK: {{b[tf]}}
 ; CHECK: .long	global
@@ -20,7 +20,7 @@ no:
 
 define i32 @function_not_null() {
 ; CHECK-LABEL: function_not_null:
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,[[ADDR:r[0-9]+]]
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,[[ADDR:r[0-9]+]]
 ; CHECK: tst	[[ADDR]],[[ADDR]]
 ; CHECK: {{b[tf]}}
 ; CHECK: .long	external_function
@@ -34,7 +34,7 @@ no:
 
 define i32 @function_equal(ptr %value) {
 ; CHECK-LABEL: function_equal:
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,[[ADDR:r[0-9]+]]
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,[[ADDR:r[0-9]+]]
 ; CHECK: cmp/eq
 ; CHECK: .long	external_function
 	%condition = icmp eq ptr %value, @external_function

@@ -1,12 +1,21 @@
-; RUN: rm -f %t
-; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=static -O0 -verify-machineinstrs -filetype=obj < %s -o %t 2>&1 | FileCheck %s
-; RUN: not test -e %t
+; RUN: llc -mtriple=sh-unknown-elf -relocation-model=static -O0 -verify-machineinstrs < %s | FileCheck %s
+; RUN: llc -mtriple=shle-unknown-elf -relocation-model=static -O0 -verify-machineinstrs < %s | FileCheck %s
+; RUN: llc -mtriple=sh-unknown-elf -relocation-model=static -O0 -verify-machineinstrs -filetype=obj < %s -o %t.be.o
+; RUN: llc -mtriple=shle-unknown-elf -relocation-model=static -O0 -verify-machineinstrs -filetype=obj < %s -o %t.le.o
 
 @global = global i32 1, align 4
 
 define i32 @expanded_out_of_range(i32 %divisor) {
-; CHECK: LLVM ERROR: SH literal pool entry is out of range: function expanded_out_of_range
-; CHECK-SAME: allowed range 0..1020
+; CHECK-LABEL: expanded_out_of_range:
+; CHECK: mov.l	[[POOL:.LCPI[0-9]+_0_0]],r{{[0-9]+}}
+; CHECK-NEXT: bra	[[CONT:.LBB[0-9_]+]]
+; CHECK-NEXT: nop
+; CHECK: [[POOL]]:
+; CHECK-NEXT: .long	global
+; CHECK: [[CONT]]:
+; CHECK: div0u
+; CHECK: rts
+; CHECK-NEXT: nop
 	%seed = load volatile i32, ptr @global, align 4
 	%q0 = udiv i32 %seed, %divisor
 	%q1 = udiv i32 %q0, %divisor

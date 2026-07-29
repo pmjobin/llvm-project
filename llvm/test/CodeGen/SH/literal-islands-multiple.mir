@@ -1,0 +1,102 @@
+# RUN: llc -mtriple=sh-unknown-elf -run-pass=sh-literal-islands -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -run-pass=sh-literal-islands -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -start-before=sh-literal-islands -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=ASM
+# RUN: llc -mtriple=shle-unknown-elf -start-before=sh-literal-islands -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=ASM
+# RUN: llc -mtriple=sh-unknown-elf -start-before=sh-literal-islands -verify-machineinstrs -filetype=obj %s -o %t.be.o
+# RUN: llc -mtriple=shle-unknown-elf -start-before=sh-literal-islands -verify-machineinstrs -filetype=obj %s -o %t.le.o
+# RUN: llvm-readobj -r %t.be.o | FileCheck %s --check-prefix=OBJ
+# RUN: llvm-readobj -r %t.le.o | FileCheck %s --check-prefix=OBJ
+
+# CHECK-LABEL: name:            multiple
+# CHECK: $r0 = MOVL_load_pc_island %const.0, 1
+# CHECK: SH_CONSTPOOL_ENTRY %const.0, 1, 4, 4
+# CHECK: $r0 = MOVL_load_pc_island %const.0, 0
+# CHECK: SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+
+# CHECK-LABEL: name:            reuse
+# CHECK-COUNT-2: MOVL_load_pc_island %const.0, 0
+# CHECK-COUNT-1: SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+
+# CHECK-LABEL: name:            share
+# CHECK: MOVL_load_pc_island %const.0, 0
+# CHECK: MOVL_load_pc_island %const.1, 0
+# CHECK: SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+# CHECK-NEXT: SH_CONSTPOOL_ENTRY %const.1, 0, 4, 4
+
+# ASM-LABEL: multiple:
+# ASM: mov.l	[[FIRST:.LCPI[0-9]+_0_1]],r0
+# ASM: [[FIRST]]:
+# ASM-NEXT: .long	global
+# ASM: mov.l	[[SECOND:.LCPI[0-9]+_0_0]],r0
+# ASM: [[SECOND]]:
+# ASM-NEXT: .long	global
+
+# OBJ-COUNT-2: R_SH_DIR32 global
+# OBJ-NOT: R_SH_NONE
+
+--- |
+  @global = external global i32
+
+  define i32 @multiple() {
+    ret i32 0
+  }
+
+  define i32 @reuse() {
+    ret i32 0
+  }
+
+  define i32 @share() {
+    ret i32 0
+  }
+...
+---
+name:            multiple
+alignment:       1024
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 ptrtoint (ptr @global to i32)'
+    alignment:   4
+body:             |
+  bb.0:
+    $r0 = MOVL_load_pc_island %const.0, -1 :: (dereferenceable invariant load (s32) from constant-pool)
+    RTS implicit $pr, implicit $r0
+
+  bb.1 (align 1024):
+    $r0 = MOVL_load_pc_island %const.0, -1 :: (dereferenceable invariant load (s32) from constant-pool)
+    RTS implicit $pr, implicit $r0
+...
+---
+name:            reuse
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 42'
+    alignment:   4
+body:             |
+  bb.0:
+    $r1 = MOVL_load_pc_island %const.0, -1 :: (dereferenceable invariant load (s32) from constant-pool)
+    $r0 = MOVL_load_pc_island %const.0, -1 :: (dereferenceable invariant load (s32) from constant-pool)
+    RTS implicit $pr, implicit $r0
+...
+---
+name:            share
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 42'
+    alignment:   4
+  - id:          1
+    value:       'i32 43'
+    alignment:   4
+body:             |
+  bb.0:
+    $r1 = MOVL_load_pc_island %const.0, -1 :: (dereferenceable invariant load (s32) from constant-pool)
+    $r0 = MOVL_load_pc_island %const.1, -1 :: (dereferenceable invariant load (s32) from constant-pool)
+    RTS implicit $pr, implicit $r0
+...

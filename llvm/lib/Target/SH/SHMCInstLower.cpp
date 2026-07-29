@@ -7,6 +7,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "SHMCInstLower.h"
+#include "SHInstrInfo.h"
+#include "SHLiteralPool.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineInstr.h"
@@ -19,8 +21,12 @@
 using namespace llvm;
 
 void SHMCInstLower::lower(const MachineInstr *MI, MCInst &OutMI) const {
-  OutMI.setOpcode(MI->getOpcode());
-  for (const MachineOperand &MO : MI->operands()) {
+  OutMI.setOpcode(MI->getOpcode() == SH::MOVL_load_pc_island ? SH::MOVL_load_pc
+                                                             : MI->getOpcode());
+  for (unsigned I = 0, E = MI->getNumOperands(); I != E; ++I) {
+    const MachineOperand &MO = MI->getOperand(I);
+    if (MI->getOpcode() == SH::MOVL_load_pc_island && I == 2)
+      continue;
     switch (MO.getType()) {
     case MachineOperand::MO_Register:
       if (!MO.isImplicit())
@@ -48,8 +54,19 @@ void SHMCInstLower::lower(const MachineInstr *MI, MCInst &OutMI) const {
       break;
     }
     case MachineOperand::MO_ConstantPoolIndex: {
-      const MCExpr *Expr =
-          MCSymbolRefExpr::create(Printer.GetCPISymbol(MO.getIndex()), Ctx);
+      MCSymbol *Symbol;
+      if (MI->getOpcode() == SH::MOVL_load_pc_island) {
+        int64_t Instance = MI->getOperand(2).getImm();
+        if (Instance < 0)
+          report_fatal_error(
+              "SH literal load reached AsmPrinter without an island instance");
+        Symbol = getSHLiteralIslandSymbol(Ctx, Printer.getDataLayout(),
+                                          Printer.getFunctionNumber(),
+                                          MO.getIndex(), Instance);
+      } else {
+        Symbol = Printer.GetCPISymbol(MO.getIndex());
+      }
+      const MCExpr *Expr = MCSymbolRefExpr::create(Symbol, Ctx);
       if (MO.getOffset() != 0)
         Expr = MCBinaryExpr::createAdd(
             Expr, MCConstantExpr::create(MO.getOffset(), Ctx), Ctx);

@@ -9,10 +9,10 @@ define internal i32 @callee(i32 %value) {
 define dso_local i32 @caller(i32 %value) {
 ; ASM-LABEL: caller:
 ; ASM-NOT: bsr	callee
-; ASM: mov.l	.LCPI{{[0-9]+}}_0,[[CALLEE:r[0-9]+]]
+; ASM: mov.l	.LCPI{{[0-9]+}}_0_0,[[CALLEE:r[0-9]+]]
 ; ASM: jsr	@[[CALLEE]]
 ; ASM-NEXT: nop
-; ASM: .LCPI{{[0-9]+}}_0:
+; ASM: .LCPI{{[0-9]+}}_0_0:
 ; ASM-NEXT: .long	callee
 	%result = call i32 @callee(i32 %value)
 	ret i32 %result
@@ -35,7 +35,7 @@ exit:
 ; OBJ: Name: .text.caller
 ; OBJ: Type: SHT_PROGBITS
 ; OBJ: SHF_EXECINSTR
-; OBJ: Name: .rel.text.caller
+; OBJ: Name: .rela.text.caller
 ; OBJ: 0x{{[0-9A-F]+}} R_SH_DIR32
-; OBJ-SAME: .text.callee
+; OBJ-SAME: callee
 ; OBJ-NOT: R_SH_NONE

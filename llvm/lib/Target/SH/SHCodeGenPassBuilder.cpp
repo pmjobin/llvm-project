@@ -37,6 +37,7 @@ public:
     return Error::success();
   }
   void addPreEmitPass(PassManagerWrapper &PMW) const {
+    addMachineFunctionPass(SHLiteralIslandPass(), PMW);
     addMachineFunctionPass(BranchRelaxationPass(), PMW);
     addMachineFunctionPass(SHDelaySlotFillerPass(), PMW);
     addMachineFunctionPass(SHLiteralPoolRangeCheckPass(), PMW);
@@ -64,6 +65,7 @@ void SHTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
     PIC->addClassToPassName(SHAsmPrinterEndPass::name(), "sh-asm-printer-end");
     PIC->addClassToPassName(SHLowerI64StackAlignPass::name(),
                             "sh-lower-i64-stack-align");
+    PIC->addClassToPassName(SHLiteralIslandPass::name(), "sh-literal-islands");
     PIC->addClassToPassName(SHLiteralPoolRangeCheckPass::name(),
                             "sh-literal-pool-range-check");
   }

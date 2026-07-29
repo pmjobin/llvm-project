@@ -55,6 +55,10 @@ def pcliteral : Operand<iPTR> {
   let OperandType = "OPERAND_PCREL";
 }
 
+def island_instance : OperandWithDefaultOps<i32, (ops (i32 -1))>;
+
+def cpinst_operand : Operand<i32>;
+
 def SImm8AsmOperand : AsmOperandClass {
   let Name = "SImm8";
   let PredicateMethod = "isSImm8";
@@ -508,7 +512,20 @@ let mayLoad = 1 in
 def MOVL_load_pc
     : SHLongLoadPC<(outs GPR:$dst), (ins pcliteral:$target),
                    "mov.l\t$target,$dst",
-                   [(set GPR:$dst, (load tconstpool:$target))]>;
+                   []>;
+
+let mayLoad = 1 in
+def MOVL_load_pc_island
+    : SHPseudo<(outs GPR:$dst),
+               (ins pcliteral:$target, island_instance:$island)> {
+  let Pattern = [(set GPR:$dst, (load tconstpool:$target))];
+}
+
+let hasSideEffects = 0, isNotDuplicable = 1 in
+def SH_CONSTPOOL_ENTRY
+    : SHPseudo<(outs),
+               (ins cpinst_operand:$cpi, i32imm:$instance, i32imm:$size,
+                    i32imm:$alignment)>;
 
 let mayStore = 1 in
 def MOVL_store_reg

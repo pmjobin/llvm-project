@@ -33,6 +33,11 @@ unsigned SHInstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
   if (MI.getOpcode() == TargetOpcode::BUNDLE)
     return getInstBundleSize(MI);
 
+  if (MI.getOpcode() == SH::SH_CONSTPOOL_ENTRY)
+    return MI.getOperand(2).getImm();
+  if (MI.getOpcode() == SH::MOVL_load_pc_island)
+    return 2;
+
   unsigned Size = MI.getDesc().getSize();
   if (MI.getDesc().hasDelaySlot() && !MI.isBundledWithSucc())
     Size += get(SH::NOP).getSize();

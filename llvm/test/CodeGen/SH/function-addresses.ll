@@ -20,35 +20,35 @@ define void @global_function() {
 
 define ptr @defined_address() {
 ; CHECK-LABEL: defined_address:
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,r0
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,r0
 ; CHECK: .long	internal_function
 	ret ptr @internal_function
 }
 
 define ptr @private_address() {
 ; CHECK-LABEL: private_address:
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,r0
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,r0
 ; CHECK: .long	{{.*}}private_function
 	ret ptr @private_function
 }
 
 define ptr @global_function_address() {
 ; CHECK-LABEL: global_function_address:
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,r0
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,r0
 ; CHECK: .long	global_function
 	ret ptr @global_function
 }
 
 define ptr @undefined_address() {
 ; CHECK-LABEL: undefined_address:
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,r0
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,r0
 ; CHECK: .long	external_function
 	ret ptr @external_function
 }
 
 define void @store_function_address(ptr %slot) {
 ; CHECK-LABEL: store_function_address:
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,
 ; CHECK: mov.l	{{.*}},@r4
 ; CHECK: .long	internal_function
 	store ptr @internal_function, ptr %slot, align 4
@@ -58,7 +58,7 @@ define void @store_function_address(ptr %slot) {
 define void @call_function_pointer() {
 ; CHECK-LABEL: call_function_pointer:
 ; CHECK: sts.l	pr,@-r15
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,[[CALLEE:r[0-9]+]]
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,[[CALLEE:r[0-9]+]]
 ; CHECK: jsr	@[[CALLEE]]
 ; CHECK-NEXT: nop
 ; CHECK: .long	external_function
@@ -69,7 +69,7 @@ define void @call_function_pointer() {
 
 define void @call_loaded_function_pointer() {
 ; CHECK-LABEL: call_loaded_function_pointer:
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,[[SLOT:r[0-9]+]]
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,[[SLOT:r[0-9]+]]
 ; CHECK: mov.l	@[[SLOT]],[[CALLEE:r[0-9]+]]
 ; CHECK: jsr	@[[CALLEE]]
 ; CHECK-NEXT: nop
@@ -81,8 +81,8 @@ define void @call_loaded_function_pointer() {
 
 define void @pass_function_address() {
 ; CHECK-LABEL: pass_function_address:
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,
-; CHECK: mov.l	.LCPI{{[0-9]+}}_1,
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,
+; CHECK: mov.l	.LCPI{{[0-9]+}}_1_0,
 ; CHECK: jsr
 ; CHECK: .long	external_function
 ; CHECK: .long	consume_function_pointer

@@ -35,7 +35,7 @@ define void @defined_function() {
 ; COMMON-NOT: .plt
 ; COMMON-NOT: .tdata
 
-; COMMON: Section {{.*}} .rel.data {
+; COMMON: Section {{.*}} .rela.data {
 ; COMMON: R_SH_DIR32 integer
 ; COMMON: R_SH_DIR32 bytes
 ; COMMON: R_SH_DIR32 integer
@@ -71,6 +71,6 @@ define void @defined_function() {
 ; LE: Hex dump of section '.rodata':
 ; LE-NEXT: 0x00000000 07000000
 
-; REL: Relocation section '.rel.data'
+; REL: Relocation section '.rela.data'
 ; REL: R_SH_DIR32
 ; REL-NOT: R_SH_NONE

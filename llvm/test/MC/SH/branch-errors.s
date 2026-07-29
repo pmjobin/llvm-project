@@ -29,7 +29,7 @@
 
 ! RANGE: error: SH branch target is out of range
 ! ALIGN: error: SH branch target must be two-byte aligned
-! RELOC: error: SH branch relocations are not yet supported
+! RELOC: error: SH unresolved branch relocations are not supported
 ! RELOC-NOT: R_SH_NONE
 ! RELOC-NOT: LLVM ERROR
 ! RELOC-NOT: assertion

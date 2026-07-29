@@ -10,7 +10,7 @@
 
 define i32 @load_i32() {
 ; CHECK-LABEL: load_i32:
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,[[ADDR:r[0-9]+]]
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,[[ADDR:r[0-9]+]]
 ; CHECK-NEXT: mov.l	@[[ADDR]],r0
 ; CHECK: .long	long
 	%value = load i32, ptr @long, align 4
@@ -19,7 +19,7 @@ define i32 @load_i32() {
 
 define i32 @load_external_i32() {
 ; CHECK-LABEL: load_external_i32:
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,[[ADDR:r[0-9]+]]
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,[[ADDR:r[0-9]+]]
 ; CHECK-NEXT: mov.l	@[[ADDR]],r0
 ; CHECK: .long	external_long
 	%value = load i32, ptr @external_long, align 4
@@ -28,7 +28,7 @@ define i32 @load_external_i32() {
 
 define void @store_i32(i32 %value) {
 ; CHECK-LABEL: store_i32:
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,[[ADDR:r[0-9]+]]
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,[[ADDR:r[0-9]+]]
 ; CHECK-NEXT: mov.l	r4,@[[ADDR]]
 ; CHECK: .long	long
 	store i32 %value, ptr @long, align 4
@@ -37,7 +37,7 @@ define void @store_i32(i32 %value) {
 
 define i32 @load_i8_signed() {
 ; CHECK-LABEL: load_i8_signed:
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,[[ADDR:r[0-9]+]]
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,[[ADDR:r[0-9]+]]
 ; CHECK: mov.b	@[[ADDR]],
 ; CHECK: .long	byte
 	%value = load i8, ptr @byte, align 1
@@ -47,7 +47,7 @@ define i32 @load_i8_signed() {
 
 define i32 @load_i8_unsigned() {
 ; CHECK-LABEL: load_i8_unsigned:
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,[[ADDR:r[0-9]+]]
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,[[ADDR:r[0-9]+]]
 ; CHECK: mov.b	@[[ADDR]],
 ; CHECK: extu.b
 ; CHECK: .long	byte
@@ -58,7 +58,7 @@ define i32 @load_i8_unsigned() {
 
 define i32 @load_i16_signed() {
 ; CHECK-LABEL: load_i16_signed:
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,[[ADDR:r[0-9]+]]
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,[[ADDR:r[0-9]+]]
 ; CHECK: mov.w	@[[ADDR]],
 ; CHECK: .long	word
 	%value = load i16, ptr @word, align 2
@@ -68,7 +68,7 @@ define i32 @load_i16_signed() {
 
 define i32 @load_i16_unsigned() {
 ; CHECK-LABEL: load_i16_unsigned:
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,[[ADDR:r[0-9]+]]
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,[[ADDR:r[0-9]+]]
 ; CHECK: mov.w	@[[ADDR]],
 ; CHECK: .long	word
 	%value = load i16, ptr @word, align 2
@@ -91,9 +91,9 @@ define void @store_narrow(i32 %value) {
 
 define i64 @load_i64() {
 ; CHECK-LABEL: load_i64:
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,[[ADDR0:r[0-9]+]]
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,[[ADDR0:r[0-9]+]]
 ; CHECK: mov.l	@[[ADDR0]],
-; CHECK: mov.l	.LCPI{{[0-9]+}}_1,[[ADDR1:r[0-9]+]]
+; CHECK: mov.l	.LCPI{{[0-9]+}}_1_0,[[ADDR1:r[0-9]+]]
 ; CHECK: mov.l	@[[ADDR1]],
 ; CHECK: .long	wide
 ; CHECK: .long	wide+4
@@ -103,9 +103,9 @@ define i64 @load_i64() {
 
 define void @store_i64(i64 %value) {
 ; CHECK-LABEL: store_i64:
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,[[ADDR0:r[0-9]+]]
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,[[ADDR0:r[0-9]+]]
 ; CHECK: mov.l	{{r[0-9]+}},@[[ADDR0]]
-; CHECK: mov.l	.LCPI{{[0-9]+}}_1,[[ADDR1:r[0-9]+]]
+; CHECK: mov.l	.LCPI{{[0-9]+}}_1_0,[[ADDR1:r[0-9]+]]
 ; CHECK: mov.l	{{r[0-9]+}},@[[ADDR1]]
 ; CHECK: .long	wide+4
 ; CHECK: .long	wide{{$}}
@@ -115,7 +115,7 @@ define void @store_i64(i64 %value) {
 
 define ptr @load_pointer() {
 ; CHECK-LABEL: load_pointer:
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,[[ADDR:r[0-9]+]]
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,[[ADDR:r[0-9]+]]
 ; CHECK-NEXT: mov.l	@[[ADDR]],r0
 ; CHECK: .long	pointer
 	%value = load ptr, ptr @pointer, align 4
@@ -124,7 +124,7 @@ define ptr @load_pointer() {
 
 define void @store_pointer(ptr %value) {
 ; CHECK-LABEL: store_pointer:
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,[[ADDR:r[0-9]+]]
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,[[ADDR:r[0-9]+]]
 ; CHECK: mov.l	r4,@[[ADDR]]
 ; CHECK: .long	pointer
 	store ptr %value, ptr @pointer, align 4

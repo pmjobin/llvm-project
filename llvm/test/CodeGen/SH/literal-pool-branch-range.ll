@@ -21,11 +21,11 @@ define i32 @literal_after_relaxed_branch(i32 %a, i32 %b, i32 %c) {
 ; CHECK: bra	[[FAR]]
 ; CHECK-NEXT: nop
 ; CHECK: [[FAR]]:
-; CHECK: mov.l	.LCPI{{[0-9]+}}_0,
+; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,
 ; CHECK: rts
 ; CHECK-NEXT: nop
 ; CHECK: .p2align	2
-; CHECK: .LCPI{{[0-9]+}}_0:
+; CHECK: .LCPI{{[0-9]+}}_0_0:
 ; CHECK-NEXT: .long	global
 	entry:
 	%equal = icmp eq i32 %a, %b
@@ -43,7 +43,7 @@ far:
 	ret i32 %result
 }
 
-; OBJ: Section {{.*}} .rel.text {
+; OBJ: Section {{.*}} .rela.text {
 ; OBJ-NEXT: 0x{{[0-9A-F]+}} R_SH_DIR32 global
 ; OBJ-NEXT: }
 ; OBJ-NOT: R_SH_NONE

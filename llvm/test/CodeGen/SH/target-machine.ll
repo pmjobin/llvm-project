@@ -9,6 +9,7 @@
 ; RUN: not llc -mtriple=sh-unknown-elf -mcpu=sh2 -relocation-model=rwpi < %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=PIC
 ; RUN: not llc -mtriple=sh-unknown-elf -mcpu=sh2 -relocation-model=ropi-rwpi < %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=PIC
 ; RUN: not llc -mtriple=sh-unknown-elf -mcpu=sh2 -code-model=medium < %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=CODEMODEL
+; RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -code-model=large -filetype=null < %s
 
 define i32 @zero() {
 	ret i32 0
@@ -30,4 +31,4 @@ define i32 @zero() {
 
 ; CPU: 'not-a-cpu' is not a recognized processor for this target
 ; PIC: LLVM ERROR: SH only supports static relocation
-; CODEMODEL: LLVM ERROR: SH only supports the small code model
+; CODEMODEL: LLVM ERROR: SH only supports the small and large code models

@@ -29,8 +29,8 @@ static Reloc::Model getSHRelocModel(std::optional<Reloc::Model> RM) {
 
 static CodeModel::Model getSHCodeModel(std::optional<CodeModel::Model> CM) {
   CodeModel::Model Model = CM.value_or(CodeModel::Small);
-  if (Model != CodeModel::Small)
-    reportFatalUsageError("SH only supports the small code model");
+  if (Model != CodeModel::Small && Model != CodeModel::Large)
+    reportFatalUsageError("SH only supports the small and large code models");
   return Model;
 }
 
@@ -42,6 +42,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeSHTarget() {
   initializeSHDAGToDAGISelLegacyPass(PR);
   initializeSHLowerI64StackAlignLegacyPass(PR);
   initializeSHDelaySlotFillerLegacyPass(PR);
+  initializeSHLiteralIslandLegacyPass(PR);
   initializeSHLiteralPoolRangeCheckLegacyPass(PR);
 }
 
@@ -81,6 +82,7 @@ public:
     return false;
   }
   void addPreEmitPass() override {
+    addPass(createSHLiteralIslandLegacyPass());
     addPass(&BranchRelaxationPassID);
     addPass(createSHDelaySlotFillerLegacyPass());
     addPass(createSHLiteralPoolRangeCheckLegacyPass());

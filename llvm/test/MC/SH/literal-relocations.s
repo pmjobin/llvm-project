@@ -36,13 +36,13 @@ data_symbol:
 bss_symbol:
 .space 4
 
-! RELOC: Section {{.*}} .rel.text {
+! RELOC: Section {{.*}} .rela.text {
 ! RELOC-NEXT: 0x8 R_SH_DIR32 data_symbol
 ! RELOC-NEXT: 0xC R_SH_DIR32 external_global
 ! RELOC-NEXT: 0x10 R_SH_DIR32 defined_function
 ! RELOC-NEXT: 0x14 R_SH_DIR32 external_function
 ! RELOC-NEXT: }
-! RELOC: Section {{.*}} .rel.data {
+! RELOC: Section {{.*}} .rela.data {
 ! RELOC-NEXT: 0x4 R_SH_DIR32 data_symbol
 ! RELOC-NEXT: 0x8 R_SH_DIR32 external_function
 ! RELOC-NEXT: }
@@ -58,8 +58,8 @@ bss_symbol:
 ! LE: Hex dump of section '.data':
 ! LE-NEXT: 0x00000000 78563412 00000000 04000000
 
-! READELF: Relocation section '.rel.text'
+! READELF: Relocation section '.rela.text'
 ! READELF: R_SH_DIR32
-! READELF: Relocation section '.rel.data'
+! READELF: Relocation section '.rela.data'
 ! READELF: R_SH_DIR32
 ! READELF-NOT: R_SH_NONE

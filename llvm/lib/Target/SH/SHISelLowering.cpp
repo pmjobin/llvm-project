@@ -693,10 +693,12 @@ SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
           EffectiveSection(Caller) == EffectiveSection(*CalleeFunction)) ||
          (!Caller.getSection().empty() &&
           Caller.getSection() == CalleeFunction->getSection()));
-    bool UseDirectCall = CalleeFunction && Global->getOffset() == 0 &&
-                         !CalleeFunction->isDeclarationForLinker() &&
-                         !CalleeFunction->isInterposable() &&
-                         CalleeFunction->isDSOLocal() && SameSection;
+    bool UseDirectCall =
+        getTargetMachine().getCodeModel() == CodeModel::Small &&
+        CalleeFunction && Global->getOffset() == 0 &&
+        !CalleeFunction->isDeclarationForLinker() &&
+        !CalleeFunction->isInterposable() && CalleeFunction->isDSOLocal() &&
+        SameSection;
     if (UseDirectCall)
       Callee = DAG.getTargetGlobalAddress(CalleeFunction, CLI.DL, MVT::i32);
     else

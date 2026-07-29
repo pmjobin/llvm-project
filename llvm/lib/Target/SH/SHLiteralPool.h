@@ -1,4 +1,4 @@
-//===-- SHLiteralPool.h - SH trailing literal-pool layout -------*- C++ -*-===//
+//===-- SHLiteralPool.h - SH inline literal-island helpers ------*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -9,27 +9,26 @@
 #ifndef LLVM_LIB_TARGET_SH_SHLITERALPOOL_H
 #define LLVM_LIB_TARGET_SH_SHLITERALPOOL_H
 
-#include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/Alignment.h"
 #include <cstdint>
 
 namespace llvm {
 
-class MachineFunction;
+class DataLayout;
+class MachineBasicBlock;
+class MCContext;
+class MCSymbol;
 
-struct SHLiteralPoolEntryLayout {
-  uint64_t Offset;
-  unsigned Size;
-  Align Alignment;
-};
+constexpr int64_t SHUnassignedLiteralIsland = -1;
+constexpr unsigned SHLiteralIslandAlignment = 4;
+constexpr unsigned SHLiteralIslandEntrySize = 4;
+constexpr unsigned SHLiteralIslandMaxPayload = 1020;
+constexpr unsigned SHLiteralLoadMaxDistance = 1020;
 
-struct SHLiteralPoolLayout {
-  Align Alignment = Align(4);
-  SmallVector<SHLiteralPoolEntryLayout, 8> Entries;
-  uint64_t Size = 0;
-};
+bool isSHLiteralIslandBlock(const MachineBasicBlock &MBB);
 
-SHLiteralPoolLayout computeSHLiteralPoolLayout(const MachineFunction &MF);
+MCSymbol *getSHLiteralIslandSymbol(MCContext &Ctx, const DataLayout &DL,
+                                   unsigned FunctionNumber, unsigned CPI,
+                                   unsigned Instance);
 
 } // namespace llvm
 

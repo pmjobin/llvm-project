@@ -22,7 +22,7 @@ define i32 @call_external(i32 %value) {
 ; COMMON: Type: SHT_PROGBITS
 ; COMMON: SHF_EXECINSTR
 ; COMMON: AddressAlignment: 4
-; COMMON: Section {{.*}} .rel.text {
+; COMMON: Section {{.*}} .rela.text {
 ; COMMON: R_SH_DIR32 global
 ; COMMON: R_SH_DIR32 external_fn
 ; COMMON: }

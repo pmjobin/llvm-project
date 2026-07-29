@@ -46,6 +46,14 @@ public:
 
 FunctionPass *createSHDelaySlotFillerLegacyPass();
 
+class SHLiteralIslandPass : public PassInfoMixin<SHLiteralIslandPass> {
+public:
+  PreservedAnalyses run(MachineFunction &MF,
+                        MachineFunctionAnalysisManager &MFAM);
+};
+
+FunctionPass *createSHLiteralIslandLegacyPass();
+
 class SHLiteralPoolRangeCheckPass
     : public PassInfoMixin<SHLiteralPoolRangeCheckPass> {
 public:
@@ -59,6 +67,7 @@ void initializeSHAsmPrinterPass(PassRegistry &);
 void initializeSHDAGToDAGISelLegacyPass(PassRegistry &);
 void initializeSHLowerI64StackAlignLegacyPass(PassRegistry &);
 void initializeSHDelaySlotFillerLegacyPass(PassRegistry &);
+void initializeSHLiteralIslandLegacyPass(PassRegistry &);
 void initializeSHLiteralPoolRangeCheckLegacyPass(PassRegistry &);
 
 } // namespace llvm

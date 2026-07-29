@@ -1,0 +1,69 @@
+# RUN: llc -mtriple=sh-unknown-elf -run-pass=sh-literal-islands -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -run-pass=sh-literal-islands -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -start-before=sh-literal-islands -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=ASM
+# RUN: llc -mtriple=shle-unknown-elf -start-before=sh-literal-islands -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=ASM
+
+# CHECK-LABEL: name:            special_state
+# CHECK: DIV0U implicit-def $mbit, implicit-def $qbit, implicit-def $tbit
+# CHECK-NEXT: MUL_L $r4, $r5, implicit-def $macl
+# CHECK-NEXT: $r7 = SHLL $r7, implicit-def $tbit
+# CHECK-NEXT: $r0 = MOVL_load_pc_island %const.0, 0
+# CHECK-NEXT: BRA %bb.2
+# CHECK: bb.1 (align 4):
+# CHECK: SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+# CHECK: bb.2:
+# CHECK: liveins: $macl, $mbit, $pr, $qbit, $tbit, $r0, $r4, $r5, $r6, $r7
+# CHECK: NOP
+# CHECK: bb.3 (align 1024):
+# CHECK: $r7 = ADDC
+# CHECK: $r5 = DIV1
+# CHECK: $r0 = STS_MACL implicit $macl
+
+# ASM-LABEL: special_state:
+# ASM: div0u
+# ASM-NEXT: mul.l
+# ASM-NEXT: shll
+# ASM-NEXT: mov.l	[[POOL:.LCPI[0-9]+_0_0]],r0
+# ASM-NEXT: bra	[[CONT:.LBB[0-9_]+]]
+# ASM-NEXT: nop
+# ASM: [[POOL]]:
+# ASM-NEXT: .long	42
+# ASM: [[CONT]]:
+# ASM: addc
+# ASM: div1
+# ASM: sts	macl,r0
+
+--- |
+  define i32 @special_state(i32 %a, i32 %b, i32 %c, i32 %d) {
+    ret i32 0
+  }
+...
+---
+name:            special_state
+alignment:       1024
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 42'
+    alignment:   4
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4, $r5, $r6, $r7, $pr
+
+    DIV0U implicit-def $mbit, implicit-def $qbit, implicit-def $tbit
+    MUL_L $r4, $r5, implicit-def $macl
+    $r7 = SHLL $r7, implicit-def $tbit
+    $r0 = MOVL_load_pc_island %const.0, -1 :: (dereferenceable invariant load (s32) from constant-pool)
+    NOP
+
+  bb.1 (align 1024):
+    successors:
+    liveins: $r0, $r4, $r5, $r6, $r7, $pr, $macl, $mbit, $qbit, $tbit
+
+    $r7 = ADDC $r7, $r4, implicit-def $tbit, implicit $tbit
+    $r5 = DIV1 $r5, $r6, implicit-def $qbit, implicit-def $tbit, implicit $mbit, implicit $qbit, implicit $tbit
+    $r0 = STS_MACL implicit $macl
+    RTS implicit $pr, implicit $r0
+...

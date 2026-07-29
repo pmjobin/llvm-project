@@ -106,9 +106,13 @@ SHMCCodeEmitter::getBranchTargetOpValue(const MCInst &MI, unsigned OpNo,
   }
 
   assert(MO.isExpr() && "expected SH branch target expression");
-  MCFixupKind Kind = MI.getOpcode() == SH::BRA || MI.getOpcode() == SH::BSR
-                         ? SH::fixup_SH_PCREL12_2
-                         : SH::fixup_SH_PCREL8_2;
+  MCFixupKind Kind;
+  if (MI.getOpcode() == SH::BSR)
+    Kind = SH::fixup_SH_BSR12_2;
+  else if (MI.getOpcode() == SH::BRA)
+    Kind = SH::fixup_SH_PCREL12_2;
+  else
+    Kind = SH::fixup_SH_PCREL8_2;
   Fixups.push_back(MCFixup::create(0, MO.getExpr(), Kind, true));
   return 0;
 }

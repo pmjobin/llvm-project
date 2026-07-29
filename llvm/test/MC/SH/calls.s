@@ -9,7 +9,7 @@
 
 ! P = 0, S = 4: (4 - (0 + 4)) / 2 = 0.
 ! ASM: bsr	.Lzero
-! ASM-NEXT: fixup A - offset: 0, value: .Lzero, kind: fixup_SH_PCREL12_2
+! ASM-NEXT: fixup A - offset: 0, value: .Lzero, kind: fixup_SH_BSR12_2
 bsr .Lzero
 nop
 .Lzero:

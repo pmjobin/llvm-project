@@ -24,6 +24,7 @@ add_llvm_target(SHCodeGen
   SHISelDAGToDAG.cpp
   SHISelLowering.cpp
   SHInstrInfo.cpp
+  SHLiteralIsland.cpp
   SHLiteralPool.cpp
   SHLiteralPoolRangeCheck.cpp
   SHLowerI64StackAlign.cpp

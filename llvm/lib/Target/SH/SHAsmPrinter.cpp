@@ -111,27 +111,17 @@ static void validateSHModule(const Module &M) {
 }
 
 class SHAsmPrinter : public AsmPrinter {
-  void emitDeferredConstantPool() {
-    const MachineConstantPool *MCP = MF->getConstantPool();
-    const std::vector<MachineConstantPoolEntry> &Entries = MCP->getConstants();
-    if (Entries.empty())
-      return;
-
-    SHLiteralPoolLayout Layout = computeSHLiteralPoolLayout(*MF);
-    emitAlignment(Layout.Alignment);
-    uint64_t Offset = 0;
-    for (unsigned I = 0, E = Entries.size(); I != E; ++I) {
-      const SHLiteralPoolEntryLayout &EntryLayout = Layout.Entries[I];
-      OutStreamer->emitZeros(EntryLayout.Offset - Offset);
-      OutStreamer->emitLabel(GetCPISymbol(I));
-      const MachineConstantPoolEntry &Entry = Entries[I];
-      if (Entry.isMachineConstantPoolEntry())
-        emitMachineConstantPoolValue(Entry.Val.MachineCPVal);
-      else
-        emitGlobalConstant(getDataLayout(), Entry.Val.ConstVal);
-      Offset = EntryLayout.Offset + EntryLayout.Size;
-    }
-    assert(Offset == Layout.Size && "SH literal pool layout mismatch");
+  void emitLiteralIslandEntry(const MachineInstr &MI) {
+    unsigned CPI = MI.getOperand(0).getIndex();
+    unsigned Instance = MI.getOperand(1).getImm();
+    const MachineConstantPoolEntry &Entry =
+        MF->getConstantPool()->getConstants()[CPI];
+    OutStreamer->emitLabel(getSHLiteralIslandSymbol(
+        OutContext, getDataLayout(), getFunctionNumber(), CPI, Instance));
+    if (Entry.isMachineConstantPoolEntry())
+      emitMachineConstantPoolValue(Entry.Val.MachineCPVal);
+    else
+      emitGlobalConstant(getDataLayout(), Entry.Val.ConstVal);
   }
 
 public:
@@ -159,8 +149,6 @@ public:
 
   void emitConstantPool() override {}
 
-  void emitFunctionBodyEnd() override { emitDeferredConstantPool(); }
-
   void emitMachineConstantPoolValue(MachineConstantPoolValue *MCPV) override {
     const auto *Value = static_cast<const SHConstantPoolValue *>(MCPV);
     assert(Value->getModifier() == SHConstantPoolValue::Modifier::None &&
@@ -178,6 +166,10 @@ public:
   }
 
   void emitInstruction(const MachineInstr *MI) override {
+    if (MI->getOpcode() == SH::SH_CONSTPOOL_ENTRY) {
+      emitLiteralIslandEntry(*MI);
+      return;
+    }
     SHMCInstLower Lowering(OutContext, *this);
     MachineBasicBlock::const_instr_iterator I = MI->getIterator();
     MachineBasicBlock::const_instr_iterator E = MI->getParent()->instr_end();

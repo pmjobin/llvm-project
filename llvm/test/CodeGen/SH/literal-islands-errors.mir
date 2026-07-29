@@ -1,0 +1,127 @@
+# RUN: split-file %s %t
+# RUN: not --crash llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check %t/width.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=WIDTH
+# RUN: not --crash llc -mtriple=shle-unknown-elf -run-pass=sh-literal-pool-range-check %t/width.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=WIDTH
+# RUN: not --crash llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check %t/missing.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=MISSING
+# RUN: not --crash llc -mtriple=shle-unknown-elf -run-pass=sh-literal-pool-range-check %t/missing.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=MISSING
+# RUN: not --crash llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check %t/target.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=TARGET
+# RUN: not --crash llc -mtriple=shle-unknown-elf -run-pass=sh-literal-pool-range-check %t/target.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=TARGET
+# RUN: not --crash llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check %t/alignment.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=ALIGNMENT
+# RUN: not --crash llc -mtriple=shle-unknown-elf -run-pass=sh-literal-pool-range-check %t/alignment.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=ALIGNMENT
+
+# WIDTH: LLVM ERROR: SH literal island validation failed: function bad_width
+# WIDTH-SAME: island entry width is not four
+# MISSING: LLVM ERROR: SH literal island validation failed: function missing_entry
+# MISSING-SAME: referenced island entry does not exist: CPI 0, instance 0
+# TARGET: LLVM ERROR: SH literal island validation failed: function branch_target
+# TARGET-SAME: a branch or instruction targets an island
+# ALIGNMENT: LLVM ERROR: SH literal island validation failed: function bad_alignment
+# ALIGNMENT-SAME: island alignment is not four
+
+#--- width.mir
+--- |
+  define i32 @bad_width() {
+    ret i32 0
+  }
+...
+---
+name:            bad_width
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 42'
+    alignment:   4
+body:             |
+  bb.0:
+    $r0 = MOVL_load_pc_island %const.0, 0 :: (dereferenceable invariant load (s32) from constant-pool)
+    RTS implicit $pr, implicit $r0 {
+      NOP
+    }
+
+  bb.1 (align 4):
+    successors:
+
+    SH_CONSTPOOL_ENTRY %const.0, 0, 8, 4
+...
+
+#--- missing.mir
+--- |
+  define i32 @missing_entry() {
+    ret i32 0
+  }
+...
+---
+name:            missing_entry
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 42'
+    alignment:   4
+body:             |
+  bb.0:
+    $r0 = MOVL_load_pc_island %const.0, 0 :: (dereferenceable invariant load (s32) from constant-pool)
+    RTS implicit $pr, implicit $r0 {
+      NOP
+    }
+...
+
+#--- target.mir
+--- |
+  define i32 @branch_target() {
+    ret i32 0
+  }
+...
+---
+name:            branch_target
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 42'
+    alignment:   4
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+
+    $r0 = MOVL_load_pc_island %const.0, 0 :: (dereferenceable invariant load (s32) from constant-pool)
+    BRA %bb.1 {
+      NOP
+    }
+
+  bb.1 (align 4):
+    successors:
+
+    SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+...
+
+#--- alignment.mir
+--- |
+  define i32 @bad_alignment() {
+    ret i32 0
+  }
+...
+---
+name:            bad_alignment
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 42'
+    alignment:   4
+body:             |
+  bb.0:
+    $r0 = MOVL_load_pc_island %const.0, 0 :: (dereferenceable invariant load (s32) from constant-pool)
+    RTS implicit $pr, implicit $r0 {
+      NOP
+    }
+
+  bb.1 (align 2):
+    successors:
+
+    SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+...
