@@ -11,8 +11,6 @@
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/varargs.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VARARGS
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/byval.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYVAL
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/vector.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VECTOR
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/global-address.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ADDRESS
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/function-address.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ADDRESS
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/calling-convention.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=CALLING-CONVENTION
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/large-outgoing.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=OUTGOING
 
@@ -27,7 +25,6 @@
 ; VARARGS: LLVM ERROR: SH varargs are not supported
 ; BYVAL: LLVM ERROR: SH calls only support scalar i32, i64, and pointer arguments
 ; VECTOR: LLVM ERROR: SH only supports i8, i16, i32, and selected i64 integer operations
-; ADDRESS: LLVM ERROR: SH global, function, and block address constants are not supported
 ; CALLING-CONVENTION: LLVM ERROR: SH only supports the C calling convention
 ; OUTGOING: LLVM ERROR: SH outgoing call frame size cannot exceed 60 bytes
 
@@ -112,24 +109,6 @@ define i32 @vector_i64(i32 %a, i32 %b) {
 	%wide = extractelement <2 x i64> %sum, i32 0
 	%result = trunc i64 %wide to i32
 	ret i32 %result
-}
-
-;--- global-address.ll
-@global_i64 = internal global i64 0, align 8
-
-define i64 @global_address_i64() {
-	%address = ptrtoint ptr @global_i64 to i64
-	ret i64 %address
-}
-
-;--- function-address.ll
-define internal void @address_target() {
-	ret void
-}
-
-define i64 @function_address_i64() {
-	%address = ptrtoint ptr @address_target to i64
-	ret i64 %address
 }
 
 ;--- calling-convention.ll

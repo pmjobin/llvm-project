@@ -15,7 +15,6 @@
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/narrow-vararg-i16.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VARARG
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/variable-shift-i8.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ARITHMETIC
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/variable-shift-i16.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ARITHMETIC
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/global.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=GLOBAL
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/vector.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VECTOR
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/materialized-compare.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=MATERIALIZED
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/memcpy.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INTRINSIC
@@ -31,7 +30,6 @@
 ; CALL-ARGUMENT: LLVM ERROR: SH calls only support scalar i32, i64, and pointer arguments
 ; VARARG: LLVM ERROR: SH varargs calls are not supported
 ; ARITHMETIC: LLVM ERROR: SH variable narrow integer shifts are not supported
-; GLOBAL: LLVM ERROR: SH global, function, and block address constants are not supported
 ; VECTOR: LLVM ERROR: SH only supports 8-, 16-, 32-, and 64-bit integer and pointer loads
 ; MATERIALIZED: LLVM ERROR: SH comparison results may only be used by conditional branches
 ; INTRINSIC: LLVM ERROR: SH intrinsics are not supported
@@ -154,15 +152,6 @@ define void @variable_shift_i16(ptr %value_address, ptr %count_address, ptr %out
 	%result = ashr i16 %value, %count
 	store i16 %result, ptr %out, align 2
 	ret void
-}
-
-;--- global.ll
-@narrow_global = global i8 0, align 1
-
-define i32 @global_i8() {
-	%value = load volatile i8, ptr @narrow_global, align 1
-	%result = zext i8 %value to i32
-	ret i32 %result
 }
 
 ;--- vector.ll

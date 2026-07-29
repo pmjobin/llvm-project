@@ -12,6 +12,7 @@
 #include "llvm/MC/MCDecoder.h"
 #include "llvm/MC/MCDecoderOps.h"
 #include "llvm/MC/MCDisassembler/MCDisassembler.h"
+#include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/TargetRegistry.h"
@@ -89,6 +90,17 @@ static MCDisassembler::DecodeStatus
 decodeBranchTarget12(MCInst &MI, uint64_t Value, uint64_t Address,
                      const MCDisassembler *Decoder) {
   return decodeBranchTarget<12>(MI, Value, Address, Decoder);
+}
+
+static MCDisassembler::DecodeStatus
+decodePCLiteral(MCInst &MI, uint64_t Value, uint64_t Address,
+                const MCDisassembler *Decoder) {
+  uint64_t ByteDisp = Value * 4;
+  uint64_t Target = (Address & ~uint64_t(3)) + 4 + ByteDisp;
+  if (!Decoder->tryAddingSymbolicOperand(MI, Target, Address, false, 0, 2, 2))
+    MI.addOperand(MCOperand::createExpr(
+        MCConstantExpr::create(Target, Decoder->getContext())));
+  return MCDisassembler::Success;
 }
 
 static MCDisassembler::DecodeStatus

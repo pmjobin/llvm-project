@@ -8,13 +8,11 @@
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/minmax.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INTRINSIC
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/vector.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VECTOR
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/vector-shift.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VECTOR
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/global-address.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ADDRESS
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/function-address.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ADDRESS
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/block-address.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ADDRESS
 
 ; INTRINSIC: LLVM ERROR: SH intrinsics are not supported
 ; VECTOR: LLVM ERROR: SH only supports i8, i16, i32, and selected i64 integer operations
-; ADDRESS: LLVM ERROR: SH global, function, and block address constants are not supported
+; ADDRESS: LLVM ERROR: SH block addresses are not supported
 
 ;--- funnel.ll
 declare i32 @llvm.fshl.i32(i32, i32, i32)
@@ -90,18 +88,6 @@ define i32 @vector_shift(i32 %value, i32 %count) {
 	%shifted = shl <2 x i32> %vector_value, %vector_count
 	%result = extractelement <2 x i32> %shifted, i32 0
 	ret i32 %result
-}
-
-;--- global-address.ll
-@integer_global = global i32 0, align 4
-
-define i32 @global_address() {
-	ret i32 ptrtoint (ptr @integer_global to i32)
-}
-
-;--- function-address.ll
-define i32 @function_address() {
-	ret i32 ptrtoint (ptr @function_address to i32)
 }
 
 ;--- block-address.ll

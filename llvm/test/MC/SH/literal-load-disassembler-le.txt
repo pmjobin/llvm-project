@@ -1,0 +1,8 @@
+# RUN: llvm-mc -triple=shle-unknown-elf -disassemble %s | FileCheck %s
+
+[0x00,0xd4,0x09,0x00,0x03,0xd4,0x01,0xd5]
+
+# CHECK: mov.l	4,r4
+# CHECK-NEXT: nop
+# CHECK-NEXT: mov.l	20,r4
+# CHECK-NEXT: mov.l	12,r5

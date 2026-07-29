@@ -1,14 +1,22 @@
-! RUN: rm -f %t.be.o %t.le.o
-! RUN: not llvm-mc -triple=sh-unknown-elf -filetype=obj -o %t.be.o %s 2>&1 | FileCheck %s --check-prefix=BE
-! RUN: not test -e %t.be.o
-! RUN: not llvm-mc -triple=shle-unknown-elf -filetype=obj -o %t.le.o %s 2>&1 | FileCheck %s --check-prefix=LE
-! RUN: not test -e %t.le.o
+! RUN: split-file %s %t
+! RUN: not llvm-mc -triple=sh-unknown-elf -filetype=obj -o /dev/null %t/byte.s 2>&1 | FileCheck %s --check-prefix=BYTE
+! RUN: not llvm-mc -triple=sh-unknown-elf -filetype=obj -o /dev/null %t/short.s 2>&1 | FileCheck %s --check-prefix=SHORT
+! RUN: not llvm-mc -triple=sh-unknown-elf -filetype=obj -o /dev/null %t/quad.s 2>&1 | FileCheck %s --check-prefix=QUAD
+! RUN: not llvm-mc -triple=sh-unknown-elf -filetype=obj -o /dev/null %t/pcrel.s 2>&1 | FileCheck %s --check-prefix=PCREL
 
-! BE: error: SH relocations are not yet supported
-! BE-NOT: assertion
-! BE-NOT: LLVM ERROR
-! LE: error: SH relocations are not yet supported
-! LE-NOT: assertion
-! LE-NOT: LLVM ERROR
+! BYTE: error: SH unresolved one-byte relocations are not supported
+! SHORT: error: SH unresolved two-byte relocations are not supported
+! QUAD: error: SH unresolved eight-byte relocations are not supported
+! PCREL: error: SH PC-relative data relocations are not supported
 
-.long external_symbol
+!--- byte.s
+.byte external_symbol
+
+!--- short.s
+.short external_symbol
+
+!--- quad.s
+.quad external_symbol
+
+!--- pcrel.s
+.long external_symbol-.

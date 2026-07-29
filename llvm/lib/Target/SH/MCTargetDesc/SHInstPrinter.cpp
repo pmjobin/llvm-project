@@ -49,6 +49,17 @@ void SHInstPrinter::printBranchTarget(const MCInst *MI, uint64_t Address,
   OS << format_hex(Address + 4 + Op.getImm(), 0);
 }
 
+void SHInstPrinter::printPCLiteral(const MCInst *MI, uint64_t Address,
+                                   unsigned OpNo, raw_ostream &OS) {
+  const MCOperand &Op = MI->getOperand(OpNo);
+  if (Op.isExpr()) {
+    MAI.printExpr(OS, *Op.getExpr());
+    return;
+  }
+  assert(Op.isImm() && "invalid SH PC-relative literal target");
+  OS << "@(" << Op.getImm() << ",pc)";
+}
+
 void SHInstPrinter::printSImm8(const MCInst *MI, unsigned OpNo,
                                raw_ostream &OS) {
   OS << '#' << MI->getOperand(OpNo).getImm();

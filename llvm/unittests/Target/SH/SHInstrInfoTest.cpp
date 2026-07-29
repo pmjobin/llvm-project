@@ -191,6 +191,20 @@ TEST_F(SHInstrInfoTest, ByteAndWordInstructionsHavePreciseProperties) {
   }
 }
 
+TEST_F(SHInstrInfoTest, PCLiteralLoadHasPreciseProperties) {
+  const MCInstrDesc &Desc = TII->get(SH::MOVL_load_pc);
+  EXPECT_EQ(2u, Desc.getSize());
+  EXPECT_EQ(1u, Desc.getNumDefs());
+  EXPECT_EQ(2u, Desc.getNumOperands());
+  EXPECT_TRUE(Desc.mayLoad());
+  EXPECT_FALSE(Desc.mayStore());
+  EXPECT_FALSE(Desc.isBranch());
+  EXPECT_FALSE(Desc.isCall());
+  EXPECT_FALSE(Desc.hasDelaySlot());
+  EXPECT_TRUE(Desc.implicit_uses().empty());
+  EXPECT_TRUE(Desc.implicit_defs().empty());
+}
+
 static uint32_t executeConstantShiftPlan(ArrayRef<unsigned> Opcodes,
                                          uint32_t Value) {
   for (unsigned Opcode : Opcodes) {

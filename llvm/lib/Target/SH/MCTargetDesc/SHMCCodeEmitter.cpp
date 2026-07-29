@@ -38,6 +38,9 @@ class SHMCCodeEmitter : public MCCodeEmitter {
   unsigned getBranchTargetOpValue(const MCInst &MI, unsigned OpNo,
                                   SmallVectorImpl<MCFixup> &Fixups,
                                   const MCSubtargetInfo &STI) const;
+  unsigned getPCLiteralOpValue(const MCInst &MI, unsigned OpNo,
+                               SmallVectorImpl<MCFixup> &Fixups,
+                               const MCSubtargetInfo &STI) const;
   unsigned getLongDispMemOpValue(const MCInst &MI, unsigned OpNo,
                                  SmallVectorImpl<MCFixup> &Fixups,
                                  const MCSubtargetInfo &STI) const;
@@ -107,6 +110,39 @@ SHMCCodeEmitter::getBranchTargetOpValue(const MCInst &MI, unsigned OpNo,
                          ? SH::fixup_SH_PCREL12_2
                          : SH::fixup_SH_PCREL8_2;
   Fixups.push_back(MCFixup::create(0, MO.getExpr(), Kind, true));
+  return 0;
+}
+
+unsigned
+SHMCCodeEmitter::getPCLiteralOpValue(const MCInst &MI, unsigned OpNo,
+                                     SmallVectorImpl<MCFixup> &Fixups,
+                                     const MCSubtargetInfo &STI) const {
+  const MCOperand &MO = MI.getOperand(OpNo);
+  if (MO.isImm()) {
+    int64_t ByteDisp = MO.getImm();
+    if (ByteDisp < 0) {
+      Ctx.reportError(
+          MI.getLoc(),
+          "SH PC-relative literal target is behind the instruction");
+      return 0;
+    }
+    if (ByteDisp % 4 != 0) {
+      Ctx.reportError(
+          MI.getLoc(),
+          "SH PC-relative literal target must be four-byte aligned");
+      return 0;
+    }
+    if (ByteDisp > 1020) {
+      Ctx.reportError(MI.getLoc(),
+                      "SH PC-relative literal target is out of range");
+      return 0;
+    }
+    return static_cast<unsigned>(ByteDisp / 4);
+  }
+
+  assert(MO.isExpr() && "expected SH PC-relative literal expression");
+  Fixups.push_back(
+      MCFixup::create(0, MO.getExpr(), SH::fixup_SH_PCREL8_4, true));
   return 0;
 }
 

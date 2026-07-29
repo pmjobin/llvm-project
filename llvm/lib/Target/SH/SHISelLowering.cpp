@@ -8,6 +8,7 @@
 
 #include "SHISelLowering.h"
 #include "SH.h"
+#include "SHConstantPoolValue.h"
 #include "SHSubtarget.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/CodeGen/CallingConvLower.h"
@@ -22,6 +23,8 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/MathExtras.h"
+#include "llvm/Target/TargetMachine.h"
 
 using namespace llvm;
 
@@ -68,9 +71,10 @@ SHTargetLowering::SHTargetLowering(const TargetMachine &TM,
        {ISD::LOAD, ISD::STORE, ISD::MULHU, ISD::MULHS, ISD::AND, ISD::OR,
         ISD::ROTL, ISD::ROTR, ISD::BR_CC, ISD::SELECT, ISD::SELECT_CC,
         ISD::SETCC, ISD::GlobalAddress, ISD::BlockAddress, ISD::JumpTable,
-        ISD::ConstantPool, ISD::DYNAMIC_STACKALLOC})
+        ISD::ConstantPool, ISD::GlobalTLSAddress, ISD::DYNAMIC_STACKALLOC})
     setOperationAction(Opcode, MVT::i32, Custom);
 
+  setTargetDAGCombine(ISD::ADD);
   computeRegisterProperties(STI.getRegisterInfo());
 }
 
@@ -79,13 +83,38 @@ static void requireSupportedCallingConvention(CallingConv::ID CallConv) {
     report_fatal_error("SH only supports the C calling convention");
 }
 
+SDValue SHTargetLowering::PerformDAGCombine(SDNode *N,
+                                            DAGCombinerInfo &DCI) const {
+  if (N->getOpcode() != ISD::ADD)
+    return SDValue();
+
+  SDValue Address = N->getOperand(0);
+  SDValue Addend = N->getOperand(1);
+  if (!isa<GlobalAddressSDNode>(Address) && isa<GlobalAddressSDNode>(Addend))
+    std::swap(Address, Addend);
+  const auto *Global = dyn_cast<GlobalAddressSDNode>(Address);
+  const auto *Constant = dyn_cast<ConstantSDNode>(Addend);
+  if (!Global || !Constant || Address.getOpcode() != ISD::GlobalAddress)
+    return SDValue();
+
+  auto [Offset, Overflow] =
+      AddOverflow<int64_t>(Global->getOffset(), Constant->getSExtValue());
+  if (Overflow || !isInt<32>(Offset))
+    return SDValue();
+
+  SelectionDAG &DAG = DCI.DAG;
+  return DAG.getGlobalAddress(Global->getGlobal(), SDLoc(N), N->getValueType(0),
+                              Offset);
+}
+
 static bool isSupportedSHMemoryType(Type *Ty) {
   return Ty->isIntegerTy(8) || Ty->isIntegerTy(16) || Ty->isIntegerTy(32) ||
          Ty->isIntegerTy(64) || Ty->isPointerTy();
 }
 
 static bool isSupportedSHScalarType(Type *Ty) {
-  return Ty->isIntegerTy(32) || Ty->isIntegerTy(64) || Ty->isPointerTy();
+  return Ty->isIntegerTy(32) || Ty->isIntegerTy(64) ||
+         (Ty->isPointerTy() && Ty->getPointerAddressSpace() == 0);
 }
 
 static bool isSupportedSHStackType(Type *Ty) {
@@ -153,8 +182,10 @@ static void validateSHAllocaUses(const AllocaInst &Alloca) {
 }
 
 static bool containsUnsupportedSHAddressConstant(const Value *V) {
-  if (isa<GlobalValue>(V) || isa<BlockAddress>(V))
+  if (isa<BlockAddress>(V))
     return true;
+  if (isa<GlobalValue>(V))
+    return false;
   const auto *C = dyn_cast<Constant>(V);
   if (!C)
     return false;
@@ -190,9 +221,7 @@ void llvm::validateSHIR(const Function &F) {
         if (Call && Operand.get() == Call->getCalledOperand())
           continue;
         if (containsUnsupportedSHAddressConstant(Operand.get()))
-          report_fatal_error(
-              "SH global, function, and block address constants are not "
-              "supported");
+          report_fatal_error("SH block addresses are not supported");
       }
       if (isa<SwitchInst>(&I))
         report_fatal_error("SH switch is not supported");
@@ -251,18 +280,27 @@ void llvm::validateSHIR(const Function &F) {
         if (!Phi->getType()->isIntegerTy(8) &&
             !Phi->getType()->isIntegerTy(16) &&
             !Phi->getType()->isIntegerTy(32) &&
-            !Phi->getType()->isIntegerTy(64))
-          report_fatal_error("SH only supports i8, i16, i32, and i64 PHIs");
+            !Phi->getType()->isIntegerTy(64) &&
+            !(Phi->getType()->isPointerTy() &&
+              Phi->getType()->getPointerAddressSpace() == 0))
+          report_fatal_error(
+              "SH only supports i8, i16, i32, i64, and pointer PHIs");
       }
 
       if (const auto *Cmp = dyn_cast<ICmpInst>(&I)) {
         Type *OperandTy = Cmp->getOperand(0)->getType();
-        if (OperandTy->isPointerTy())
-          report_fatal_error("SH pointer comparisons are not supported");
-        if (!OperandTy->isIntegerTy(8) && !OperandTy->isIntegerTy(16) &&
-            !OperandTy->isIntegerTy(32) && !OperandTy->isIntegerTy(64))
+        if (OperandTy->isPointerTy() &&
+            Cmp->getPredicate() != ICmpInst::ICMP_EQ &&
+            Cmp->getPredicate() != ICmpInst::ICMP_NE)
           report_fatal_error(
-              "SH only supports i8, i16, i32, and i64 integer comparisons");
+              "SH only supports pointer equality and inequality comparisons");
+        if (!OperandTy->isIntegerTy(8) && !OperandTy->isIntegerTy(16) &&
+            !OperandTy->isIntegerTy(32) && !OperandTy->isIntegerTy(64) &&
+            !(OperandTy->isPointerTy() &&
+              OperandTy->getPointerAddressSpace() == 0))
+          report_fatal_error(
+              "SH only supports integer and address-space-zero pointer "
+              "comparisons");
         for (const User *Use : Cmp->users()) {
           const auto *Branch = dyn_cast<CondBrInst>(Use);
           if (!Branch || Branch->getCondition() != Cmp)
@@ -273,7 +311,33 @@ void llvm::validateSHIR(const Function &F) {
         continue;
       }
 
+      if (const auto *Cast = dyn_cast<PtrToIntInst>(&I)) {
+        if (Cast->getOperand(0)->getType()->getPointerAddressSpace() != 0 ||
+            (!Cast->getType()->isIntegerTy(32) &&
+             !Cast->getType()->isIntegerTy(64)))
+          report_fatal_error(
+              "SH ptrtoint only supports address-space-zero pointers and i32 "
+              "or i64 results");
+        continue;
+      }
+
+      if (const auto *Cast = dyn_cast<IntToPtrInst>(&I)) {
+        if (Cast->getType()->getPointerAddressSpace() != 0 ||
+            !Cast->getOperand(0)->getType()->isIntegerTy(32))
+          report_fatal_error("SH inttoptr requires an i32 source and an "
+                             "address-space-zero result");
+        continue;
+      }
+
+      if (const auto *GEP = dyn_cast<GetElementPtrInst>(&I)) {
+        if (GEP->getPointerAddressSpace() != 0)
+          report_fatal_error("SH nonzero address spaces are not supported");
+        continue;
+      }
+
       if (const auto *Load = dyn_cast<LoadInst>(&I)) {
+        if (Load->getPointerAddressSpace() != 0)
+          report_fatal_error("SH nonzero address spaces are not supported");
         if (!isSupportedSHMemoryType(Load->getType()))
           report_fatal_error(
               "SH only supports 8-, 16-, 32-, and 64-bit integer and pointer "
@@ -286,6 +350,8 @@ void llvm::validateSHIR(const Function &F) {
       }
 
       if (const auto *Store = dyn_cast<StoreInst>(&I)) {
+        if (Store->getPointerAddressSpace() != 0)
+          report_fatal_error("SH nonzero address spaces are not supported");
         if (!isSupportedSHMemoryType(Store->getValueOperand()->getType()))
           report_fatal_error(
               "SH only supports 8-, 16-, 32-, and 64-bit integer and pointer "
@@ -617,21 +683,35 @@ SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
   if (const auto *Global = dyn_cast<GlobalAddressSDNode>(Callee)) {
     const auto *CalleeFunction = dyn_cast<Function>(Global->getGlobal());
     const Function &Caller = MF.getFunction();
-    if (!CalleeFunction || CalleeFunction->isDeclarationForLinker() ||
-        CalleeFunction->isInterposable() || !CalleeFunction->isDSOLocal())
-      report_fatal_error(
-          "SH unresolved or interposable direct calls are not supported");
-
     auto EffectiveSection = [](const Function &F) {
       return F.getSection().empty() ? StringRef(".text") : F.getSection();
     };
-    if (EffectiveSection(Caller) != EffectiveSection(*CalleeFunction))
-      report_fatal_error("SH cross-section direct calls are not supported");
-
-    Callee = DAG.getTargetGlobalAddress(CalleeFunction, CLI.DL, MVT::i32,
-                                        Global->getOffset());
+    bool SameSection =
+        CalleeFunction &&
+        (CalleeFunction == &Caller ||
+         (!getTargetMachine().getFunctionSections() &&
+          EffectiveSection(Caller) == EffectiveSection(*CalleeFunction)) ||
+         (!Caller.getSection().empty() &&
+          Caller.getSection() == CalleeFunction->getSection()));
+    bool UseDirectCall = CalleeFunction && Global->getOffset() == 0 &&
+                         !CalleeFunction->isDeclarationForLinker() &&
+                         !CalleeFunction->isInterposable() &&
+                         CalleeFunction->isDSOLocal() && SameSection;
+    if (UseDirectCall)
+      Callee = DAG.getTargetGlobalAddress(CalleeFunction, CLI.DL, MVT::i32);
+    else
+      Callee = LowerGlobalAddress(Callee, DAG);
   } else if (isa<ExternalSymbolSDNode>(Callee)) {
-    report_fatal_error("SH unresolved external direct calls are not supported");
+    const auto *External = cast<ExternalSymbolSDNode>(Callee);
+    SHConstantPoolValue *CPV = SHConstantPoolValue::create(
+        *DAG.getContext(), External->getSymbol(), 0);
+    MF.setAlignment(std::max(MF.getAlignment(), Align(4)));
+    SDValue CPAddr = DAG.getTargetConstantPool(CPV, MVT::i32, Align(4));
+    Callee = DAG.getLoad(MVT::i32, CLI.DL, DAG.getEntryNode(), CPAddr,
+                         MachinePointerInfo::getConstantPool(MF), Align(4),
+                         MachineMemOperand::MOLoad |
+                             MachineMemOperand::MODereferenceable |
+                             MachineMemOperand::MOInvariant);
   } else if (Callee.getValueType() != MVT::i32) {
     report_fatal_error("SH indirect call target must be a 32-bit GPR value");
   }
@@ -679,12 +759,50 @@ SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
   return Chain;
 }
 
+static SDValue lowerSHSymbolAddress(SHConstantPoolValue *CPV, const SDLoc &DL,
+                                    SelectionDAG &DAG) {
+  MachineFunction &MF = DAG.getMachineFunction();
+  MF.setAlignment(std::max(MF.getAlignment(), Align(4)));
+  SDValue CPAddr = DAG.getTargetConstantPool(CPV, MVT::i32, Align(4));
+  return DAG.getLoad(MVT::i32, DL, DAG.getEntryNode(), CPAddr,
+                     MachinePointerInfo::getConstantPool(MF), Align(4),
+                     MachineMemOperand::MOLoad |
+                         MachineMemOperand::MODereferenceable |
+                         MachineMemOperand::MOInvariant);
+}
+
+SDValue SHTargetLowering::LowerGlobalAddress(SDValue Op,
+                                             SelectionDAG &DAG) const {
+  const auto *Global = cast<GlobalAddressSDNode>(Op);
+  int64_t Addend = Global->getOffset();
+  if (!isInt<32>(Addend))
+    report_fatal_error("SH global address addend must fit signed 32 bits");
+  SHConstantPoolValue *CPV = SHConstantPoolValue::create(
+      Global->getGlobal(), static_cast<int32_t>(Addend));
+  return lowerSHSymbolAddress(CPV, SDLoc(Op), DAG);
+}
+
+SDValue SHTargetLowering::LowerConstantPool(SDValue Op,
+                                            SelectionDAG &DAG) const {
+  const auto *CP = cast<ConstantPoolSDNode>(Op);
+  MachineFunction &MF = DAG.getMachineFunction();
+  MF.setAlignment(std::max(MF.getAlignment(), Align(4)));
+  if (CP->isMachineConstantPoolEntry())
+    return DAG.getTargetConstantPool(CP->getMachineCPVal(), MVT::i32,
+                                     CP->getAlign(), CP->getOffset());
+  return DAG.getTargetConstantPool(CP->getConstVal(), MVT::i32, CP->getAlign(),
+                                   CP->getOffset());
+}
+
 static bool isSupportedSHAddress(SDValue Addr) {
   auto IsBase = [](SDValue Base) {
     return Base.getValueType() == MVT::i32 &&
            (Base.getOpcode() == ISD::FrameIndex ||
             Base.getOpcode() == ISD::CopyFromReg ||
-            Base.getOpcode() == ISD::LOAD || Base.getOpcode() == ISD::Register);
+            Base.getOpcode() == ISD::LOAD ||
+            Base.getOpcode() == ISD::Register ||
+            Base.getOpcode() == ISD::GlobalAddress ||
+            Base.getOpcode() == ISD::TargetConstantPool);
   };
 
   if (IsBase(Addr))
@@ -703,7 +821,9 @@ static bool isSupportedSHNarrowAddress(SDValue Addr) {
     return Base.getValueType() == MVT::i32 &&
            (Base.getOpcode() == ISD::FrameIndex ||
             Base.getOpcode() == ISD::CopyFromReg ||
-            Base.getOpcode() == ISD::LOAD || Base.getOpcode() == ISD::Register);
+            Base.getOpcode() == ISD::LOAD ||
+            Base.getOpcode() == ISD::Register ||
+            Base.getOpcode() == ISD::GlobalAddress);
   };
 
   if (IsBase(Addr))
@@ -891,10 +1011,16 @@ SDValue SHTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   }
   if (Op.getOpcode() == ISD::DYNAMIC_STACKALLOC)
     report_fatal_error("SH dynamic alloca is not supported");
-  if (Op.getOpcode() == ISD::GlobalAddress ||
-      Op.getOpcode() == ISD::BlockAddress || Op.getOpcode() == ISD::JumpTable ||
-      Op.getOpcode() == ISD::ConstantPool)
-    report_fatal_error("SH symbolic memory addresses are not supported");
+  if (Op.getOpcode() == ISD::GlobalAddress)
+    return LowerGlobalAddress(Op, DAG);
+  if (Op.getOpcode() == ISD::ConstantPool)
+    return LowerConstantPool(Op, DAG);
+  if (Op.getOpcode() == ISD::GlobalTLSAddress)
+    report_fatal_error("SH thread-local storage is not supported");
+  if (Op.getOpcode() == ISD::BlockAddress)
+    report_fatal_error("SH block addresses are not supported");
+  if (Op.getOpcode() == ISD::JumpTable)
+    report_fatal_error("SH jump tables are not supported");
   if (Op.getOpcode() == ISD::SETCC)
     report_fatal_error(
         "SH comparison results may only be used by conditional branches");

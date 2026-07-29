@@ -42,6 +42,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeSHTarget() {
   initializeSHDAGToDAGISelLegacyPass(PR);
   initializeSHLowerI64StackAlignLegacyPass(PR);
   initializeSHDelaySlotFillerLegacyPass(PR);
+  initializeSHLiteralPoolRangeCheckLegacyPass(PR);
 }
 
 SHTargetMachine::SHTargetMachine(const Target &T, const Triple &TT,
@@ -57,6 +58,8 @@ SHTargetMachine::SHTargetMachine(const Target &T, const Triple &TT,
       Subtarget(TT, getSHCPU(CPU), FS, *this) {
   if (JIT)
     reportFatalUsageError("SH JIT code generation is not supported");
+  if (!TT.isOSBinFormatELF())
+    reportFatalUsageError("SH only supports the ELF object format");
   initAsmInfo();
 }
 
@@ -80,6 +83,7 @@ public:
   void addPreEmitPass() override {
     addPass(&BranchRelaxationPassID);
     addPass(createSHDelaySlotFillerLegacyPass());
+    addPass(createSHLiteralPoolRangeCheckLegacyPass());
   }
 };
 

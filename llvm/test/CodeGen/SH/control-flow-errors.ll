@@ -5,13 +5,11 @@
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/sext-i1.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=MATERIALIZE
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/select.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=MATERIALIZE
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/phi-i1.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=PHI
-; RUN: not --crash llc -mtriple=shle-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/pointer.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=POINTER
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/switch.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=SWITCH
 ; RUN: not --crash llc -mtriple=shle-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/indirectbr.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INDIRECT
 
 ; MATERIALIZE: LLVM ERROR: SH comparison results may only be used by conditional branches
 ; PHI: LLVM ERROR: SH i1 PHIs are not supported
-; POINTER: LLVM ERROR: SH pointer comparisons are not supported
 ; SWITCH: LLVM ERROR: SH switch is not supported
 ; INDIRECT: LLVM ERROR: SH indirectbr is not supported
 
@@ -57,16 +55,6 @@ merge:
 	%condition = phi i1 [ true, %entry ]
 	%result = zext i1 %condition to i32
 	ret i32 %result
-}
-
-;--- pointer.ll
-define i32 @pointer_cmp(ptr %a, ptr %b, i32 %x, i32 %y) {
-	%condition = icmp eq ptr %a, %b
-	br i1 %condition, label %same, label %different
-same:
-	ret i32 %x
-different:
-	ret i32 %y
 }
 
 ;--- switch.ll

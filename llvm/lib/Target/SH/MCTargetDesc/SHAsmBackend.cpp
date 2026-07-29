@@ -10,6 +10,7 @@
 #include "SHMCTargetDesc.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/MC/MCAsmBackend.h"
+#include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCELFObjectWriter.h"
 #include "llvm/MC/MCObjectWriter.h"
@@ -31,6 +32,12 @@ public:
 
   unsigned getRelocType(const MCFixup &Fixup, const MCValue &Target,
                         bool IsPCRel) const override {
+    if (Fixup.getKind() == SH::fixup_SH_PCREL8_4) {
+      reportError(Fixup.getLoc(),
+                  "SH PC-relative literal target must be defined in the same "
+                  "section");
+      return 0;
+    }
     if (Fixup.getKind() == SH::fixup_SH_PCREL8_2 ||
         Fixup.getKind() == SH::fixup_SH_PCREL12_2) {
       reportError(Fixup.getLoc(),
@@ -38,7 +45,22 @@ public:
                   "relocations are not yet supported");
       return 0;
     }
-    reportError(Fixup.getLoc(), "SH relocations are not yet supported");
+    if (Fixup.getKind() == FK_Data_4 && !IsPCRel)
+      return ELF::R_SH_DIR32;
+    if (Fixup.getKind() == FK_Data_1)
+      reportError(Fixup.getLoc(),
+                  "SH unresolved one-byte relocations are not supported");
+    else if (Fixup.getKind() == FK_Data_2)
+      reportError(Fixup.getLoc(),
+                  "SH unresolved two-byte relocations are not supported");
+    else if (Fixup.getKind() == FK_Data_8)
+      reportError(Fixup.getLoc(),
+                  "SH unresolved eight-byte relocations are not supported");
+    else if (IsPCRel)
+      reportError(Fixup.getLoc(),
+                  "SH PC-relative data relocations are not supported");
+    else
+      reportError(Fixup.getLoc(), "unsupported SH relocation");
     return 0;
   }
 };
@@ -54,10 +76,53 @@ public:
         IsLittleEndian(TT.isLittleEndian()),
         OSABI(MCELFObjectTargetWriter::getOSABI(TT.getOS())) {}
 
+  std::optional<bool> evaluateFixup(const MCFragment &F, MCFixup &Fixup,
+                                    MCValue &Target, uint64_t &Value) override {
+    if (Fixup.getKind() == SH::fixup_SH_PCREL8_4) {
+      uint64_t P =
+          Asm->getFragmentOffset(F) - Asm->getStretch() + Fixup.getOffset();
+      Value = P % 4;
+    }
+    return {};
+  }
+
   void applyFixup(const MCFragment &F, const MCFixup &Fixup,
                   const MCValue &Target, uint8_t *Data, uint64_t Value,
                   bool IsResolved) override {
     switch (Fixup.getKind()) {
+    case SH::fixup_SH_PCREL8_4: {
+      if (!IsResolved) {
+        getContext().reportError(
+            Fixup.getLoc(),
+            "SH PC-relative literal target must be defined in the same "
+            "section");
+        return;
+      }
+
+      int64_t ByteDisp = static_cast<int64_t>(Value) - 4;
+      if (ByteDisp % 4 != 0) {
+        getContext().reportError(
+            Fixup.getLoc(),
+            "SH PC-relative literal target must be four-byte aligned");
+        return;
+      }
+      if (ByteDisp < 0) {
+        getContext().reportError(
+            Fixup.getLoc(),
+            "SH PC-relative literal target is behind the instruction");
+        return;
+      }
+      if (ByteDisp > 1020) {
+        getContext().reportError(
+            Fixup.getLoc(), "SH PC-relative literal target is out of range");
+        return;
+      }
+
+      uint16_t Word = support::endian::read<uint16_t>(Data, Endian);
+      Word = (Word & 0xff00) | static_cast<uint16_t>(ByteDisp / 4);
+      support::endian::write<uint16_t>(Data, Word, Endian);
+      return;
+    }
     case SH::fixup_SH_PCREL8_2:
     case SH::fixup_SH_PCREL12_2: {
       if (!IsResolved) {
@@ -112,6 +177,7 @@ public:
     static const MCFixupKindInfo Infos[SH::NumTargetFixupKinds] = {
         {"fixup_SH_PCREL8_2", 0, 8, 0},
         {"fixup_SH_PCREL12_2", 0, 12, 0},
+        {"fixup_SH_PCREL8_4", 0, 8, 0},
     };
 
     if (Kind < FirstTargetFixupKind)

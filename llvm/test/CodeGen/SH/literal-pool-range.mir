@@ -1,0 +1,190 @@
+# RUN: split-file %s %t
+# RUN: llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check -verify-machineinstrs %t/exact.mir -o /dev/null
+# RUN: llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check -verify-machineinstrs %t/exact-mod2.mir -o /dev/null
+# RUN: llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check -verify-machineinstrs %t/multiple-exact.mir -o /dev/null
+# RUN: not --crash llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check -verify-machineinstrs %t/out.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=OUT
+# RUN: not --crash llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check -verify-machineinstrs %t/multiple-out.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=MULTIPLE-OUT
+# RUN: not --crash llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check %t/fallthrough.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=FALLTHROUGH
+
+# OUT: LLVM ERROR: SH literal pool entry is out of range: function out_of_range
+# OUT-SAME: constant-pool index 0
+# OUT-SAME: instruction offset 0
+# OUT-SAME: pool-entry offset 1028
+# OUT-SAME: distance 1024
+# OUT-SAME: allowed range 0..1020
+
+# MULTIPLE-OUT: LLVM ERROR: SH literal pool entry is out of range: function multiple_out
+# MULTIPLE-OUT-SAME: constant-pool index 2
+# MULTIPLE-OUT-SAME: instruction offset 4
+# MULTIPLE-OUT-SAME: pool-entry offset 1032
+# MULTIPLE-OUT-SAME: distance 1024
+# MULTIPLE-OUT-SAME: allowed range 0..1020
+
+# FALLTHROUGH: LLVM ERROR: SH literal pool would be reachable by fallthrough
+
+#--- exact.mir
+--- |
+  define i32 @exact_boundary() {
+    ret i32 0
+  }
+...
+---
+name:            exact_boundary
+alignment:       1024
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 42'
+    alignment:   4
+body:             |
+  bb.0:
+    $r0 = MOVL_load_pc %const.0 :: (dereferenceable invariant load (s32) from constant-pool)
+    RTS implicit $pr, implicit $r0 {
+      NOP
+    }
+
+  bb.1 (align 1024):
+...
+
+#--- fallthrough.mir
+--- |
+  define i32 @fallthrough() {
+    ret i32 0
+  }
+...
+---
+name:            fallthrough
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 42'
+    alignment:   4
+body:             |
+  bb.0:
+    $r0 = MOVL_load_pc %const.0 :: (dereferenceable invariant load (s32) from constant-pool)
+    NOP
+...
+
+#--- exact-mod2.mir
+--- |
+  define i32 @exact_boundary_mod2() {
+    ret i32 0
+  }
+...
+---
+name:            exact_boundary_mod2
+alignment:       1024
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 42'
+    alignment:   4
+body:             |
+  bb.0:
+    NOP
+    $r0 = MOVL_load_pc %const.0 :: (dereferenceable invariant load (s32) from constant-pool)
+    RTS implicit $pr, implicit $r0 {
+      NOP
+    }
+
+  bb.1 (align 1024):
+...
+
+#--- multiple-exact.mir
+--- |
+  define i32 @multiple_exact() {
+    ret i32 0
+  }
+...
+---
+name:            multiple_exact
+alignment:       1024
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 42'
+    alignment:   4
+  - id:          1
+    value:       'i32 43'
+    alignment:   4
+body:             |
+  bb.0:
+    NOP
+    NOP
+    $r1 = MOVL_load_pc %const.1 :: (dereferenceable invariant load (s32) from constant-pool)
+    $r0 = MOVL_load_pc %const.0 :: (dereferenceable invariant load (s32) from constant-pool)
+    RTS implicit $pr, implicit $r0 {
+      NOP
+    }
+
+  bb.1 (align 1024):
+...
+
+#--- out.mir
+--- |
+  define i32 @out_of_range() {
+    ret i32 0
+  }
+...
+---
+name:            out_of_range
+alignment:       1024
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 42'
+    alignment:   4
+body:             |
+  bb.0:
+    $r0 = MOVL_load_pc %const.0 :: (dereferenceable invariant load (s32) from constant-pool)
+    RTS implicit $pr, implicit $r0 {
+      NOP
+    }
+
+  bb.1 (align 1024):
+    liveins: $r0, $pr
+    RTS implicit $pr, implicit $r0 {
+      NOP
+    }
+...
+
+#--- multiple-out.mir
+--- |
+  define i32 @multiple_out() {
+    ret i32 0
+  }
+...
+---
+name:            multiple_out
+alignment:       1024
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 42'
+    alignment:   4
+  - id:          1
+    value:       'i32 43'
+    alignment:   4
+  - id:          2
+    value:       'i32 44'
+    alignment:   4
+body:             |
+  bb.0:
+    NOP
+    NOP
+    $r2 = MOVL_load_pc %const.2 :: (dereferenceable invariant load (s32) from constant-pool)
+    $r1 = MOVL_load_pc %const.1 :: (dereferenceable invariant load (s32) from constant-pool)
+    $r0 = MOVL_load_pc %const.0 :: (dereferenceable invariant load (s32) from constant-pool)
+    RTS implicit $pr, implicit $r0 {
+      NOP
+    }
+
+  bb.1 (align 1024):
+...

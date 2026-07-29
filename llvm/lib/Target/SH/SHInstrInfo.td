@@ -39,6 +39,22 @@ def calltarget12 : Operand<i32> {
   let OperandType = "OPERAND_PCREL";
 }
 
+def PCLiteralAsmOperand : AsmOperandClass {
+  let Name = "PCLiteral";
+  let PredicateMethod = "isPCLiteral";
+  let RenderMethod = "addPCLiteralOperands";
+  let ParserMethod = "parsePCLiteral";
+  let DiagnosticType = "InvalidPCLiteral";
+}
+
+def pcliteral : Operand<iPTR> {
+  let ParserMatchClass = PCLiteralAsmOperand;
+  let PrintMethod = "printPCLiteral";
+  let EncoderMethod = "getPCLiteralOpValue";
+  let DecoderMethod = "decodePCLiteral";
+  let OperandType = "OPERAND_PCREL";
+}
+
 def SImm8AsmOperand : AsmOperandClass {
   let Name = "SImm8";
   let PredicateMethod = "isSImm8";
@@ -487,6 +503,12 @@ def MOVL_load_reg
     : SHLongLoadReg<(outs GPR:$dst), (ins longmemreg:$addr),
                     "mov.l\t$addr,$dst",
                     [(set GPR:$dst, (load addr_reg:$addr))]>;
+
+let mayLoad = 1 in
+def MOVL_load_pc
+    : SHLongLoadPC<(outs GPR:$dst), (ins pcliteral:$target),
+                   "mov.l\t$target,$dst",
+                   [(set GPR:$dst, (load tconstpool:$target))]>;
 
 let mayStore = 1 in
 def MOVL_store_reg

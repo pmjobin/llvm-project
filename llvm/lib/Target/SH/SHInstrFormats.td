@@ -128,6 +128,17 @@ class SHLongLoadReg<dag Outs, dag Ins, string Asm, list<dag> pattern = []>
   let Inst{3-0} = 0x2;
 }
 
+class SHLongLoadPC<dag Outs, dag Ins, string Asm, list<dag> pattern = []>
+    : SHInst<Outs, Ins, Asm> {
+  bits<4> dst;
+  bits<8> target;
+
+  let Pattern = pattern;
+  let Inst{15-12} = 0xd;
+  let Inst{11-8} = dst;
+  let Inst{7-0} = target;
+}
+
 class SHLongStoreReg<dag Outs, dag Ins, string Asm, list<dag> pattern = []>
     : SHInst<Outs, Ins, Asm> {
   bits<4> src;

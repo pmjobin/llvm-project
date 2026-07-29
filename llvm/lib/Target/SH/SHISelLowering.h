@@ -41,6 +41,7 @@ public:
   SDValue LowerCall(CallLoweringInfo &CLI,
                     SmallVectorImpl<SDValue> &InVals) const override;
   SDValue LowerOperation(SDValue Op, SelectionDAG &DAG) const override;
+  SDValue PerformDAGCombine(SDNode *N, DAGCombinerInfo &DCI) const override;
   void ReplaceNodeResults(SDNode *N, SmallVectorImpl<SDValue> &Results,
                           SelectionDAG &DAG) const override;
   MachineBasicBlock *
@@ -49,6 +50,8 @@ public:
   void AdjustInstrPostInstrSelection(MachineInstr &MI,
                                      SDNode *Node) const override;
   SDValue LowerBR_CC(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerConstantPool(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerGlobalAddress(SDValue Op, SelectionDAG &DAG) const;
   const char *getTargetNodeName(unsigned Opcode) const override;
   bool isIntDivCheap(EVT VT, AttributeList Attr) const override;
   bool isSelectSupported(SelectSupportKind) const override { return false; }

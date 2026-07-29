@@ -13,4 +13,6 @@
 #endif
 MACHINE_FUNCTION_PASS("sh-delay-slot-filler", SHDelaySlotFillerPass())
 MACHINE_FUNCTION_PASS("sh-isel", SHDAGToDAGISelPass(*this))
+MACHINE_FUNCTION_PASS("sh-literal-pool-range-check",
+                      SHLiteralPoolRangeCheckPass())
 #undef MACHINE_FUNCTION_PASS

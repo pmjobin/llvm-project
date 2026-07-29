@@ -45,13 +45,15 @@ class SHOperand : public MCParsedAsmOperand {
     ByteMemDisp,
     WordMemDisp,
     PreDecGPR,
-    PostIncGPR
+    PostIncGPR,
+    PCLiteral
   } Kind;
   SMLoc StartLoc;
   SMLoc EndLoc;
   std::string Tok;
   MCRegister Reg;
   const MCExpr *Expr = nullptr;
+  bool IsLiteralDisplacement = false;
 
   explicit SHOperand(KindTy Kind) : Kind(Kind) {}
 
@@ -69,6 +71,7 @@ public:
   bool isWordMemDisp() const { return Kind == WordMemDisp; }
   bool isPreDecGPR() const { return Kind == PreDecGPR; }
   bool isPostIncGPR() const { return Kind == PostIncGPR; }
+  bool isPCLiteral() const { return Kind == PCLiteral; }
   bool isR0() const { return isReg() && Reg == SH::R0; }
   bool isBranchTarget() const { return isImm(); }
 
@@ -133,6 +136,16 @@ public:
 
   void addBranchTargetOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1);
+    Inst.addOperand(MCOperand::createExpr(Expr));
+  }
+
+  void addPCLiteralOperands(MCInst &Inst, unsigned N) const {
+    assert(Kind == PCLiteral && N == 1);
+    if (IsLiteralDisplacement) {
+      const auto *CE = cast<MCConstantExpr>(Expr);
+      Inst.addOperand(MCOperand::createImm(CE->getValue()));
+      return;
+    }
     Inst.addOperand(MCOperand::createExpr(Expr));
   }
 
@@ -253,6 +266,17 @@ public:
     Op->EndLoc = End;
     return Op;
   }
+
+  static std::unique_ptr<SHOperand> createPCLiteral(const MCExpr *Expr,
+                                                    bool IsDisplacement,
+                                                    SMLoc Start, SMLoc End) {
+    auto Op = std::unique_ptr<SHOperand>(new SHOperand(PCLiteral));
+    Op->Expr = Expr;
+    Op->IsLiteralDisplacement = IsDisplacement;
+    Op->StartLoc = Start;
+    Op->EndLoc = End;
+    return Op;
+  }
 };
 
 class SHAsmParser : public MCTargetAsmParser {
@@ -273,6 +297,7 @@ class SHAsmParser : public MCTargetAsmParser {
 
   ParseStatus parseOperand(OperandVector &Operands, StringRef Mnemonic);
   ParseStatus parseBranchTarget(OperandVector &Operands);
+  ParseStatus parsePCLiteral(OperandVector &Operands);
   ParseStatus parseSImm8(OperandVector &Operands);
   ParseStatus parseMemory(OperandVector &Operands, StringRef Mnemonic);
   ParseStatus parsePreDecGPR(OperandVector &Operands);
@@ -351,6 +376,22 @@ ParseStatus SHAsmParser::parseBranchTarget(OperandVector &Operands) {
   return ParseStatus::Success;
 }
 
+ParseStatus SHAsmParser::parsePCLiteral(OperandVector &Operands) {
+  if (Parser.getTok().is(AsmToken::At))
+    return ParseStatus::NoMatch;
+  if (Parser.getTok().is(AsmToken::Identifier) &&
+      MatchRegisterName(Parser.getTok().getIdentifier()))
+    return ParseStatus::NoMatch;
+
+  SMLoc Start = Parser.getTok().getLoc();
+  const MCExpr *Expr;
+  SMLoc End;
+  if (Parser.parseExpression(Expr, End))
+    return ParseStatus::Failure;
+  Operands.push_back(SHOperand::createPCLiteral(Expr, false, Start, End));
+  return ParseStatus::Success;
+}
+
 ParseStatus SHAsmParser::parseMemory(OperandVector &Operands,
                                      StringRef Mnemonic) {
   if (Parser.getTok().isNot(AsmToken::At))
@@ -368,23 +409,6 @@ ParseStatus SHAsmParser::parseMemory(OperandVector &Operands,
       return ParseStatus::Failure;
     if (!isa<MCConstantExpr>(Disp)) {
       Error(Start, "expected an integer memory displacement");
-      return ParseStatus::Failure;
-    }
-    int64_t ByteDisp = cast<MCConstantExpr>(Disp)->getValue();
-    if (Mnemonic == "mov.b" && (ByteDisp < 0 || ByteDisp > 15)) {
-      Error(Start, "byte displacement must be in the range [0, 15]");
-      return ParseStatus::Failure;
-    }
-    if (Mnemonic == "mov.w" &&
-        (ByteDisp < 0 || ByteDisp > 30 || ByteDisp % 2 != 0)) {
-      Error(Start, "word displacement must be an even byte offset in the range "
-                   "[0, 30]");
-      return ParseStatus::Failure;
-    }
-    if (Mnemonic != "mov.b" && Mnemonic != "mov.w" &&
-        (ByteDisp < 0 || ByteDisp > 60 || ByteDisp % 4 != 0)) {
-      Error(Start, "longword displacement must be a multiple of 4 in the "
-                   "range [0, 60]");
       return ParseStatus::Failure;
     }
     if (Parser.getTok().isNot(AsmToken::Comma)) {
@@ -412,12 +436,35 @@ ParseStatus SHAsmParser::parseMemory(OperandVector &Operands,
     }
     End = Parser.getTok().getEndLoc();
     Parser.Lex();
-    if (Mnemonic == "mov.b")
+    int64_t ByteDisp = cast<MCConstantExpr>(Disp)->getValue();
+    if (Mnemonic == "mov.l" && Base == SH::PC) {
+      if (ByteDisp < 0 || ByteDisp > 1020 || ByteDisp % 4 != 0) {
+        Error(Start, "SH PC-relative literal displacement must be a multiple "
+                     "of 4 in the range [0, 1020]");
+        return ParseStatus::Failure;
+      }
+      Operands.push_back(SHOperand::createPCLiteral(Disp, true, Start, End));
+    } else if (Mnemonic == "mov.b") {
+      if (ByteDisp < 0 || ByteDisp > 15) {
+        Error(Start, "byte displacement must be in the range [0, 15]");
+        return ParseStatus::Failure;
+      }
       Operands.push_back(SHOperand::createByteMemDisp(Base, Disp, Start, End));
-    else if (Mnemonic == "mov.w")
+    } else if (Mnemonic == "mov.w") {
+      if (ByteDisp < 0 || ByteDisp > 30 || ByteDisp % 2 != 0) {
+        Error(Start, "word displacement must be an even byte offset in the "
+                     "range [0, 30]");
+        return ParseStatus::Failure;
+      }
       Operands.push_back(SHOperand::createWordMemDisp(Base, Disp, Start, End));
-    else
+    } else {
+      if (ByteDisp < 0 || ByteDisp > 60 || ByteDisp % 4 != 0) {
+        Error(Start, "longword displacement must be a multiple of 4 in the "
+                     "range [0, 60]");
+        return ParseStatus::Failure;
+      }
       Operands.push_back(SHOperand::createLongMemDisp(Base, Disp, Start, End));
+    }
     return ParseStatus::Success;
   }
 
@@ -624,6 +671,9 @@ bool SHAsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   case Match_InvalidSImm8:
     return Error(Operands[ErrorInfo]->getStartLoc(),
                  "immediate must be an integer in the range [-128, 127]");
+  case Match_InvalidPCLiteral:
+    return Error(Operands[ErrorInfo]->getStartLoc(),
+                 "invalid SH PC-relative literal operand");
   case Match_InvalidR0:
     return Error(Operands[ErrorInfo]->getStartLoc(), "operand must be r0");
   case Match_InvalidTiedOperand:

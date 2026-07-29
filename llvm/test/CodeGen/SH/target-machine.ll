@@ -5,6 +5,9 @@
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O2 -verify-machineinstrs -stop-after=sh-isel < %s | FileCheck %s --check-prefix=LE
 ; RUN: llc -mtriple=sh-unknown-elf -mcpu=not-a-cpu -O2 -verify-machineinstrs -filetype=null < %s 2>&1 | FileCheck %s --check-prefix=CPU
 ; RUN: not llc -mtriple=sh-unknown-elf -mcpu=sh2 -relocation-model=pic < %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=PIC
+; RUN: not llc -mtriple=sh-unknown-elf -mcpu=sh2 -relocation-model=ropi < %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=PIC
+; RUN: not llc -mtriple=sh-unknown-elf -mcpu=sh2 -relocation-model=rwpi < %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=PIC
+; RUN: not llc -mtriple=sh-unknown-elf -mcpu=sh2 -relocation-model=ropi-rwpi < %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=PIC
 ; RUN: not llc -mtriple=sh-unknown-elf -mcpu=sh2 -code-model=medium < %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=CODEMODEL
 
 define i32 @zero() {

@@ -769,6 +769,11 @@ enum : unsigned {
   EF_SH2 = 2,
 };
 
+// ELF relocation types for SH.
+enum {
+#include "ELFRelocs/SH.def"
+};
+
 // AMDGPU specific e_flags.
 #define AMDGPU_MACH_LIST(X)                                                    \
   X(0x01, EF_AMDGPU_MACH_R600_R600, "r600")                                    \

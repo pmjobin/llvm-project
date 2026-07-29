@@ -34,8 +34,22 @@ void SHMCInstLower::lower(const MachineInstr *MI, MCInst &OutMI) const {
           MCSymbolRefExpr::create(MO.getMBB()->getSymbol(), Ctx)));
       break;
     case MachineOperand::MO_GlobalAddress: {
+      const GlobalValue &GV = *MO.getGlobal();
+      MCSymbol *Symbol =
+          GV.hasExternalLinkage() && GV.isDSOLocal() && !GV.isInterposable() &&
+                  GV.canBenefitFromLocalAlias()
+              ? Printer.getSymbolWithGlobalValueBase(&GV, "$local")
+              : Printer.getSymbol(&GV);
+      const MCExpr *Expr = MCSymbolRefExpr::create(Symbol, Ctx);
+      if (MO.getOffset() != 0)
+        Expr = MCBinaryExpr::createAdd(
+            Expr, MCConstantExpr::create(MO.getOffset(), Ctx), Ctx);
+      OutMI.addOperand(MCOperand::createExpr(Expr));
+      break;
+    }
+    case MachineOperand::MO_ConstantPoolIndex: {
       const MCExpr *Expr =
-          MCSymbolRefExpr::create(Printer.getSymbol(MO.getGlobal()), Ctx);
+          MCSymbolRefExpr::create(Printer.GetCPISymbol(MO.getIndex()), Ctx);
       if (MO.getOffset() != 0)
         Expr = MCBinaryExpr::createAdd(
             Expr, MCConstantExpr::create(MO.getOffset(), Ctx), Ctx);

@@ -9,16 +9,11 @@
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/aggregate-return.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=RETURN
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/tail.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=TAIL
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/musttail.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=MUSTTAIL
-; RUN: rm -f %t/external.o %t/external-le.o %t/range.o %t/range-le.o
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -filetype=obj %t/external.ll -o %t/external.o 2>&1 | FileCheck %s --check-prefix=EXTERNAL
-; RUN: not test -e %t/external.o
-; RUN: not --crash llc -mtriple=shle-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -filetype=obj %t/external.ll -o %t/external-le.o 2>&1 | FileCheck %s --check-prefix=EXTERNAL
-; RUN: not test -e %t/external-le.o
+; RUN: rm -f %t/range.o %t/range-le.o
 ; RUN: not llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -filetype=obj %t/out-of-range.ll -o %t/range.o 2>&1 | FileCheck %s --check-prefix=RANGE
 ; RUN: not test -e %t/range.o
 ; RUN: not llc -mtriple=shle-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -filetype=obj %t/out-of-range.ll -o %t/range-le.o 2>&1 | FileCheck %s --check-prefix=RANGE
 ; RUN: not test -e %t/range-le.o
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/cross-section.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=CROSS
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/large-frame.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=FRAME
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/calling-convention.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=CC
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/inline-asm.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INLINE-ASM
@@ -29,11 +24,8 @@
 ; RETURN: LLVM ERROR: SH calls only support void, i32, i64, and pointer return values
 ; TAIL: LLVM ERROR: SH tail calls are not supported
 ; MUSTTAIL: LLVM ERROR: SH musttail calls are not supported
-; EXTERNAL: LLVM ERROR: SH unresolved or interposable direct calls are not supported
-; EXTERNAL-NOT: assertion
 ; RANGE: error: SH branch target is out of range
 ; RANGE-NOT: assertion
-; CROSS: LLVM ERROR: SH cross-section direct calls are not supported
 ; FRAME: LLVM ERROR: SH stack frame size cannot exceed 60 bytes
 ; CC: LLVM ERROR: SH only supports the C calling convention
 ; INLINE-ASM: LLVM ERROR: SH inline assembly is not supported
@@ -97,24 +89,6 @@ define i32 @tail_call(ptr %fn, i32 %value) {
 ;--- musttail.ll
 define i32 @musttail_call(ptr %fn, i32 %value) {
 	%result = musttail call i32 %fn(ptr %fn, i32 %value)
-	ret i32 %result
-}
-
-;--- external.ll
-declare i32 @external_callee(i32)
-
-define i32 @external_call(i32 %value) {
-	%result = call i32 @external_callee(i32 %value)
-	ret i32 %result
-}
-
-;--- cross-section.ll
-define internal i32 @other_section(i32 %value) section ".text.other" {
-	ret i32 %value
-}
-
-define i32 @cross_section(i32 %value) {
-	%result = call i32 @other_section(i32 %value)
 	ret i32 %result
 }
 
