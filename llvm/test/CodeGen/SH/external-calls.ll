@@ -7,7 +7,7 @@ declare i32 @external_fn(i32)
 declare i64 @external_i64(i64, i32, i32, i32, i32)
 declare i32 @external19(i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32)
 
-define i32 @call_external(i32 %x) {
+define i32 @call_external(i32 %x) nounwind {
 ; CHECK-LABEL: call_external:
 ; CHECK-NEXT: sts.l	pr,@-r15
 ; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,[[CALLEE:r[0-9]+]]
@@ -22,7 +22,7 @@ define i32 @call_external(i32 %x) {
 	ret i32 %result
 }
 
-define i64 @call_external_i64(i64 %value) {
+define i64 @call_external_i64(i64 %value) nounwind {
 ; CHECK-LABEL: call_external_i64:
 ; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,[[CALLEE:r[0-9]+]]
 ; CHECK: jsr	@[[CALLEE]]
@@ -32,7 +32,7 @@ define i64 @call_external_i64(i64 %value) {
 	ret i64 %result
 }
 
-define i32 @call_external_twice(i32 %x) {
+define i32 @call_external_twice(i32 %x) nounwind {
 ; CHECK-LABEL: call_external_twice:
 ; CHECK-COUNT-2: jsr
 ; CHECK-COUNT-1: .LCPI{{[0-9]+}}_0_0:
@@ -42,7 +42,7 @@ define i32 @call_external_twice(i32 %x) {
 	ret i32 %second
 }
 
-define i32 @call_external19() {
+define i32 @call_external19() nounwind {
 ; CHECK-LABEL: call_external19:
 ; CHECK: add	#-60,r15
 ; CHECK: mov.l	.LCPI{{[0-9]+}}_0_0,[[CALLEE:r[0-9]+]]

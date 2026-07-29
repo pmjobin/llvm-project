@@ -6,7 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-class SHReg<bits<4> Encoding, string Name> : Register<Name> {
+class SHReg<bits<4> Encoding, string Name>
+    : Register<Name>, DwarfRegNum<[Encoding]> {
   let Namespace = "SH";
   let HWEncoding{3-0} = Encoding;
 }
@@ -15,13 +16,13 @@ foreach I = 0-15 in
   def R#I : SHReg<I, "r"#I>;
 
 let Namespace = "SH" in {
-def PC : Register<"pc">;
-def PR : Register<"pr">;
-def GBR : Register<"gbr">;
-def VBR : Register<"vbr">;
-def MACH : Register<"mach">;
-def MACL : Register<"macl">;
-def SR : Register<"sr">;
+def PC : Register<"pc">, DwarfRegNum<[16]>;
+def PR : Register<"pr">, DwarfRegNum<[17]>;
+def GBR : Register<"gbr">, DwarfRegNum<[18]>;
+def VBR : Register<"vbr">, DwarfRegNum<[19]>;
+def MACH : Register<"mach">, DwarfRegNum<[20]>;
+def MACL : Register<"macl">, DwarfRegNum<[21]>;
+def SR : Register<"sr">, DwarfRegNum<[22]>;
 def TBit : Register<"">;
 def MBit : Register<"">;
 def QBit : Register<"">;

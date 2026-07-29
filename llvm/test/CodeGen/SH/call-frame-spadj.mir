@@ -70,12 +70,16 @@ body:             |
 # CHECK-LABEL: body:
 # CHECK-NOT: ADJCALLSTACK
 # CHECK: $r15 = ADDri $r15, -12
+# CHECK-NEXT: CFI_INSTRUCTION adjust_cfa_offset 12
 # CHECK-NEXT: MOVL_store_disp $r0, $r15, 20
 # CHECK-NEXT: $r15 = ADDri $r15, 12
+# CHECK-NEXT: CFI_INSTRUCTION adjust_cfa_offset -12
 
 # CHECK-LABEL: name:            spadj_sixty
 # CHECK-LABEL: body:
 # CHECK-NOT: ADJCALLSTACK
 # CHECK: $r15 = ADDri $r15, -12
+# CHECK-NEXT: CFI_INSTRUCTION adjust_cfa_offset 12
 # CHECK-NEXT: $r0 = MOVL_load_disp $r15, 60
 # CHECK-NEXT: $r15 = ADDri $r15, 12
+# CHECK-NEXT: CFI_INSTRUCTION adjust_cfa_offset -12

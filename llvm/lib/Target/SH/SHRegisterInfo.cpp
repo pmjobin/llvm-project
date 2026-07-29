@@ -12,6 +12,7 @@
 #include "SHInstrInfo.h"
 #include "SHSubtarget.h"
 #include "llvm/ADT/BitVector.h"
+#include "llvm/CodeGen/CFIInstBuilder.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -165,6 +166,9 @@ bool SHRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator MI,
     BuildMI(MBB, MI, Instr.getDebugLoc(), TII->get(SH::ADDri), SH::R15)
         .addReg(SH::R15)
         .addImm(Adjustment);
+    if (MF.needsFrameMoves())
+      CFIInstBuilder(MBB, MI, MachineInstr::NoFlags)
+          .buildAdjustCFAOffset(-Adjustment);
     BuildMI(MBB, MI, Instr.getDebugLoc(), TII->get(SH::MOVL_store_disp))
         .add(Instr.getOperand(0))
         .addReg(SH::R15)
@@ -174,6 +178,9 @@ bool SHRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator MI,
     BuildMI(MBB, MI, Instr.getDebugLoc(), TII->get(SH::ADDri), SH::R15)
         .addReg(SH::R15)
         .addImm(-Adjustment);
+    if (MF.needsFrameMoves())
+      CFIInstBuilder(MBB, MI, MachineInstr::NoFlags)
+          .buildAdjustCFAOffset(Adjustment);
     MBB.erase(MI);
     return false;
   }

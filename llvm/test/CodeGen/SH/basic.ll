@@ -3,7 +3,7 @@
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -filetype=asm -asm-verbose=false < %s | FileCheck %s --implicit-check-not=r15 --implicit-check-not=mov.b --implicit-check-not=mov.w --implicit-check-not=mov.l
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O2 -verify-machineinstrs -filetype=asm -asm-verbose=false < %s | FileCheck %s --implicit-check-not=r15 --implicit-check-not=mov.b --implicit-check-not=mov.w --implicit-check-not=mov.l
 
-define i32 @add_i32(i32 %a, i32 %b) {
+define i32 @add_i32(i32 %a, i32 %b) nounwind {
 ; CHECK-LABEL: add_i32:
 ; CHECK-NEXT: mov	r4,r0
 ; CHECK-NEXT: add	r5,r0
@@ -13,7 +13,7 @@ define i32 @add_i32(i32 %a, i32 %b) {
 	ret i32 %sum
 }
 
-define i32 @identity_i32(i32 %value) {
+define i32 @identity_i32(i32 %value) nounwind {
 ; CHECK-LABEL: identity_i32:
 ; CHECK-NEXT: mov	r4,r0
 ; CHECK-NEXT: rts
@@ -21,7 +21,7 @@ define i32 @identity_i32(i32 %value) {
 	ret i32 %value
 }
 
-define i32 @minus_one() {
+define i32 @minus_one() nounwind {
 ; CHECK-LABEL: minus_one:
 ; CHECK-NEXT: mov	#-1,r0
 ; CHECK-NEXT: rts
@@ -29,7 +29,7 @@ define i32 @minus_one() {
 	ret i32 -1
 }
 
-define i32 @add_seven(i32 %value) {
+define i32 @add_seven(i32 %value) nounwind {
 ; CHECK-LABEL: add_seven:
 ; CHECK-NEXT: mov	r4,r0
 ; CHECK-NEXT: add	#7,r0
@@ -39,7 +39,7 @@ define i32 @add_seven(i32 %value) {
 	ret i32 %result
 }
 
-define i32 @fourth_arg(i32 %a, i32 %b, i32 %c, i32 %d) {
+define i32 @fourth_arg(i32 %a, i32 %b, i32 %c, i32 %d) nounwind {
 ; CHECK-LABEL: fourth_arg:
 ; CHECK-NEXT: mov	r7,r0
 ; CHECK-NEXT: rts
@@ -47,7 +47,7 @@ define i32 @fourth_arg(i32 %a, i32 %b, i32 %c, i32 %d) {
 	ret i32 %d
 }
 
-define void @return_void() {
+define void @return_void() nounwind {
 ; CHECK-LABEL: return_void:
 ; CHECK-NEXT: rts
 ; CHECK-NEXT: nop

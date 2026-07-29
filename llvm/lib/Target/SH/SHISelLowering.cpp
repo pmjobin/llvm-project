@@ -495,8 +495,17 @@ static void validateSHMemoryIntrinsic(const MemIntrinsic &MI) {
         Twine(InlineLimit) + " bytes");
 }
 
+static bool isSHLanguageEHInstruction(const Instruction &I) {
+  return isa<InvokeInst, LandingPadInst, ResumeInst, CatchSwitchInst,
+             CatchPadInst, CleanupPadInst, CatchReturnInst, CleanupReturnInst,
+             CallBrInst>(I);
+}
+
 void llvm::validateSHIR(const Function &F) {
   const DataLayout &DL = F.getDataLayout();
+  if (F.hasPersonalityFn())
+    report_fatal_error(
+        "SH language exception handling is not supported: personality");
   if (F.getReturnType()->isIntegerTy(1))
     report_fatal_error(
         "SH comparison results may only be used by conditional branches");
@@ -537,8 +546,12 @@ void llvm::validateSHIR(const Function &F) {
     report_fatal_error("SH stack realignment is not supported");
   for (const BasicBlock &BB : F) {
     if (BB.isEHPad())
-      report_fatal_error("SH exception-handling pads are not supported");
+      report_fatal_error(
+          "SH language exception handling is not supported: EH pad");
     for (const Instruction &I : BB) {
+      if (isSHLanguageEHInstruction(I))
+        report_fatal_error(
+            "SH language exception handling is not supported: EH instruction");
       const auto *Call = dyn_cast<CallBase>(&I);
       if (const auto *Switch = dyn_cast<SwitchInst>(&I)) {
         Type *ConditionTy = Switch->getCondition()->getType();
@@ -547,8 +560,6 @@ void llvm::validateSHIR(const Function &F) {
           report_fatal_error(
               "SH switch conditions must be i8, i16, i32, or i64");
       }
-      if (isa<CallBrInst>(&I))
-        report_fatal_error("SH callbr is not supported");
       if (isa<SelectInst>(&I))
         report_fatal_error("SH select is not supported");
       if (isa<AtomicRMWInst>(&I) || isa<AtomicCmpXchgInst>(&I))
@@ -557,8 +568,6 @@ void llvm::validateSHIR(const Function &F) {
         SHAtomicRuntimeCallKind AtomicCallKind =
             getSHAtomicRuntimeCallKind(*Call);
         requireSupportedCallingConvention(Call->getCallingConv());
-        if (isa<InvokeInst>(Call))
-          report_fatal_error("SH exception-handling calls are not supported");
         if (Call->isInlineAsm())
           report_fatal_error("SH inline assembly is not supported");
         if (const auto *MI = dyn_cast<MemIntrinsic>(Call)) {
@@ -566,6 +575,11 @@ void llvm::validateSHIR(const Function &F) {
           continue;
         }
         switch (Call->getIntrinsicID()) {
+        case Intrinsic::dbg_declare:
+        case Intrinsic::dbg_value:
+        case Intrinsic::dbg_assign:
+        case Intrinsic::dbg_label:
+          continue;
         case Intrinsic::sh_tas_b:
           if (Call->getArgOperand(0)->getType()->getPointerAddressSpace() != 0)
             report_fatal_error(
@@ -595,6 +609,21 @@ void llvm::validateSHIR(const Function &F) {
           if (Call->getArgOperand(0)->getType()->getPointerAddressSpace() != 0)
             report_fatal_error("SH va_list only supports address space zero");
           continue;
+        case Intrinsic::eh_typeid_for:
+        case Intrinsic::eh_return_i32:
+        case Intrinsic::eh_return_i64:
+        case Intrinsic::eh_exceptionpointer:
+        case Intrinsic::eh_exceptioncode:
+        case Intrinsic::eh_unwind_init:
+        case Intrinsic::eh_dwarf_cfa:
+        case Intrinsic::eh_sjlj_lsda:
+        case Intrinsic::eh_sjlj_callsite:
+        case Intrinsic::eh_sjlj_functioncontext:
+        case Intrinsic::eh_sjlj_setjmp:
+        case Intrinsic::eh_sjlj_longjmp:
+        case Intrinsic::eh_sjlj_setup_dispatch:
+          report_fatal_error(
+              "SH language exception handling is not supported: EH intrinsic");
         default:
           break;
         }

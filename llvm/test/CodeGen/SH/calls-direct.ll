@@ -3,7 +3,7 @@
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -asm-verbose=false < %s | FileCheck %s
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O2 -verify-machineinstrs -asm-verbose=false < %s | FileCheck %s
 
-define internal i32 @add_one(i32 %x) {
+define internal i32 @add_one(i32 %x) nounwind {
 ; CHECK-LABEL: add_one:
 ; CHECK-NOT: sts.l
 ; CHECK: rts
@@ -12,15 +12,15 @@ define internal i32 @add_one(i32 %x) {
 	ret i32 %result
 }
 
-define internal i32 @forty_two() {
+define internal i32 @forty_two() nounwind {
 	ret i32 42
 }
 
-define internal void @consume(i32 %x) {
+define internal void @consume(i32 %x) nounwind {
 	ret void
 }
 
-define i32 @call_add_one(i32 %x) {
+define i32 @call_add_one(i32 %x) nounwind {
 ; CHECK-LABEL: call_add_one:
 ; CHECK-NEXT: sts.l	pr,@-r15
 ; CHECK-NEXT: bsr	add_one
@@ -32,7 +32,7 @@ define i32 @call_add_one(i32 %x) {
 	ret i32 %result
 }
 
-define i32 @call_twice(i32 %x) {
+define i32 @call_twice(i32 %x) nounwind {
 ; CHECK-LABEL: call_twice:
 ; CHECK-NEXT: sts.l	pr,@-r15
 ; CHECK-NOT: sts.l
@@ -50,7 +50,7 @@ define i32 @call_twice(i32 %x) {
 	ret i32 %second
 }
 
-define i32 @call_zero_arguments() {
+define i32 @call_zero_arguments() nounwind {
 ; CHECK-LABEL: call_zero_arguments:
 ; CHECK: sts.l	pr,@-r15
 ; CHECK: bsr	forty_two
@@ -60,7 +60,7 @@ define i32 @call_zero_arguments() {
 	ret i32 %result
 }
 
-define void @call_void(i32 %x) {
+define void @call_void(i32 %x) nounwind {
 ; CHECK-LABEL: call_void:
 ; CHECK: sts.l	pr,@-r15
 ; CHECK: bsr	consume
@@ -71,7 +71,7 @@ define void @call_void(i32 %x) {
 	ret void
 }
 
-define i32 @call_in_control_flow(i32 %x, i32 %condition) {
+define i32 @call_in_control_flow(i32 %x, i32 %condition) nounwind {
 ; CHECK-LABEL: call_in_control_flow:
 ; CHECK: sts.l	pr,@-r15
 ; CHECK: tst

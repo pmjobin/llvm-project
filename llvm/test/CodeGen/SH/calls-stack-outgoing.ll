@@ -3,18 +3,18 @@
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -asm-verbose=false < %s | FileCheck %s
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O2 -verify-machineinstrs -asm-verbose=false < %s | FileCheck %s
 
-define internal i32 @outgoing4(i32 %a0, i32 %a1, i32 %a2, i32 %a3) noinline {
+define internal i32 @outgoing4(i32 %a0, i32 %a1, i32 %a2, i32 %a3) noinline nounwind {
 	%sum0 = add i32 %a0, %a1
 	%sum1 = add i32 %a2, %a3
 	%result = add i32 %sum0, %sum1
 	ret i32 %result
 }
 
-define internal i32 @outgoing5(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4) noinline {
+define internal i32 @outgoing5(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4) noinline nounwind {
 	ret i32 %a4
 }
 
-define internal i32 @outgoing8(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a5, i32 %a6, i32 %a7) noinline {
+define internal i32 @outgoing8(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a5, i32 %a6, i32 %a7) noinline nounwind {
 	%sum0 = add i32 %a0, %a1
 	%sum1 = add i32 %a2, %a3
 	%sum2 = add i32 %a4, %a5
@@ -25,11 +25,11 @@ define internal i32 @outgoing8(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 
 	ret i32 %result
 }
 
-define internal ptr @outgoing5_ptr(i32 %a0, i32 %a1, i32 %a2, i32 %a3, ptr %a4) noinline {
+define internal ptr @outgoing5_ptr(i32 %a0, i32 %a1, i32 %a2, i32 %a3, ptr %a4) noinline nounwind {
 	ret ptr %a4
 }
 
-define i32 @call_return_fifth(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4) {
+define i32 @call_return_fifth(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4) nounwind {
 ; CHECK-LABEL: call_return_fifth:
 ; CHECK-NEXT: sts.l	pr,@-r15
 ; CHECK: mov.l	@(4,r15),[[FIFTH:r[0-9]+]]
@@ -43,7 +43,7 @@ define i32 @call_return_fifth(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4) {
 	ret i32 %result
 }
 
-define i32 @call_eight_mixed(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a5, i32 %a6, i32 %a7) {
+define i32 @call_eight_mixed(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a5, i32 %a6, i32 %a7) nounwind {
 ; CHECK-LABEL: call_eight_mixed:
 ; CHECK-NEXT: sts.l	pr,@-r15
 ; CHECK: add	#-16,r15
@@ -60,7 +60,7 @@ define i32 @call_eight_mixed(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a
 	ret i32 %result
 }
 
-define i32 @stack_value_before_register_overwrite(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4) {
+define i32 @stack_value_before_register_overwrite(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4) nounwind {
 ; CHECK-LABEL: stack_value_before_register_overwrite:
 ; CHECK-NEXT: sts.l	pr,@-r15
 ; CHECK: add	#-4,r15
@@ -72,7 +72,7 @@ define i32 @stack_value_before_register_overwrite(i32 %a0, i32 %a1, i32 %a2, i32
 	ret i32 %result
 }
 
-define i32 @register_cycle_with_stack(i32 %a0, i32 %a1, i32 %a2, i32 %a3) {
+define i32 @register_cycle_with_stack(i32 %a0, i32 %a1, i32 %a2, i32 %a3) nounwind {
 ; CHECK-LABEL: register_cycle_with_stack:
 ; CHECK-NEXT: sts.l	pr,@-r15
 ; CHECK: add	#-16,r15
@@ -87,7 +87,7 @@ define i32 @register_cycle_with_stack(i32 %a0, i32 %a1, i32 %a2, i32 %a3) {
 	ret i32 %result
 }
 
-define i32 @multiple_call_frame_sizes(i32 %value) {
+define i32 @multiple_call_frame_sizes(i32 %value) nounwind {
 ; CHECK-LABEL: multiple_call_frame_sizes:
 ; CHECK-NEXT: sts.l	pr,@-r15
 ; CHECK-NOT: add	#-,r15
@@ -109,7 +109,7 @@ define i32 @multiple_call_frame_sizes(i32 %value) {
 	ret i32 %eight
 }
 
-define ptr @pointer_stack_argument(ptr %value) {
+define ptr @pointer_stack_argument(ptr %value) nounwind {
 ; CHECK-LABEL: pointer_stack_argument:
 ; CHECK: add	#-4,r15
 ; CHECK: mov.l	{{r[0-9]+}},@r15

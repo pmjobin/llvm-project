@@ -3,7 +3,7 @@
 ; RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -filetype=asm -asm-verbose=false < %s | FileCheck %s --check-prefix=ASM
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -filetype=asm -asm-verbose=false < %s | FileCheck %s --check-prefix=ASM
 
-define i32 @constant_zero() {
+define i32 @constant_zero() nounwind {
 ; ISEL-LABEL: name:            constant_zero
 ; ISEL: MOVri 0
 ; ASM-LABEL: constant_zero:
@@ -11,7 +11,7 @@ define i32 @constant_zero() {
 	ret i32 0
 }
 
-define i32 @constant_one() {
+define i32 @constant_one() nounwind {
 ; ISEL-LABEL: name:            constant_one
 ; ISEL: MOVri 1
 ; ASM-LABEL: constant_one:
@@ -19,7 +19,7 @@ define i32 @constant_one() {
 	ret i32 1
 }
 
-define i32 @constant_127() {
+define i32 @constant_127() nounwind {
 ; ISEL-LABEL: name:            constant_127
 ; ISEL: MOVri 127
 ; ASM-LABEL: constant_127:
@@ -27,7 +27,7 @@ define i32 @constant_127() {
 	ret i32 127
 }
 
-define i32 @constant_128() {
+define i32 @constant_128() nounwind {
 ; ISEL-LABEL: name:            constant_128
 ; ISEL: [[SIGNED:%[0-9]+]]:gpr = MOVri -128
 ; ISEL-NEXT: [[VALUE:%[0-9]+]]:gpr = EXTUB [[SIGNED]]
@@ -37,7 +37,7 @@ define i32 @constant_128() {
 	ret i32 128
 }
 
-define i32 @constant_255() {
+define i32 @constant_255() nounwind {
 ; ISEL-LABEL: name:            constant_255
 ; ISEL: [[SIGNED:%[0-9]+]]:gpr = MOVri -1
 ; ISEL-NEXT: [[VALUE:%[0-9]+]]:gpr = EXTUB [[SIGNED]]
@@ -47,7 +47,7 @@ define i32 @constant_255() {
 	ret i32 255
 }
 
-define i32 @constant_256() {
+define i32 @constant_256() nounwind {
 ; ISEL-LABEL: name:            constant_256
 ; ISEL: [[HIGH:%[0-9]+]]:gpr = MOVri 1
 ; ISEL-NEXT: [[VALUE:%[0-9]+]]:gpr = SHLL8 [[HIGH]]
@@ -57,7 +57,7 @@ define i32 @constant_256() {
 	ret i32 256
 }
 
-define i32 @constant_32767() {
+define i32 @constant_32767() nounwind {
 ; ISEL-LABEL: name:            constant_32767
 ; ISEL: [[HIGH:%[0-9]+]]:gpr = MOVri 127
 ; ISEL-NEXT: [[SHIFTED:%[0-9]+]]:gpr = SHLL8 [[HIGH]]
@@ -68,7 +68,7 @@ define i32 @constant_32767() {
 	ret i32 32767
 }
 
-define i32 @constant_32768() {
+define i32 @constant_32768() nounwind {
 ; ISEL-LABEL: name:            constant_32768
 ; ISEL: MOVri -128
 ; ISEL: EXTUB
@@ -77,7 +77,7 @@ define i32 @constant_32768() {
 	ret i32 32768
 }
 
-define i32 @constant_65535() {
+define i32 @constant_65535() nounwind {
 ; ISEL-LABEL: name:            constant_65535
 ; ISEL: MOVri -1
 ; ISEL: EXTUB
@@ -89,7 +89,7 @@ define i32 @constant_65535() {
 	ret i32 65535
 }
 
-define i32 @constant_minus_one() {
+define i32 @constant_minus_one() nounwind {
 ; ISEL-LABEL: name:            constant_minus_one
 ; ISEL: MOVri -1
 ; ASM-LABEL: constant_minus_one:
@@ -97,7 +97,7 @@ define i32 @constant_minus_one() {
 	ret i32 -1
 }
 
-define i32 @constant_minus_128() {
+define i32 @constant_minus_128() nounwind {
 ; ISEL-LABEL: name:            constant_minus_128
 ; ISEL: MOVri -128
 ; ASM-LABEL: constant_minus_128:
@@ -105,7 +105,7 @@ define i32 @constant_minus_128() {
 	ret i32 -128
 }
 
-define i32 @constant_minus_129() {
+define i32 @constant_minus_129() nounwind {
 ; ISEL-LABEL: name:            constant_minus_129
 ; ISEL: MOVri -1
 ; ISEL: EXTUB
@@ -119,7 +119,7 @@ define i32 @constant_minus_129() {
 	ret i32 -129
 }
 
-define i32 @constant_12345678() {
+define i32 @constant_12345678() nounwind {
 ; ISEL-LABEL: name:            constant_12345678
 ; ISEL: MOVri 18
 ; ISEL: SHLL8
@@ -135,7 +135,7 @@ define i32 @constant_12345678() {
 	ret i32 305419896
 }
 
-define i32 @constant_80000000() {
+define i32 @constant_80000000() nounwind {
 ; ISEL-LABEL: name:            constant_80000000
 ; ISEL: MOVri -128
 ; ISEL: EXTUB
@@ -144,7 +144,7 @@ define i32 @constant_80000000() {
 	ret i32 -2147483648
 }
 
-define i32 @constant_deadbeef() {
+define i32 @constant_deadbeef() nounwind {
 ; ISEL-LABEL: name:            constant_deadbeef
 ; ISEL: MOVri -34
 ; ISEL: EXTUB
@@ -164,7 +164,7 @@ define i32 @constant_deadbeef() {
 	ret i32 -559038737
 }
 
-define i32 @constant_ffffffff() {
+define i32 @constant_ffffffff() nounwind {
 ; ISEL-LABEL: name:            constant_ffffffff
 ; ISEL: MOVri -1
 ; ISEL-NOT: EXTUB
@@ -174,7 +174,7 @@ define i32 @constant_ffffffff() {
 	ret i32 -1
 }
 
-define i32 @constant_alu(i32 %value) {
+define i32 @constant_alu(i32 %value) nounwind {
 ; ISEL-LABEL: name:            constant_alu
 ; ISEL: MOVri 18
 ; ISEL: ORrr
@@ -185,7 +185,7 @@ define i32 @constant_alu(i32 %value) {
 	ret i32 %result
 }
 
-define void @constant_store(ptr %address) {
+define void @constant_store(ptr %address) nounwind {
 ; ISEL-LABEL: name:            constant_store
 ; ISEL: MOVri -34
 ; ISEL: MOVL_store_reg
@@ -195,7 +195,7 @@ define void @constant_store(ptr %address) {
 	ret void
 }
 
-define i32 @constant_compare(i32 %value) {
+define i32 @constant_compare(i32 %value) nounwind {
 ; ISEL-LABEL: name:            constant_compare
 ; ISEL: MOVri 18
 ; ISEL: CMP_EQ
@@ -209,11 +209,11 @@ equal:
 	ret i32 1
 }
 
-define internal i32 @consume_constant(i32 %value) noinline {
+define internal i32 @consume_constant(i32 %value) noinline nounwind {
 	ret i32 %value
 }
 
-define i32 @constant_direct_call() {
+define i32 @constant_direct_call() nounwind {
 ; ISEL-LABEL: name:            constant_direct_call
 ; ISEL: MOVri -34
 ; ISEL: $r4 = COPY
@@ -225,7 +225,7 @@ define i32 @constant_direct_call() {
 	ret i32 %result
 }
 
-define i32 @constant_indirect_call(ptr %callee) {
+define i32 @constant_indirect_call(ptr %callee) nounwind {
 ; ISEL-LABEL: name:            constant_indirect_call
 ; ISEL: MOVri -34
 ; ISEL: $r4 = COPY
@@ -237,7 +237,7 @@ define i32 @constant_indirect_call(ptr %callee) {
 	ret i32 %result
 }
 
-define i32 @constant_pointer_offset(ptr %base) {
+define i32 @constant_pointer_offset(ptr %base) nounwind {
 ; ISEL-LABEL: name:            constant_pointer_offset
 ; ISEL: MOVri 18
 ; ISEL: ADDrr

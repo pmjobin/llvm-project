@@ -25,11 +25,15 @@ body:             |
 # CHECK-LABEL: body:
 # CHECK: liveins: $r4, $r8
 # CHECK: $r15 = frame-setup ADDri $r15, -4
+# CHECK-NEXT: frame-setup CFI_INSTRUCTION def_cfa_offset 4
 # CHECK-NEXT: MOVL_store_reg killed $r8, $r15
+# CHECK-NEXT: frame-setup CFI_INSTRUCTION offset $r8, -4
 # CHECK-NEXT: $r8 = MOVrr $r4
 # CHECK-NEXT: $r0 = MOVrr killed $r8
 # CHECK-NEXT: $r8 = MOVL_load_reg $r15
+# CHECK-NEXT: frame-destroy CFI_INSTRUCTION restore $r8
 # CHECK-NEXT: $r15 = frame-destroy ADDri $r15, 4
+# CHECK-NEXT: frame-destroy CFI_INSTRUCTION def_cfa_offset 0
 # CHECK-NEXT: RTS implicit $pr, implicit $r0 {
 # CHECK-NEXT: NOP
 # CHECK-NEXT: }

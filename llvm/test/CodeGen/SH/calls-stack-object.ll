@@ -7,18 +7,18 @@
 ; RUN: llvm-readelf -h -s -r %t-le.o | FileCheck %s --check-prefixes=ELF,LE-ELF
 ; RUN: llvm-objdump -d --show-all-symbols %t-le.o | FileCheck %s --check-prefix=LE
 
-define internal i32 @return_fifth_object(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4) {
+define internal i32 @return_fifth_object(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4) nounwind {
 entry:
 	ret i32 %a4
 }
 
-define i32 @direct_fifth_object() {
+define i32 @direct_fifth_object() nounwind {
 entry:
 	%result = call i32 @return_fifth_object(i32 1, i32 2, i32 3, i32 4, i32 5)
 	ret i32 %result
 }
 
-define i32 @indirect_eight_object(ptr %fn) {
+define i32 @indirect_eight_object(ptr %fn) nounwind {
 entry:
 	%result = call i32 %fn(i32 1, i32 2, i32 3, i32 4, i32 5, i32 6, i32 7, i32 8)
 	ret i32 %result

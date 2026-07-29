@@ -12,6 +12,7 @@
 #include "SHMachineFunctionInfo.h"
 #include "SHSubtarget.h"
 #include "llvm/ADT/BitVector.h"
+#include "llvm/CodeGen/CFIInstBuilder.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
@@ -52,6 +53,55 @@ static int getPRSpillFrameIndex(const MachineFunction &MF) {
   report_fatal_error("SH non-leaf function is missing its PR save area");
 }
 
+static void emitCalleeSavedSpillCFI(MachineFunction &MF,
+                                    MachineBasicBlock &MBB) {
+  if (!MF.needsFrameMoves())
+    return;
+
+  const SHInstrInfo *TII = MF.getSubtarget<SHSubtarget>().getInstrInfo();
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
+  for (const CalleeSavedInfo &Info : MFI.getCalleeSavedInfo()) {
+    bool Found = false;
+    for (MachineInstr &MI : MBB) {
+      int FrameIndex;
+      if (TII->isStoreToStackSlot(MI, FrameIndex) != Info.getReg() ||
+          FrameIndex != Info.getFrameIdx())
+        continue;
+      CFIInstBuilder(MBB, std::next(MI.getIterator()), MachineInstr::FrameSetup)
+          .buildOffset(Info.getReg(), MFI.getObjectOffset(FrameIndex));
+      Found = true;
+      break;
+    }
+    if (!Found)
+      report_fatal_error("SH callee-saved spill has no frame-setup store");
+  }
+}
+
+static void emitCalleeSavedRestoreCFI(MachineFunction &MF,
+                                      MachineBasicBlock &MBB) {
+  if (!MF.needsFrameMoves())
+    return;
+
+  const SHInstrInfo *TII = MF.getSubtarget<SHSubtarget>().getInstrInfo();
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
+  for (const CalleeSavedInfo &Info : MFI.getCalleeSavedInfo()) {
+    bool Found = false;
+    for (MachineInstr &MI : MBB) {
+      int FrameIndex;
+      if (TII->isLoadFromStackSlot(MI, FrameIndex) != Info.getReg() ||
+          FrameIndex != Info.getFrameIdx())
+        continue;
+      CFIInstBuilder(MBB, std::next(MI.getIterator()),
+                     MachineInstr::FrameDestroy)
+          .buildRestore(Info.getReg());
+      Found = true;
+      break;
+    }
+    if (!Found)
+      report_fatal_error("SH callee-saved restore has no frame-destroy load");
+  }
+}
+
 void SHFrameLowering::emitPrologue(MachineFunction &MF,
                                    MachineBasicBlock &MBB) const {
   uint64_t StackSize = requireSupportedSHFrame(MF);
@@ -60,6 +110,7 @@ void SHFrameLowering::emitPrologue(MachineFunction &MF,
 
   const SHInstrInfo *TII = MF.getSubtarget<SHSubtarget>().getInstrInfo();
   MachineBasicBlock::iterator Insert = MBB.begin();
+  uint64_t CFAOffset = 0;
   if (MF.getFrameInfo().hasCalls()) {
     int FI = getPRSpillFrameIndex(MF);
     int64_t PROffset = MF.getFrameInfo().getObjectOffset(FI);
@@ -79,6 +130,10 @@ void SHFrameLowering::emitPrologue(MachineFunction &MF,
               .addImm(-static_cast<int64_t>(BeforePR))
               .setMIFlag(MachineInstr::FrameSetup);
       Insert = std::next(Adjust->getIterator());
+      CFAOffset += BeforePR;
+      if (MF.needsFrameMoves())
+        CFIInstBuilder(MBB, Insert, MachineInstr::FrameSetup)
+            .buildDefCFAOffset(CFAOffset);
     }
     MachineMemOperand *MMO =
         MF.getMachineMemOperand(MachinePointerInfo::getFixedStack(MF, FI),
@@ -89,13 +144,27 @@ void SHFrameLowering::emitPrologue(MachineFunction &MF,
             .addMemOperand(MMO)
             .setMIFlag(MachineInstr::FrameSetup);
     Insert = std::next(Save->getIterator());
+    CFAOffset += 4;
+    if (MF.needsFrameMoves()) {
+      CFIInstBuilder CFIBuilder(MBB, Insert, MachineInstr::FrameSetup);
+      CFIBuilder.buildDefCFAOffset(CFAOffset);
+      CFIBuilder.buildOffset(SH::PR, PROffset);
+    }
     StackSize -= static_cast<uint64_t>(-PROffset);
   }
-  if (StackSize != 0)
-    BuildMI(MBB, Insert, DebugLoc(), TII->get(SH::ADDri), SH::R15)
-        .addReg(SH::R15)
-        .addImm(-static_cast<int64_t>(StackSize))
-        .setMIFlag(MachineInstr::FrameSetup);
+  if (StackSize != 0) {
+    MachineInstrBuilder Adjust =
+        BuildMI(MBB, Insert, DebugLoc(), TII->get(SH::ADDri), SH::R15)
+            .addReg(SH::R15)
+            .addImm(-static_cast<int64_t>(StackSize))
+            .setMIFlag(MachineInstr::FrameSetup);
+    Insert = std::next(Adjust->getIterator());
+    CFAOffset += StackSize;
+    if (MF.needsFrameMoves())
+      CFIInstBuilder(MBB, Insert, MachineInstr::FrameSetup)
+          .buildDefCFAOffset(CFAOffset);
+  }
+  emitCalleeSavedSpillCFI(MF, MBB);
 }
 
 void SHFrameLowering::emitEpilogue(MachineFunction &MF,
@@ -106,6 +175,7 @@ void SHFrameLowering::emitEpilogue(MachineFunction &MF,
 
   MachineBasicBlock::iterator Insert = MBB.getFirstTerminator();
   const SHInstrInfo *TII = MF.getSubtarget<SHSubtarget>().getInstrInfo();
+  emitCalleeSavedRestoreCFI(MF, MBB);
   uint64_t BeforePR = 0;
   if (MF.getFrameInfo().hasCalls()) {
     int FI = getPRSpillFrameIndex(MF);
@@ -121,11 +191,15 @@ void SHFrameLowering::emitEpilogue(MachineFunction &MF,
     BeforePR = static_cast<uint64_t>(-PROffset) - 4;
     StackSize -= static_cast<uint64_t>(-PROffset);
   }
-  if (StackSize != 0)
+  if (StackSize != 0) {
     BuildMI(MBB, Insert, DebugLoc(), TII->get(SH::ADDri), SH::R15)
         .addReg(SH::R15)
         .addImm(StackSize)
         .setMIFlag(MachineInstr::FrameDestroy);
+    if (MF.needsFrameMoves())
+      CFIInstBuilder(MBB, Insert, MachineInstr::FrameDestroy)
+          .buildDefCFAOffset(MF.getFrameInfo().hasCalls() ? BeforePR + 4 : 0);
+  }
   if (MF.getFrameInfo().hasCalls()) {
     int FI = getPRSpillFrameIndex(MF);
     MachineMemOperand *MMO =
@@ -135,11 +209,20 @@ void SHFrameLowering::emitEpilogue(MachineFunction &MF,
         .addReg(SH::R15)
         .addMemOperand(MMO)
         .setMIFlag(MachineInstr::FrameDestroy);
-    if (BeforePR != 0)
+    if (MF.needsFrameMoves()) {
+      CFIInstBuilder CFIBuilder(MBB, Insert, MachineInstr::FrameDestroy);
+      CFIBuilder.buildRestore(SH::PR);
+      CFIBuilder.buildDefCFAOffset(BeforePR);
+    }
+    if (BeforePR != 0) {
       BuildMI(MBB, Insert, DebugLoc(), TII->get(SH::ADDri), SH::R15)
           .addReg(SH::R15)
           .addImm(BeforePR)
           .setMIFlag(MachineInstr::FrameDestroy);
+      if (MF.needsFrameMoves())
+        CFIInstBuilder(MBB, Insert, MachineInstr::FrameDestroy)
+            .buildDefCFAOffset(0);
+    }
   }
 }
 
@@ -198,8 +281,24 @@ MachineBasicBlock::iterator SHFrameLowering::eliminateCallFramePseudoInstr(
         .addReg(SH::R15)
         .addImm(Immediate)
         .setMIFlags(I->getFlags());
+    if (MF.needsFrameMoves()) {
+      int64_t CFAAdjustment =
+          I->getOpcode() == SH::ADJCALLSTACKDOWN ? Amount : -Amount;
+      CFIInstBuilder(MBB, I, MachineInstr::NoFlags)
+          .buildAdjustCFAOffset(CFAAdjustment);
+    }
   }
   return MBB.erase(I);
+}
+
+void SHFrameLowering::resetCFIToInitialState(MachineBasicBlock &MBB) const {
+  MachineFunction &MF = *MBB.getParent();
+  CFIInstBuilder CFIBuilder(MBB, MBB.begin(), MachineInstr::NoFlags);
+  CFIBuilder.buildDefCFA(SH::R15, 0);
+  if (MF.getFrameInfo().hasCalls())
+    CFIBuilder.buildSameValue(SH::PR);
+  for (const CalleeSavedInfo &Info : MF.getFrameInfo().getCalleeSavedInfo())
+    CFIBuilder.buildSameValue(Info.getReg());
 }
 
 bool SHFrameLowering::hasFPImpl(const MachineFunction &MF) const {

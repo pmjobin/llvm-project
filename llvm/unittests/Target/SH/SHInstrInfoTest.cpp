@@ -15,8 +15,11 @@
 #include "llvm/CodeGen/MachineInstrBundle.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/IR/Module.h"
+#include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCDwarf.h"
 #include "llvm/MC/MCInstBuilder.h"
 #include "llvm/MC/MCInstrAnalysis.h"
+#include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/TargetSelect.h"
@@ -76,6 +79,46 @@ protected:
   }
 };
 
+TEST_F(SHInstrInfoTest, DwarfRegisterMappingsAndInitialFrameState) {
+  const MCRegisterInfo &MRI = TM->getMCRegisterInfo();
+  const std::pair<MCRegister, int64_t> MappedRegisters[] = {
+      {SH::R0, 0},    {SH::R1, 1},    {SH::R2, 2},   {SH::R3, 3},
+      {SH::R4, 4},    {SH::R5, 5},    {SH::R6, 6},   {SH::R7, 7},
+      {SH::R8, 8},    {SH::R9, 9},    {SH::R10, 10}, {SH::R11, 11},
+      {SH::R12, 12},  {SH::R13, 13},  {SH::R14, 14}, {SH::R15, 15},
+      {SH::PC, 16},   {SH::PR, 17},   {SH::GBR, 18}, {SH::VBR, 19},
+      {SH::MACH, 20}, {SH::MACL, 21}, {SH::SR, 22},
+  };
+  for (auto [Reg, DwarfReg] : MappedRegisters) {
+    EXPECT_EQ(DwarfReg, MRI.getDwarfRegNum(Reg, false));
+    EXPECT_EQ(DwarfReg, MRI.getDwarfRegNum(Reg, true));
+    EXPECT_EQ(Reg, MRI.getLLVMRegNum(DwarfReg, false));
+    EXPECT_EQ(Reg, MRI.getLLVMRegNum(DwarfReg, true));
+  }
+
+  for (MCRegister Reg : {SH::TBit, SH::MBit, SH::QBit}) {
+    EXPECT_EQ(-1, MRI.getDwarfRegNum(Reg, false));
+    EXPECT_EQ(-1, MRI.getDwarfRegNum(Reg, true));
+  }
+  EXPECT_EQ(std::nullopt, MRI.getLLVMRegNum(23, false));
+  EXPECT_EQ(std::nullopt, MRI.getLLVMRegNum(23, true));
+  EXPECT_EQ(std::nullopt, MRI.getLLVMRegNum(999, false));
+  EXPECT_EQ(std::nullopt, MRI.getLLVMRegNum(999, true));
+
+  EXPECT_EQ(SH::PR, MRI.getRARegister());
+  EXPECT_EQ(
+      SH::R15,
+      MF->getSubtarget<SHSubtarget>().getRegisterInfo()->getFrameRegister(*MF));
+
+  const MCAsmInfo &MAI = TM->getMCAsmInfo();
+  EXPECT_EQ(ExceptionHandling::DwarfCFI, MAI.getExceptionHandlingType());
+  ASSERT_EQ(1u, MAI.getInitialFrameState().size());
+  const MCCFIInstruction &InitialCFA = MAI.getInitialFrameState().front();
+  EXPECT_EQ(MCCFIInstruction::OpDefCfa, InitialCFA.getOperation());
+  EXPECT_EQ(15u, InitialCFA.getRegister());
+  EXPECT_EQ(0, InitialCFA.getOffset());
+}
+
 TEST_F(SHInstrInfoTest, GetInstSizeInBytesAccountsForDelaySlots) {
   MachineBasicBlock *Standalone = createBlock();
   MachineBasicBlock *Target = createBlock();
@@ -105,9 +148,18 @@ TEST_F(SHInstrInfoTest, GetInstSizeInBytesAccountsForDelaySlots) {
       BuildMI(Standalone, DebugLoc(), TII->get(SH::ADJCALLSTACKUP))
           .addImm(4)
           .addImm(0);
+  unsigned CFIIndex =
+      MF->addFrameInst(MCCFIInstruction::cfiDefCfaOffset(nullptr, 4));
+  MachineInstr *CFI =
+      BuildMI(Standalone, DebugLoc(), TII->get(TargetOpcode::CFI_INSTRUCTION))
+          .addCFIIndex(CFIIndex);
 
   EXPECT_EQ(2u, TII->getInstSizeInBytes(*Nop));
   EXPECT_EQ(2u, TII->getInstSizeInBytes(*Add));
+  EXPECT_EQ(0u, TII->getInstSizeInBytes(*CFI));
+  EXPECT_FALSE(CFI->getDebugLoc());
+  EXPECT_FALSE(CFI->isBundledWithPred());
+  EXPECT_FALSE(CFI->isBundledWithSucc());
   EXPECT_EQ(0u, TII->getInstSizeInBytes(*CallFrameDown));
   EXPECT_EQ(0u, TII->getInstSizeInBytes(*CallFrameUp));
   EXPECT_EQ(2u, TII->getInstSizeInBytes(*Bt));

@@ -3,7 +3,7 @@
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -asm-verbose=false < %s | FileCheck %s
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O2 -verify-machineinstrs -asm-verbose=false < %s | FileCheck %s
 
-define i32 @call_pointer(ptr %fn, i32 %value) {
+define i32 @call_pointer(ptr %fn, i32 %value) nounwind {
 ; CHECK-LABEL: call_pointer:
 ; CHECK: sts.l	pr,@-r15
 ; CHECK: mov	r4,[[CALLEE:r[0-9]+]]
@@ -17,7 +17,7 @@ define i32 @call_pointer(ptr %fn, i32 %value) {
 	ret i32 %result
 }
 
-define i32 @call_pointer_four(ptr %fn, i32 %a, i32 %b, i32 %c) {
+define i32 @call_pointer_four(ptr %fn, i32 %a, i32 %b, i32 %c) nounwind {
 ; CHECK-LABEL: call_pointer_four:
 ; CHECK: sts.l	pr,@-r15
 ; CHECK: mov	r4,[[FOUR_CALLEE:r[0-9]+]]
@@ -28,7 +28,7 @@ define i32 @call_pointer_four(ptr %fn, i32 %a, i32 %b, i32 %c) {
 	ret i32 %result
 }
 
-define ptr @call_pointer_result(ptr %fn, ptr %value) {
+define ptr @call_pointer_result(ptr %fn, ptr %value) nounwind {
 ; CHECK-LABEL: call_pointer_result:
 ; CHECK: sts.l	pr,@-r15
 ; CHECK: mov	r4,[[PTR_CALLEE:r[0-9]+]]
@@ -39,7 +39,7 @@ define ptr @call_pointer_result(ptr %fn, ptr %value) {
 	ret ptr %result
 }
 
-define void @call_pointer_void(ptr %fn) {
+define void @call_pointer_void(ptr %fn) nounwind {
 ; CHECK-LABEL: call_pointer_void:
 ; CHECK: sts.l	pr,@-r15
 ; CHECK: jsr	@r4

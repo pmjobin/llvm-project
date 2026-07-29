@@ -7,31 +7,31 @@
 ; RUN: llvm-objdump -d %t.be.o | FileCheck %s --check-prefixes=DISASM,DISASM-BE
 ; RUN: llvm-objdump -d %t.le.o | FileCheck %s --check-prefixes=DISASM,DISASM-LE
 
-define i32 @constant_deadbeef() minsize {
+define i32 @constant_deadbeef() minsize nounwind {
 	ret i32 -559038737
 }
 
-define i32 @subtract(i32 %a, i32 %b) minsize {
+define i32 @subtract(i32 %a, i32 %b) minsize nounwind {
 	%result = sub i32 %a, %b
 	ret i32 %result
 }
 
-define i32 @negate(i32 %value) minsize {
+define i32 @negate(i32 %value) minsize nounwind {
 	%result = sub i32 0, %value
 	ret i32 %result
 }
 
-define i32 @complement(i32 %value) minsize {
+define i32 @complement(i32 %value) minsize nounwind {
 	%result = xor i32 %value, -1
 	ret i32 %result
 }
 
-define i32 @left_shift_24(i32 %value) minsize {
+define i32 @left_shift_24(i32 %value) minsize nounwind {
 	%result = shl i32 %value, 24
 	ret i32 %result
 }
 
-define i32 @variable_logical_right(i32 %value, i32 %count) minsize {
+define i32 @variable_logical_right(i32 %value, i32 %count) minsize nounwind {
 	%result = lshr i32 %value, %count
 	ret i32 %result
 }

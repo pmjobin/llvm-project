@@ -7,22 +7,22 @@
 ; RUN: llvm-objdump -d %t.be.o | FileCheck %s --check-prefixes=DISASM,DISASM-BE
 ; RUN: llvm-objdump -d %t.le.o | FileCheck %s --check-prefixes=DISASM,DISASM-LE
 
-define i64 @object_add_i64(i64 %a, i64 %b) {
+define i64 @object_add_i64(i64 %a, i64 %b) nounwind {
 	%result = add i64 %a, %b
 	ret i64 %result
 }
 
-define i64 @object_load_i64(ptr %address) {
+define i64 @object_load_i64(ptr %address) nounwind {
 	%result = load i64, ptr %address, align 4
 	ret i64 %result
 }
 
-define void @object_store_i64(ptr %address, i64 %value) {
+define void @object_store_i64(ptr %address, i64 %value) nounwind {
 	store i64 %value, ptr %address, align 4
 	ret void
 }
 
-define i64 @object_lshr_i64(i64 %value, i64 %count) {
+define i64 @object_lshr_i64(i64 %value, i64 %count) nounwind {
 	%result = lshr i64 %value, %count
 	ret i64 %result
 }

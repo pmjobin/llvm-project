@@ -441,6 +441,19 @@ static uint64_t resolveHexagon(uint64_t Type, uint64_t Offset, uint64_t S,
   llvm_unreachable("Invalid relocation type");
 }
 
+static bool supportsSH(uint64_t Type) {
+  return Type == ELF::R_SH_DIR32 || Type == ELF::R_SH_REL32;
+}
+
+static uint64_t resolveSH(uint64_t Type, uint64_t Offset, uint64_t S,
+                          uint64_t LocData, int64_t /*Addend*/) {
+  if (Type == ELF::R_SH_DIR32)
+    return (S + LocData) & 0xFFFFFFFF;
+  if (Type == ELF::R_SH_REL32)
+    return (S + LocData - Offset) & 0xFFFFFFFF;
+  llvm_unreachable("Invalid relocation type");
+}
+
 static bool supportsRISCV(uint64_t Type) {
   switch (Type) {
   case ELF::R_RISCV_NONE:
@@ -872,6 +885,9 @@ getRelocationResolver(const ObjectFile &Obj) {
       return {supportsMips32, resolveMips32};
     case Triple::msp430:
       return {supportsMSP430, resolveMSP430};
+    case Triple::sh:
+    case Triple::shle:
+      return {supportsSH, resolveSH};
     case Triple::sparc:
       return {supportsSparc32, resolveSparc32};
     case Triple::hexagon:
@@ -922,13 +938,15 @@ uint64_t resolveRelocation(RelocationResolver Resolver, const RelocationRef &R,
       if (GetRelSectionType() == ELF::SHT_RELA ||
           GetRelSectionType() == ELF::SHT_CREL) {
         Addend = getELFAddend(R);
-        // LoongArch and RISCV relocations use both LocData and Addend.
+        // LoongArch and RISCV use both LocData and Addend. SH RELA
+        // relocations keep their addend in LocData.
         if (Obj->getArch() != Triple::loongarch32 &&
             Obj->getArch() != Triple::loongarch64 &&
             Obj->getArch() != Triple::riscv32 &&
             Obj->getArch() != Triple::riscv64 &&
             Obj->getArch() != Triple::riscv32be &&
-            Obj->getArch() != Triple::riscv64be)
+            Obj->getArch() != Triple::riscv64be &&
+            Obj->getArch() != Triple::sh && Obj->getArch() != Triple::shle)
           LocData = 0;
       }
     }

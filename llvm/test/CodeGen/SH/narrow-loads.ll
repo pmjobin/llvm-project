@@ -3,7 +3,7 @@
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -filetype=asm -asm-verbose=false < %s | FileCheck %s
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O2 -verify-machineinstrs -filetype=asm -asm-verbose=false < %s | FileCheck %s
 
-define i32 @load_s8(ptr %p) {
+define i32 @load_s8(ptr %p) nounwind {
 ; CHECK-LABEL: load_s8:
 ; CHECK-NEXT: mov.b	@r4,r0
 ; CHECK-NEXT: rts
@@ -13,7 +13,7 @@ define i32 @load_s8(ptr %p) {
 	ret i32 %extended
 }
 
-define i32 @load_u8(ptr %p) {
+define i32 @load_u8(ptr %p) nounwind {
 ; CHECK-LABEL: load_u8:
 ; CHECK-NEXT: mov.b	@r4,r0
 ; CHECK-NEXT: extu.b	r0,r0
@@ -24,7 +24,7 @@ define i32 @load_u8(ptr %p) {
 	ret i32 %extended
 }
 
-define i32 @load_s16(ptr %p) {
+define i32 @load_s16(ptr %p) nounwind {
 ; CHECK-LABEL: load_s16:
 ; CHECK-NEXT: mov.w	@r4,r0
 ; CHECK-NEXT: rts
@@ -34,7 +34,7 @@ define i32 @load_s16(ptr %p) {
 	ret i32 %extended
 }
 
-define i32 @load_u16(ptr %p) {
+define i32 @load_u16(ptr %p) nounwind {
 ; CHECK-LABEL: load_u16:
 ; CHECK-NEXT: mov.w	@r4,r0
 ; CHECK-NEXT: extu.w	r0,r0
@@ -45,7 +45,7 @@ define i32 @load_u16(ptr %p) {
 	ret i32 %extended
 }
 
-define i32 @load_s8_offset(ptr %p) {
+define i32 @load_s8_offset(ptr %p) nounwind {
 ; CHECK-LABEL: load_s8_offset:
 ; CHECK-NEXT: add	#3,r4
 ; CHECK-NEXT: mov.b	@r4,r0
@@ -57,7 +57,7 @@ define i32 @load_s8_offset(ptr %p) {
 	ret i32 %extended
 }
 
-define i32 @load_u16_offset(ptr %p) {
+define i32 @load_u16_offset(ptr %p) nounwind {
 ; CHECK-LABEL: load_u16_offset:
 ; CHECK-NEXT: add	#6,r4
 ; CHECK-NEXT: mov.w	@r4,r0

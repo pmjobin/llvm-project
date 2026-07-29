@@ -5,7 +5,7 @@
 
 %fields = type { i8, i8, i16, i32 }
 
-define i32 @stack_struct(i32 %byte0, i32 %byte1, i32 %word, i32 %long) {
+define i32 @stack_struct(i32 %byte0, i32 %byte1, i32 %word, i32 %long) nounwind {
 ; O0-LABEL: stack_struct:
 ; O0: add	#-{{[0-9]+}},r15
 ; O0: mov.b
@@ -56,7 +56,7 @@ define i32 @stack_struct(i32 %byte0, i32 %byte1, i32 %word, i32 %long) {
 	ret i32 %result
 }
 
-define i32 @stack_arrays(i32 %byte, i32 %word) {
+define i32 @stack_arrays(i32 %byte, i32 %word) nounwind {
 ; O0-LABEL: stack_arrays:
 ; O0: add	#-{{[0-9]+}},r15
 ; O0: mov.b

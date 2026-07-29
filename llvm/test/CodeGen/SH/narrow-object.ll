@@ -7,25 +7,25 @@
 ; RUN: llvm-objdump -d %t.be.o | FileCheck %s --check-prefixes=DISASM,DISASM-BE
 ; RUN: llvm-objdump -d %t.le.o | FileCheck %s --check-prefixes=DISASM,DISASM-LE
 
-define i32 @load_s8(ptr %p) minsize {
+define i32 @load_s8(ptr %p) minsize nounwind {
 	%value = load i8, ptr %p, align 1
 	%result = sext i8 %value to i32
 	ret i32 %result
 }
 
-define i32 @load_u16(ptr %p) minsize {
+define i32 @load_u16(ptr %p) minsize nounwind {
 	%value = load i16, ptr %p, align 2
 	%result = zext i16 %value to i32
 	ret i32 %result
 }
 
-define void @store_i8(ptr %p, i32 %value) minsize {
+define void @store_i8(ptr %p, i32 %value) minsize nounwind {
 	%narrow = trunc i32 %value to i8
 	store i8 %narrow, ptr %p, align 1
 	ret void
 }
 
-define void @store_i16(ptr %p, i32 %value) minsize {
+define void @store_i16(ptr %p, i32 %value) minsize nounwind {
 	%narrow = trunc i32 %value to i16
 	store i16 %narrow, ptr %p, align 2
 	ret void

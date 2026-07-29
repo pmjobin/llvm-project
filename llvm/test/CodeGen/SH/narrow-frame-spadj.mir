@@ -83,15 +83,19 @@ body:             |
 # CHECK-LABEL: body:
 # CHECK-NOT: ADJCALLSTACK
 # CHECK: $r15 = ADDri $r15, -12
+# CHECK-NEXT: CFI_INSTRUCTION adjust_cfa_offset 12
 # CHECK-NEXT: dead $r1 = MOVB_load_frame $r15, 15, implicit-def dead $r0
 # CHECK-NEXT: $r15 = ADDri $r15, 12
+# CHECK-NEXT: CFI_INSTRUCTION adjust_cfa_offset -12
 
 # CHECK-LABEL: name:            word_thirty
 # CHECK-LABEL: body:
 # CHECK-NOT: ADJCALLSTACK
 # CHECK: $r15 = ADDri $r15, -12
+# CHECK-NEXT: CFI_INSTRUCTION adjust_cfa_offset 12
 # CHECK-NEXT: dead $r1 = MOVW_load_frame $r15, 30, implicit-def dead $r0
 # CHECK-NEXT: $r15 = ADDri $r15, 12
+# CHECK-NEXT: CFI_INSTRUCTION adjust_cfa_offset -12
 
 # CHECK-LABEL: name:            byte_zero
 # CHECK-LABEL: body:

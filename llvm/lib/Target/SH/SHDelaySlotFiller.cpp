@@ -32,7 +32,7 @@ public:
         MachineBasicBlock::instr_iterator Slot = std::next(I);
         if (Slot == MBB.instr_end() || Slot->getOpcode() != SH::NOP ||
             Slot->isBundledWithPred()) {
-          BuildMI(MBB, Slot, I->getDebugLoc(), TII->get(SH::NOP));
+          BuildMI(MBB, Slot, DebugLoc(), TII->get(SH::NOP));
           Slot = std::next(I);
         }
         MIBundleBuilder(MBB, I, std::next(Slot));

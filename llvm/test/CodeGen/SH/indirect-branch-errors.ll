@@ -1,12 +1,16 @@
 ; RUN: split-file %s %t
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=static %t/callbr.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=CALLBR
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=static %t/invoke.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=EH
+; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=static %t/personality.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=PERSONALITY
+; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=static %t/sjlj.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=SJLJ
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=static %t/blockaddress-select.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=SELECT
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=static %t/blockaddress-arithmetic.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ARITHMETIC
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=static %t/nonzero-address-space.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ADDRESS-SPACE
 
-; CALLBR: LLVM ERROR: SH callbr is not supported
-; EH: LLVM ERROR: SH exception-handling calls are not supported
+; CALLBR: LLVM ERROR: SH language exception handling is not supported
+; EH: LLVM ERROR: SH language exception handling is not supported
+; PERSONALITY: LLVM ERROR: SH language exception handling is not supported: personality
+; SJLJ: LLVM ERROR: SH language exception handling is not supported: EH intrinsic
 ; SELECT: LLVM ERROR: SH select is not supported
 ; ARITHMETIC: LLVM ERROR: SH block-address arithmetic is not supported
 ; ADDRESS-SPACE: LLVM ERROR: SH functions only support void, i32, i64, and pointer return values
@@ -31,6 +35,21 @@ normal:
 landing:
 	%exception = landingpad { ptr, i32 } cleanup
 	ret void
+}
+
+;--- personality.ll
+declare i32 @__gxx_personality_v0(...)
+
+define void @unsupported_personality() personality ptr @__gxx_personality_v0 {
+	ret void
+}
+
+;--- sjlj.ll
+declare i32 @llvm.eh.sjlj.setjmp(ptr)
+
+define i32 @unsupported_sjlj(ptr %context) {
+	%result = call i32 @llvm.eh.sjlj.setjmp(ptr %context)
+	ret i32 %result
 }
 
 ;--- blockaddress-select.ll

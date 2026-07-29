@@ -2,7 +2,7 @@
 ; RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -O2 -verify-machineinstrs -stop-after=sh-delay-slot-filler < %s | FileCheck %s --check-prefix=FINAL
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O2 -verify-machineinstrs -filetype=asm -asm-verbose=false < %s | FileCheck %s --check-prefix=ASM
 
-define i32 @force_gpr_spill(ptr %p) {
+define i32 @force_gpr_spill(ptr %p) nounwind {
 	%p0 = getelementptr i8, ptr %p, i32 0
 	%p1 = getelementptr i8, ptr %p, i32 4
 	%p2 = getelementptr i8, ptr %p, i32 8

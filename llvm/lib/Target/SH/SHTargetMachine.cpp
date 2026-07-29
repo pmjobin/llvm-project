@@ -10,6 +10,7 @@
 #include "SH.h"
 #include "SHMachineFunctionInfo.h"
 #include "TargetInfo/SHTargetInfo.h"
+#include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
@@ -18,6 +19,18 @@
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace llvm;
+
+namespace {
+
+class SHTargetObjectFile : public TargetLoweringObjectFileELF {
+public:
+  void Initialize(MCContext &Ctx, const TargetMachine &TM) override {
+    TargetLoweringObjectFileELF::Initialize(Ctx, TM);
+    FDECFIEncoding = dwarf::DW_EH_PE_absptr;
+  }
+};
+
+} // namespace
 
 static StringRef getSHCPU(StringRef CPU) { return CPU.empty() ? "sh2" : CPU; }
 
@@ -57,12 +70,16 @@ SHTargetMachine::SHTargetMachine(const Target &T, const Triple &TT,
     : CodeGenTargetMachineImpl(T, TT.computeDataLayout(), TT, getSHCPU(CPU), FS,
                                Options, getSHRelocModel(RM), getSHCodeModel(CM),
                                OL),
-      TLOF(std::make_unique<TargetLoweringObjectFileELF>()),
+      TLOF(std::make_unique<SHTargetObjectFile>()),
       Subtarget(TT, getSHCPU(CPU), FS, *this) {
   if (JIT)
     reportFatalUsageError("SH JIT code generation is not supported");
   if (!TT.isOSBinFormatELF())
     reportFatalUsageError("SH only supports the ELF object format");
+  if (Options.ExceptionModel != ExceptionHandling::None &&
+      Options.ExceptionModel != ExceptionHandling::DwarfCFI)
+    reportFatalUsageError("SH only supports DWARF CFI exception handling");
+  setCFIFixup(true);
   initAsmInfo();
 }
 

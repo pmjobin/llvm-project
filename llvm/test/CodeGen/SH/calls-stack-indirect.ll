@@ -3,7 +3,7 @@
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -asm-verbose=false < %s | FileCheck %s
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O2 -verify-machineinstrs -asm-verbose=false < %s | FileCheck %s
 
-define i32 @call_ptr8(ptr %fn, i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a5, i32 %a6, i32 %a7) {
+define i32 @call_ptr8(ptr %fn, i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a5, i32 %a6, i32 %a7) nounwind {
 ; CHECK-LABEL: call_ptr8:
 ; CHECK-NEXT: sts.l	pr,@-r15
 ; CHECK: mov	r4,[[CALLEE:r(0|1|2|3|8|9|10|11|12|13|14)]]
@@ -22,7 +22,7 @@ define i32 @call_ptr8(ptr %fn, i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 
 	ret i32 %result
 }
 
-define ptr @callee_pointer_is_fifth_stack_value(ptr %fn, i32 %a0, i32 %a1, i32 %a2, i32 %a3, ptr %a5, i32 %a6, i32 %a7) {
+define ptr @callee_pointer_is_fifth_stack_value(ptr %fn, i32 %a0, i32 %a1, i32 %a2, i32 %a3, ptr %a5, i32 %a6, i32 %a7) nounwind {
 ; CHECK-LABEL: callee_pointer_is_fifth_stack_value:
 ; CHECK-NEXT: sts.l	pr,@-r15
 ; CHECK: mov	r4,[[PTR_CALLEE:r(0|1|2|3|8|9|10|11|12|13|14)]]

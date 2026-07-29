@@ -7,17 +7,17 @@
 ; RUN: llvm-objdump -d %t.be.o | FileCheck %s --check-prefixes=DISASM,DISASM-BE
 ; RUN: llvm-objdump -d %t.le.o | FileCheck %s --check-prefixes=DISASM,DISASM-LE
 
-define i32 @object_multiply(i32 %a, i32 %b) {
+define i32 @object_multiply(i32 %a, i32 %b) nounwind {
 	%result = mul i32 %a, %b
 	ret i32 %result
 }
 
-define i32 @object_udiv(i32 %a, i32 %b) {
+define i32 @object_udiv(i32 %a, i32 %b) nounwind {
 	%result = udiv i32 %a, %b
 	ret i32 %result
 }
 
-define i32 @object_srem(i32 %a, i32 %b) {
+define i32 @object_srem(i32 %a, i32 %b) nounwind {
 	%result = srem i32 %a, %b
 	ret i32 %result
 }

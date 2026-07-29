@@ -43,7 +43,7 @@ declare i32 @nested8(i32, i32, i32, i32, i32, i32, i32, i32)
 ; ASM-NEXT: add	#12,r15
 ; ASM-NEXT: rts
 ; ASM-NEXT: nop
-define i32 @nonleaf_save12(i32 %fixed, ...) {
+define i32 @nonleaf_save12(i32 %fixed, ...) nounwind {
 	%ap = alloca ptr, align 4
 	call void @llvm.va_start.p0(ptr %ap)
 	%first = va_arg ptr %ap, i32
@@ -84,7 +84,7 @@ define i32 @nonleaf_save12(i32 %fixed, ...) {
 ; ASM-NEXT: add	#8,r15
 ; ASM-NEXT: rts
 ; ASM-NEXT: nop
-define i32 @nonleaf_save8(i32 %a, i32 %b, ...) {
+define i32 @nonleaf_save8(i32 %a, i32 %b, ...) nounwind {
 	%ap = alloca ptr, align 4
 	call void @llvm.va_start.p0(ptr %ap)
 	%first = va_arg ptr %ap, i32
@@ -124,7 +124,7 @@ define i32 @nonleaf_save8(i32 %a, i32 %b, ...) {
 ; ASM-NEXT: add	#4,r15
 ; ASM-NEXT: rts
 ; ASM-NEXT: nop
-define i32 @nonleaf_save4(i32 %a, i32 %b, i32 %c, ...) {
+define i32 @nonleaf_save4(i32 %a, i32 %b, i32 %c, ...) nounwind {
 	%ap = alloca ptr, align 4
 	call void @llvm.va_start.p0(ptr %ap)
 	%first = va_arg ptr %ap, i32
@@ -160,7 +160,7 @@ define i32 @nonleaf_save4(i32 %a, i32 %b, i32 %c, ...) {
 ; ASM-NEXT: lds.l	@r15+,pr
 ; ASM-NEXT: rts
 ; ASM-NEXT: nop
-define i32 @nonleaf_save0(i32 %a, i32 %b, i32 %c, i32 %d, ...) {
+define i32 @nonleaf_save0(i32 %a, i32 %b, i32 %c, i32 %d, ...) nounwind {
 	%ap = alloca ptr, align 4
 	call void @llvm.va_start.p0(ptr %ap)
 	%first = va_arg ptr %ap, i32
@@ -190,7 +190,7 @@ define i32 @nonleaf_save0(i32 %a, i32 %b, i32 %c, i32 %d, ...) {
 ; ASM-NOT: lds.l
 ; ASM: add	#16,r15
 ; ASM-NEXT: rts
-define i32 @leaf_save12(i32 %fixed, ...) {
+define i32 @leaf_save12(i32 %fixed, ...) nounwind {
 	%ap = alloca ptr, align 4
 	call void @llvm.va_start.p0(ptr %ap)
 	%value = va_arg ptr %ap, i32
@@ -209,7 +209,7 @@ define i32 @leaf_save12(i32 %fixed, ...) {
 ; ASM-NOT: sts.l
 ; ASM-NOT: lds.l
 ; ASM: rts
-define i32 @leaf_save0(i32 %a, i32 %b, i32 %c, i32 %d, ...) {
+define i32 @leaf_save0(i32 %a, i32 %b, i32 %c, i32 %d, ...) nounwind {
 	%ap = alloca ptr, align 4
 	call void @llvm.va_start.p0(ptr %ap)
 	%value = va_arg ptr %ap, i32
@@ -263,7 +263,7 @@ define i32 @leaf_save0(i32 %a, i32 %b, i32 %c, i32 %d, ...) {
 ; ASM-NEXT: lds.l	@r15+,pr
 ; ASM-NEXT: add	#12,r15
 ; ASM-NEXT: rts
-define i32 @nonleaf_pressure(ptr %base, ...) {
+define i32 @nonleaf_pressure(ptr %base, ...) nounwind {
 	%slot = alloca i32, align 4
 	%ap = alloca ptr, align 4
 	store volatile i32 99, ptr %slot, align 4
@@ -326,7 +326,7 @@ define i32 @nonleaf_pressure(ptr %base, ...) {
 ; ASM-NEXT: lds.l	@r15+,pr
 ; ASM-NEXT: add	#12,r15
 ; ASM-NEXT: rts
-define i32 @nonleaf_frame_limit(i32 %fixed, ...) {
+define i32 @nonleaf_frame_limit(i32 %fixed, ...) nounwind {
 	%locals = alloca [10 x i32], align 4
 	%last = getelementptr [10 x i32], ptr %locals, i32 0, i32 9
 	%ap = alloca ptr, align 4
@@ -355,7 +355,7 @@ define i32 @nonleaf_frame_limit(i32 %fixed, ...) {
 ; ASM: lds.l	@r15+,pr
 ; ASM-NEXT: add	#12,r15
 ; ASM-NEXT: rts
-define i64 @nonleaf_i64_return(i32 %fixed, ...) {
+define i64 @nonleaf_i64_return(i32 %fixed, ...) nounwind {
 	%ap = alloca ptr, align 4
 	call void @llvm.va_start.p0(ptr %ap)
 	%first = va_arg ptr %ap, i32
@@ -382,7 +382,7 @@ define i64 @nonleaf_i64_return(i32 %fixed, ...) {
 ; ASM: lds.l	@r15+,pr
 ; ASM-NEXT: add	#12,r15
 ; ASM-NEXT: rts
-define %R8 @nonleaf_aggregate_return(i32 %fixed, ...) {
+define %R8 @nonleaf_aggregate_return(i32 %fixed, ...) nounwind {
 	%ap = alloca ptr, align 4
 	call void @llvm.va_start.p0(ptr %ap)
 	%first = va_arg ptr %ap, i32
@@ -426,7 +426,7 @@ define %R8 @nonleaf_aggregate_return(i32 %fixed, ...) {
 ; ASM: add	#12,r15
 ; ASM-NEXT: lds.l	@r15+,pr
 ; ASM-NEXT: add	#8,r15
-define i32 @nonleaf_named_byval(ptr byval(%B8) align 4 %named, ...) {
+define i32 @nonleaf_named_byval(ptr byval(%B8) align 4 %named, ...) nounwind {
 	%last = getelementptr %B8, ptr %named, i32 0, i32 7
 	%ap = alloca ptr, align 4
 	call void @llvm.va_start.p0(ptr %ap)
@@ -468,7 +468,7 @@ define i32 @nonleaf_named_byval(ptr byval(%B8) align 4 %named, ...) {
 ; ASM: add	#20,r15
 ; ASM-NEXT: lds.l	@r15+,pr
 ; ASM-NEXT: add	#12,r15
-define i32 @nonleaf_packed_temporary(i32 %fixed, ...) {
+define i32 @nonleaf_packed_temporary(i32 %fixed, ...) nounwind {
 	%ap = alloca ptr, align 4
 	call void @llvm.va_start.p0(ptr %ap)
 	%first = va_arg ptr %ap, %P5
@@ -516,7 +516,7 @@ define i32 @nonleaf_packed_temporary(i32 %fixed, ...) {
 ; ASM: add	#12,r15
 ; ASM-NEXT: lds.l	@r15+,pr
 ; ASM-NEXT: rts
-define i32 @nonleaf_named_byval_split(i32 %a, i32 %b, i32 %c, ptr byval(%B8) align 4 %named, ...) {
+define i32 @nonleaf_named_byval_split(i32 %a, i32 %b, i32 %c, ptr byval(%B8) align 4 %named, ...) nounwind {
 	%last = getelementptr %B8, ptr %named, i32 0, i32 7
 	%ap = alloca ptr, align 4
 	call void @llvm.va_start.p0(ptr %ap)

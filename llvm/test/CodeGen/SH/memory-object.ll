@@ -7,29 +7,29 @@
 ; RUN: llvm-objdump -d %t.be.o | FileCheck %s --check-prefixes=DISASM,DISASM-BE
 ; RUN: llvm-objdump -d %t.le.o | FileCheck %s --check-prefixes=DISASM,DISASM-LE
 
-define i32 @load_i32(ptr %p) minsize {
+define i32 @load_i32(ptr %p) minsize nounwind {
 	%value = load i32, ptr %p, align 4
 	ret i32 %value
 }
 
-define void @store_i32(ptr %p, i32 %value) minsize {
+define void @store_i32(ptr %p, i32 %value) minsize nounwind {
 	store i32 %value, ptr %p, align 4
 	ret void
 }
 
-define i32 @load_offset_12(ptr %p) minsize {
+define i32 @load_offset_12(ptr %p) minsize nounwind {
 	%address = getelementptr i8, ptr %p, i32 12
 	%value = load i32, ptr %address, align 4
 	ret i32 %value
 }
 
-define void @store_offset_12(ptr %p, i32 %value) minsize {
+define void @store_offset_12(ptr %p, i32 %value) minsize nounwind {
 	%address = getelementptr i8, ptr %p, i32 12
 	store i32 %value, ptr %address, align 4
 	ret void
 }
 
-define i32 @stack_roundtrip(i32 %value) minsize {
+define i32 @stack_roundtrip(i32 %value) minsize nounwind {
 	%slot = alloca i32, align 4
 	store volatile i32 %value, ptr %slot, align 4
 	%result = load volatile i32, ptr %slot, align 4

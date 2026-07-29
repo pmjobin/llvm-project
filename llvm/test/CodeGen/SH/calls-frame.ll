@@ -3,12 +3,12 @@
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -asm-verbose=false < %s | FileCheck %s
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O2 -verify-machineinstrs -asm-verbose=false < %s | FileCheck %s
 
-define internal i32 @add_one(i32 %x) {
+define internal i32 @add_one(i32 %x) nounwind {
 	%result = add i32 %x, 1
 	ret i32 %result
 }
 
-define i32 @live_across(i32 %x, i32 %y) {
+define i32 @live_across(i32 %x, i32 %y) nounwind {
 ; CHECK-LABEL: live_across:
 ; CHECK-NEXT: sts.l	pr,@-r15
 ; CHECK-NEXT: add	#-4,r15
@@ -22,7 +22,7 @@ define i32 @live_across(i32 %x, i32 %y) {
 	ret i32 %result
 }
 
-define i32 @call_with_frame(i32 %x) {
+define i32 @call_with_frame(i32 %x) nounwind {
 ; CHECK-LABEL: call_with_frame:
 ; CHECK-NEXT: sts.l	pr,@-r15
 ; CHECK-NEXT: add	#-4,r15
@@ -40,7 +40,7 @@ define i32 @call_with_frame(i32 %x) {
 	ret i32 %result
 }
 
-define i32 @call_with_60_byte_frame(i32 %value) {
+define i32 @call_with_60_byte_frame(i32 %value) nounwind {
 ; CHECK-LABEL: call_with_60_byte_frame:
 ; CHECK-NEXT: sts.l	pr,@-r15
 ; CHECK-NEXT: add	#-56,r15
@@ -82,7 +82,7 @@ define i32 @call_with_60_byte_frame(i32 %value) {
 	ret i32 %result
 }
 
-define i32 @call_with_spill_pressure(ptr %base, i32 %value) {
+define i32 @call_with_spill_pressure(ptr %base, i32 %value) nounwind {
 ; CHECK-LABEL: call_with_spill_pressure:
 ; CHECK-NEXT: sts.l	pr,@-r15
 ; CHECK-NEXT: add	#-{{[1-5][0-9]}},r15
@@ -131,7 +131,7 @@ define i32 @call_with_spill_pressure(ptr %base, i32 %value) {
 	ret i32 %result
 }
 
-define internal i32 @recursive(i32 %n) noinline {
+define internal i32 @recursive(i32 %n) noinline nounwind {
 ; CHECK-LABEL: recursive:
 ; CHECK-NEXT: sts.l	pr,@-r15
 ; CHECK-NOT: sts.l
@@ -151,7 +151,7 @@ recurse:
 	ret i32 %result
 }
 
-define i32 @call_in_loop(i32 %n) {
+define i32 @call_in_loop(i32 %n) nounwind {
 ; CHECK-LABEL: call_in_loop:
 ; CHECK-NEXT: sts.l	pr,@-r15
 ; CHECK-NOT: sts.l

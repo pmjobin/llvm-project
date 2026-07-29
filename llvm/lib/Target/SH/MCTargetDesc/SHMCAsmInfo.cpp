@@ -21,4 +21,6 @@ SHMCAsmInfo::SHMCAsmInfo(const Triple &TT, const MCTargetOptions &Options)
   CommentString = "!";
   IsLittleEndian = TT.isLittleEndian();
   MinInstAlignment = 2;
+  SupportsDebugInformation = true;
+  ExceptionsType = ExceptionHandling::DwarfCFI;
 }

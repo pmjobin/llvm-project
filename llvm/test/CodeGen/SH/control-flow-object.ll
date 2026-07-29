@@ -7,7 +7,7 @@
 ; RUN: llvm-objdump -d %t.be.o | FileCheck %s --check-prefix=DIS-BE
 ; RUN: llvm-objdump -d %t.le.o | FileCheck %s --check-prefix=DIS-LE
 
-define i32 @choose_equal(i32 %a, i32 %b) #0 {
+define i32 @choose_equal(i32 %a, i32 %b) #0 nounwind {
 	%equal = icmp eq i32 %a, %b
 	br i1 %equal, label %same, label %different
 same:
@@ -16,7 +16,7 @@ different:
 	ret i32 %b
 }
 
-define i32 @count_down(i32 %n) #0 {
+define i32 @count_down(i32 %n) #0 nounwind {
 entry:
 	br label %loop
 loop:

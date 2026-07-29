@@ -3,11 +3,11 @@
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -asm-verbose=false < %s | FileCheck %s
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O2 -verify-machineinstrs -asm-verbose=false < %s | FileCheck %s
 
-define internal i32 @frame_callee8(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a5, i32 %a6, i32 %a7) noinline {
+define internal i32 @frame_callee8(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a5, i32 %a6, i32 %a7) noinline nounwind {
 	ret i32 %a7
 }
 
-define i32 @fixed_local_and_dynamic_call_frame(i32 %value) {
+define i32 @fixed_local_and_dynamic_call_frame(i32 %value) nounwind {
 ; CHECK-LABEL: fixed_local_and_dynamic_call_frame:
 ; CHECK-NEXT: sts.l	pr,@-r15
 ; CHECK-NEXT: add	#-4,r15
@@ -31,7 +31,7 @@ define i32 @fixed_local_and_dynamic_call_frame(i32 %value) {
 	ret i32 %result
 }
 
-define i32 @value_live_across_stack_call(i32 %a0, i32 %a1) {
+define i32 @value_live_across_stack_call(i32 %a0, i32 %a1) nounwind {
 ; CHECK-LABEL: value_live_across_stack_call:
 ; CHECK-NEXT: sts.l	pr,@-r15
 ; CHECK: add	#-{{[4-9]|[1-5][0-9]}},r15
@@ -47,7 +47,7 @@ define i32 @value_live_across_stack_call(i32 %a0, i32 %a1) {
 	ret i32 %result
 }
 
-define i32 @spill_live_across_stack_call(ptr %base, i32 %value) {
+define i32 @spill_live_across_stack_call(ptr %base, i32 %value) nounwind {
 ; CHECK-LABEL: spill_live_across_stack_call:
 ; CHECK-NEXT: sts.l	pr,@-r15
 ; CHECK: add	#-{{[1-5][0-9]}},r15

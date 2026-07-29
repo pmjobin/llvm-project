@@ -5,7 +5,7 @@
 ; RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -stop-after=sh-isel < %s | FileCheck %s --check-prefix=ISEL
 ; RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -stop-after=sh-delay-slot-filler < %s | FileCheck %s --check-prefix=FINAL
 
-define i32 @stack_roundtrip(i32 %value) {
+define i32 @stack_roundtrip(i32 %value) nounwind {
 ; CHECK-LABEL: stack_roundtrip:
 ; CHECK-NEXT: add	#-4,r15
 ; CHECK-NEXT: mov.l	r4,@r15
@@ -19,7 +19,7 @@ define i32 @stack_roundtrip(i32 %value) {
 	ret i32 %result
 }
 
-define i32 @two_stack_slots(i32 %a, i32 %b) {
+define i32 @two_stack_slots(i32 %a, i32 %b) nounwind {
 ; CHECK-LABEL: two_stack_slots:
 ; CHECK-NEXT: add	#-8,r15
 ; CHECK-NEXT: mov.l	r4,@(4,r15)
@@ -40,7 +40,7 @@ define i32 @two_stack_slots(i32 %a, i32 %b) {
 	ret i32 %sum
 }
 
-define void @frame_60(i32 %value) {
+define void @frame_60(i32 %value) nounwind {
 ; CHECK-LABEL: frame_60:
 ; CHECK-NEXT: add	#-60,r15
 ; CHECK-NEXT: mov.l	r4,@(56,r15)

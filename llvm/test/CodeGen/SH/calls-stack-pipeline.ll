@@ -4,16 +4,16 @@
 ; RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -stop-after=sh-delay-slot-filler < %s -o %t.mir
 ; RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-delay-slot-filler,sh-delay-slot-filler %t.mir -o - | FileCheck %s --check-prefix=DELAY
 
-define internal i32 @pipeline5_callee(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4) noinline {
+define internal i32 @pipeline5_callee(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4) noinline nounwind {
 	ret i32 %a4
 }
 
-define i32 @pipeline5(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4) {
+define i32 @pipeline5(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4) nounwind {
 	%result = call i32 @pipeline5_callee(i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a0)
 	ret i32 %result
 }
 
-define i32 @pipeline_indirect8(ptr %fn, i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a5, i32 %a6, i32 %a7) {
+define i32 @pipeline_indirect8(ptr %fn, i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a5, i32 %a6, i32 %a7) nounwind {
 	%result = call i32 %fn(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a5, i32 %a6, i32 %a7)
 	ret i32 %result
 }

@@ -7,11 +7,11 @@
 ; RUN: llvm-objdump -d %t.be.o | FileCheck %s --check-prefix=OBJECT
 ; RUN: llvm-objdump -d %t.le.o | FileCheck %s --check-prefix=OBJECT
 
-define internal void @branch_pad() noinline {
+define internal void @branch_pad() noinline nounwind {
 	ret void
 }
 
-define i64 @i64_branch_range(i32 %selector, i64 %value, i64 %count) {
+define i64 @i64_branch_range(i32 %selector, i64 %value, i64 %count) nounwind {
 ; CHECK-LABEL: i64_branch_range:
 ; CHECK: tst
 ; CHECK: bf	[[NEAR:.LBB[0-9_]+]]

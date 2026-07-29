@@ -7,17 +7,17 @@
 ; RUN: llvm-objdump -d %t.be.o | FileCheck %s --check-prefix=DIS-BE
 ; RUN: llvm-objdump -d %t.le.o | FileCheck %s --check-prefix=DIS-LE
 
-define internal i32 @add_one(i32 %x) minsize {
+define internal i32 @add_one(i32 %x) minsize nounwind {
 	%result = add i32 %x, 1
 	ret i32 %result
 }
 
-define dso_local i32 @call_add_one(i32 %x) minsize {
+define dso_local i32 @call_add_one(i32 %x) minsize nounwind {
 	%result = call i32 @add_one(i32 %x)
 	ret i32 %result
 }
 
-define i32 @call_pointer(ptr %fn, i32 %value) minsize {
+define i32 @call_pointer(ptr %fn, i32 %value) minsize nounwind {
 	%result = call i32 %fn(i32 %value)
 	ret i32 %result
 }

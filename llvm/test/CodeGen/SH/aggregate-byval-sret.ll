@@ -30,7 +30,7 @@ declare void @escape(ptr)
 ; CHECK-NEXT: nop
 ; CHECK: lds.l	@r15+,pr
 ; CHECK-NEXT: add	#16,r15
-define i32 @byval_escape(ptr byval(%B8) align 4 %x) {
+define i32 @byval_escape(ptr byval(%B8) align 4 %x) nounwind {
 	call void @escape(ptr %x)
 	%first = load i8, ptr %x, align 4
 	%result = zext i8 %first to i32
@@ -39,7 +39,7 @@ define i32 @byval_escape(ptr byval(%B8) align 4 %x) {
 
 ; With three scalar arguments, the first byval word arrives in r7 and the
 ; second at incoming stack offset zero. The bridge spans those adjacent areas.
-define i32 @byval_split(i32 %a, i32 %b, i32 %c, ptr byval(%B8) align 4 %x) {
+define i32 @byval_split(i32 %a, i32 %b, i32 %c, ptr byval(%B8) align 4 %x) nounwind {
 	call void @escape(ptr %x)
 	%second = getelementptr i8, ptr %x, i32 4
 	%value = load i32, ptr %second, align 4
@@ -56,7 +56,7 @@ define i32 @byval_split(i32 %a, i32 %b, i32 %c, ptr byval(%B8) align 4 %x) {
 ; CHECK: mov	r15,r4
 ; CHECK-NEXT: add	#12,r4
 ; CHECK: jsr	@
-define void @several_byval(ptr byval(%B4) align 4 %left, ptr byval(%B4) align 4 %right) {
+define void @several_byval(ptr byval(%B4) align 4 %left, ptr byval(%B4) align 4 %right) nounwind {
 	call void @escape(ptr %left)
 	call void @escape(ptr %right)
 	ret void
@@ -73,7 +73,7 @@ define void @several_byval(ptr byval(%B4) align 4 %left, ptr byval(%B4) align 4 
 ; CHECK: jsr	@
 ; CHECK-NEXT: nop
 ; CHECK-NEXT: add	#4,r15
-define i32 @call_byval_split(ptr %source) {
+define i32 @call_byval_split(ptr %source) nounwind {
 	%result = call i32 @byval_split(i32 1, i32 2, i32 3, ptr byval(%B8) align 4 %source)
 	ret i32 %result
 }
@@ -100,7 +100,7 @@ declare void @take_packed(ptr byval(%P) align 1)
 ; CHECK: jsr	@
 ; CHECK-NEXT: nop
 ; CHECK: add	#60,r15
-define void @byval_sizes(ptr %source) {
+define void @byval_sizes(ptr %source) nounwind {
 	call void @take1(ptr byval(%B1) align 1 %source)
 	call void @take2(ptr byval(%B2) align 2 %source)
 	call void @take3(ptr byval(%B3) align 1 %source)
@@ -124,7 +124,7 @@ define void @byval_sizes(ptr %source) {
 ; CHECK: jsr	@
 ; CHECK: mov.b	@
 ; CHECK: rts
-define i32 @byval_sixty(ptr byval(%B60) align 4 %value) {
+define i32 @byval_sixty(ptr byval(%B60) align 4 %value) nounwind {
 	call void @escape(ptr %value)
 	%last = getelementptr i8, ptr %value, i32 59
 	%byte = load i8, ptr %last, align 1
@@ -136,7 +136,7 @@ define i32 @byval_sixty(ptr byval(%B60) align 4 %value) {
 ; CHECK: jsr	@
 ; CHECK: mov.b	@
 ; CHECK: rts
-define i32 @byval_seventy_six(ptr byval(%B76) align 4 %value) {
+define i32 @byval_seventy_six(ptr byval(%B76) align 4 %value) nounwind {
 	call void @escape(ptr %value)
 	%last = getelementptr i8, ptr %value, i32 75
 	%byte = load i8, ptr %last, align 1
@@ -147,7 +147,7 @@ define i32 @byval_seventy_six(ptr byval(%B76) align 4 %value) {
 declare void @sret_and_stack(ptr sret(%B28) align 4, i32, i32, i32, i32, i64, ptr byval(%B8) align 4)
 
 ; r2 carries sret independently while ordinary values continue at r4.
-define void @mixed_sret_byval(ptr %result, ptr %source, i64 %wide) {
+define void @mixed_sret_byval(ptr %result, ptr %source, i64 %wide) nounwind {
 	call void @sret_and_stack(ptr sret(%B28) align 4 %result, i32 1, i32 2, i32 3, i32 4, i64 %wide, ptr byval(%B8) align 4 %source)
 	ret void
 }

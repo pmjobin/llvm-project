@@ -2566,6 +2566,8 @@ ExceptionHandling Triple::getDefaultExceptionHandling() const {
   case Triple::lanai:
   case Triple::m68k:
   case Triple::msp430:
+  case Triple::sh:
+  case Triple::shle:
   case Triple::systemz:
   case Triple::xcore:
   case Triple::xtensa:

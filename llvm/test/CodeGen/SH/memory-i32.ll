@@ -3,7 +3,7 @@
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -filetype=asm -asm-verbose=false < %s | FileCheck %s
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O2 -verify-machineinstrs -filetype=asm -asm-verbose=false < %s | FileCheck %s
 
-define i32 @load_i32(ptr %p) {
+define i32 @load_i32(ptr %p) nounwind {
 ; CHECK-LABEL: load_i32:
 ; CHECK-NEXT: mov.l	@r4,r0
 ; CHECK-NEXT: rts
@@ -12,7 +12,7 @@ define i32 @load_i32(ptr %p) {
 	ret i32 %value
 }
 
-define void @store_i32(ptr %p, i32 %value) {
+define void @store_i32(ptr %p, i32 %value) nounwind {
 ; CHECK-LABEL: store_i32:
 ; CHECK-NEXT: mov.l	r5,@r4
 ; CHECK-NEXT: rts
@@ -21,7 +21,7 @@ define void @store_i32(ptr %p, i32 %value) {
 	ret void
 }
 
-define i32 @load_offset_12(ptr %p) {
+define i32 @load_offset_12(ptr %p) nounwind {
 ; CHECK-LABEL: load_offset_12:
 ; CHECK-NEXT: mov.l	@(12,r4),r0
 ; CHECK-NEXT: rts
@@ -31,7 +31,7 @@ define i32 @load_offset_12(ptr %p) {
 	ret i32 %value
 }
 
-define void @store_offset_12(ptr %p, i32 %value) {
+define void @store_offset_12(ptr %p, i32 %value) nounwind {
 ; CHECK-LABEL: store_offset_12:
 ; CHECK-NEXT: mov.l	r5,@(12,r4)
 ; CHECK-NEXT: rts
@@ -41,7 +41,7 @@ define void @store_offset_12(ptr %p, i32 %value) {
 	ret void
 }
 
-define i32 @load_volatile_i32(ptr %p) {
+define i32 @load_volatile_i32(ptr %p) nounwind {
 ; CHECK-LABEL: load_volatile_i32:
 ; CHECK-NEXT: mov.l	@r4,r0
 ; CHECK-NEXT: rts
@@ -50,7 +50,7 @@ define i32 @load_volatile_i32(ptr %p) {
 	ret i32 %value
 }
 
-define void @store_volatile_i32(ptr %p, i32 %value) {
+define void @store_volatile_i32(ptr %p, i32 %value) nounwind {
 ; CHECK-LABEL: store_volatile_i32:
 ; CHECK-NEXT: mov.l	r5,@r4
 ; CHECK-NEXT: rts
@@ -59,7 +59,7 @@ define void @store_volatile_i32(ptr %p, i32 %value) {
 	ret void
 }
 
-define ptr @load_ptr(ptr %p) {
+define ptr @load_ptr(ptr %p) nounwind {
 ; CHECK-LABEL: load_ptr:
 ; CHECK-NEXT: mov.l	@r4,r0
 ; CHECK-NEXT: rts
@@ -68,7 +68,7 @@ define ptr @load_ptr(ptr %p) {
 	ret ptr %value
 }
 
-define void @store_ptr(ptr %p, ptr %value) {
+define void @store_ptr(ptr %p, ptr %value) nounwind {
 ; CHECK-LABEL: store_ptr:
 ; CHECK-NEXT: mov.l	r5,@r4
 ; CHECK-NEXT: rts
@@ -77,7 +77,7 @@ define void @store_ptr(ptr %p, ptr %value) {
 	ret void
 }
 
-define i32 @load_offset_60(ptr %p) {
+define i32 @load_offset_60(ptr %p) nounwind {
 ; CHECK-LABEL: load_offset_60:
 ; CHECK-NEXT: mov.l	@(60,r4),r0
 ; CHECK-NEXT: rts

@@ -10,8 +10,10 @@
 #include "SHInstPrinter.h"
 #include "SHMCAsmInfo.h"
 #include "TargetInfo/SHTargetInfo.h"
+#include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCDwarf.h"
 #include "llvm/MC/MCELFObjectWriter.h"
 #include "llvm/MC/MCELFStreamer.h"
 #include "llvm/MC/MCInstrAnalysis.h"
@@ -36,7 +38,10 @@ using namespace llvm;
 
 static MCAsmInfo *createSHMCAsmInfo(const MCRegisterInfo &MRI, const Triple &TT,
                                     const MCTargetOptions &Options) {
-  return new SHMCAsmInfo(TT, Options);
+  MCAsmInfo *MAI = new SHMCAsmInfo(TT, Options);
+  unsigned SP = MRI.getDwarfRegNum(SH::R15, true);
+  MAI->addInitialFrameState(MCCFIInstruction::cfiDefCfa(nullptr, SP, 0));
+  return MAI;
 }
 
 static MCInstrInfo *createSHMCInstrInfo() {
@@ -95,6 +100,11 @@ public:
 class SHMCObjectFileInfo : public MCObjectFileInfo {
 public:
   unsigned getTextSectionAlignment() const override { return 2; }
+
+  void initSHMCObjectFileInfo(MCContext &Ctx, bool PIC, bool LargeCodeModel) {
+    initMCObjectFileInfo(Ctx, PIC, LargeCodeModel);
+    FDECFIEncoding = dwarf::DW_EH_PE_absptr;
+  }
 };
 
 } // namespace
@@ -102,7 +112,7 @@ public:
 static MCObjectFileInfo *createSHMCObjectFileInfo(MCContext &Ctx, bool PIC,
                                                   bool LargeCodeModel) {
   auto *MOFI = new SHMCObjectFileInfo();
-  MOFI->initMCObjectFileInfo(Ctx, PIC, LargeCodeModel);
+  MOFI->initSHMCObjectFileInfo(Ctx, PIC, LargeCodeModel);
   return MOFI;
 }
 

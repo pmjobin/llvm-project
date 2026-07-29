@@ -3,15 +3,15 @@
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -asm-verbose=false < %s | FileCheck %s
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O2 -verify-machineinstrs -asm-verbose=false < %s | FileCheck %s
 
-define internal i32 @take6(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a5) noinline {
+define internal i32 @take6(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a5) noinline nounwind {
 	ret i32 %a5
 }
 
-define internal i32 @take19(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a5, i32 %a6, i32 %a7, i32 %a8, i32 %a9, i32 %a10, i32 %a11, i32 %a12, i32 %a13, i32 %a14, i32 %a15, i32 %a16, i32 %a17, i32 %a18) noinline {
+define internal i32 @take19(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a5, i32 %a6, i32 %a7, i32 %a8, i32 %a9, i32 %a10, i32 %a11, i32 %a12, i32 %a13, i32 %a14, i32 %a15, i32 %a16, i32 %a17, i32 %a18) noinline nounwind {
 	ret i32 %a18
 }
 
-define i32 @call6(i32 %a4, i32 %a5) {
+define i32 @call6(i32 %a4, i32 %a5) nounwind {
 ; CHECK-LABEL: call6:
 ; CHECK-NEXT: sts.l	pr,@-r15
 ; CHECK: add	#-8,r15
@@ -25,7 +25,7 @@ define i32 @call6(i32 %a4, i32 %a5) {
 	ret i32 %result
 }
 
-define i32 @call19() {
+define i32 @call19() nounwind {
 ; CHECK-LABEL: call19:
 ; CHECK-NEXT: sts.l	pr,@-r15
 ; CHECK-NEXT: add	#-60,r15

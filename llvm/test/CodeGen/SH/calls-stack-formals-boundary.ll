@@ -1,11 +1,11 @@
 ; RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -O2 -verify-machineinstrs -asm-verbose=false < %s | FileCheck %s
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O2 -verify-machineinstrs -asm-verbose=false < %s | FileCheck %s
 
-define internal void @boundary_leaf() noinline {
+define internal void @boundary_leaf() noinline nounwind {
 	ret void
 }
 
-define i32 @nonleaf_nineteenth_at_sixty(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a5, i32 %a6, i32 %a7, i32 %a8, i32 %a9, i32 %a10, i32 %a11, i32 %a12, i32 %a13, i32 %a14, i32 %a15, i32 %a16, i32 %a17, i32 %a18) {
+define i32 @nonleaf_nineteenth_at_sixty(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a5, i32 %a6, i32 %a7, i32 %a8, i32 %a9, i32 %a10, i32 %a11, i32 %a12, i32 %a13, i32 %a14, i32 %a15, i32 %a16, i32 %a17, i32 %a18) nounwind {
 ; CHECK-LABEL: nonleaf_nineteenth_at_sixty:
 ; CHECK-NEXT: sts.l	pr,@-r15
 ; CHECK-NOT: add	#-

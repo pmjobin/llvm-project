@@ -5,19 +5,19 @@
 ; RUN: FileCheck %s --check-prefix=DELAY < %t.mir
 ; RUN: llc -mtriple=sh-unknown-elf -verify-machineinstrs -run-pass=sh-delay-slot-filler,sh-delay-slot-filler %t.mir -o - | FileCheck %s --check-prefix=DELAY
 
-define internal i32 @add_one(i32 %x) {
+define internal i32 @add_one(i32 %x) nounwind {
 	%result = add i32 %x, 1
 	ret i32 %result
 }
 
-define i32 @direct_pipeline(i32 %x, i32 %y) {
+define i32 @direct_pipeline(i32 %x, i32 %y) nounwind {
 	%saved = add i32 %x, %y
 	%called = call i32 @add_one(i32 %x)
 	%result = add i32 %called, %saved
 	ret i32 %result
 }
 
-define i32 @indirect_pipeline(ptr %fn, i32 %value) {
+define i32 @indirect_pipeline(ptr %fn, i32 %value) nounwind {
 	%result = call i32 %fn(i32 %value)
 	ret i32 %result
 }
