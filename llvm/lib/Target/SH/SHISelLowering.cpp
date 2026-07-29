@@ -27,6 +27,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/IntrinsicsSH.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Target/TargetMachine.h"
@@ -77,6 +78,7 @@ SHTargetLowering::SHTargetLowering(const TargetMachine &TM,
     setOperationAction(Opcode, MVT::i32, Custom);
   setOperationAction(ISD::BR_JT, MVT::Other, Custom);
   setOperationAction(ISD::VASTART, MVT::Other, Custom);
+  setOperationAction(ISD::ATOMIC_FENCE, MVT::Other, Custom);
   setOperationAction(ISD::VAARG, MVT::Other, Expand);
   setOperationAction(ISD::VACOPY, MVT::Other, Expand);
   setOperationAction(ISD::VAEND, MVT::Other, Expand);
@@ -86,6 +88,7 @@ SHTargetLowering::SHTargetLowering(const TargetMachine &TM,
   MaxStoresPerMemcpy = MaxStoresPerMemcpyOptSize = 60;
   MaxStoresPerMemmove = MaxStoresPerMemmoveOptSize = 16;
   MaxStoresPerMemset = MaxStoresPerMemsetOptSize = 60;
+  setMaxAtomicSizeInBitsSupported(0);
   computeRegisterProperties(STI.getRegisterInfo());
 }
 
@@ -229,6 +232,130 @@ static void requireSupportedSHMemoryAlignment(Type *Ty, Align Alignment,
                : "SH requires 4-byte alignment for 32- and 64-bit stores");
 }
 
+enum class SHAtomicRuntimeCallKind {
+  None,
+  Operation,
+  CompareExchange,
+};
+
+static bool isSHRuntimePointer(Type *Ty) {
+  const auto *PointerTy = dyn_cast<PointerType>(Ty);
+  return PointerTy && PointerTy->getAddressSpace() == 0;
+}
+
+static bool isSHAtomicOrderOperand(const Value *Value) {
+  const auto *Order = dyn_cast<ConstantInt>(Value);
+  if (!Order || !Order->getType()->isIntegerTy(32))
+    return false;
+  switch (static_cast<AtomicOrderingCABI>(Order->getZExtValue())) {
+  case AtomicOrderingCABI::relaxed:
+  case AtomicOrderingCABI::acquire:
+  case AtomicOrderingCABI::release:
+  case AtomicOrderingCABI::acq_rel:
+  case AtomicOrderingCABI::seq_cst:
+    return true;
+  case AtomicOrderingCABI::consume:
+    return false;
+  }
+  return false;
+}
+
+static SHAtomicRuntimeCallKind
+getSHAtomicRuntimeCallKind(const CallBase &Call) {
+  const Function *Callee = Call.getCalledFunction();
+  if (!Callee || Call.getCallingConv() != CallingConv::C)
+    return SHAtomicRuntimeCallKind::None;
+
+  StringRef Name = Callee->getName();
+  auto IsPointerArg = [&](unsigned Index) {
+    return Index < Call.arg_size() &&
+           isSHRuntimePointer(Call.getArgOperand(Index)->getType());
+  };
+  auto IsIntegerArg = [&](unsigned Index, unsigned Width) {
+    return Index < Call.arg_size() &&
+           Call.getArgOperand(Index)->getType()->isIntegerTy(Width);
+  };
+
+  unsigned Width = 0;
+  if (Name.ends_with("_4"))
+    Width = 32;
+  else if (Name.ends_with("_8"))
+    Width = 64;
+
+  if (Width != 0) {
+    StringRef Base = Name.drop_back(2);
+    if (Base == "__atomic_load")
+      return Call.arg_size() == 2 && IsPointerArg(0) &&
+                     isSHAtomicOrderOperand(Call.getArgOperand(1)) &&
+                     Call.getType()->isIntegerTy(Width)
+                 ? SHAtomicRuntimeCallKind::Operation
+                 : SHAtomicRuntimeCallKind::None;
+    if (Base == "__atomic_store")
+      return Call.arg_size() == 3 && IsPointerArg(0) &&
+                     IsIntegerArg(1, Width) &&
+                     isSHAtomicOrderOperand(Call.getArgOperand(2)) &&
+                     Call.getType()->isVoidTy()
+                 ? SHAtomicRuntimeCallKind::Operation
+                 : SHAtomicRuntimeCallKind::None;
+    if (Base == "__atomic_compare_exchange")
+      return Call.arg_size() == 5 && IsPointerArg(0) && IsPointerArg(1) &&
+                     IsIntegerArg(2, Width) &&
+                     isSHAtomicOrderOperand(Call.getArgOperand(3)) &&
+                     isSHAtomicOrderOperand(Call.getArgOperand(4)) &&
+                     Call.getType()->isIntegerTy(1) &&
+                     Call.hasRetAttr(Attribute::ZExt)
+                 ? SHAtomicRuntimeCallKind::CompareExchange
+                 : SHAtomicRuntimeCallKind::None;
+    if (Base == "__atomic_exchange" || Base == "__atomic_fetch_add" ||
+        Base == "__atomic_fetch_sub" || Base == "__atomic_fetch_and" ||
+        Base == "__atomic_fetch_or" || Base == "__atomic_fetch_xor" ||
+        Base == "__atomic_fetch_nand")
+      return Call.arg_size() == 3 && IsPointerArg(0) &&
+                     IsIntegerArg(1, Width) &&
+                     isSHAtomicOrderOperand(Call.getArgOperand(2)) &&
+                     Call.getType()->isIntegerTy(Width)
+                 ? SHAtomicRuntimeCallKind::Operation
+                 : SHAtomicRuntimeCallKind::None;
+    return SHAtomicRuntimeCallKind::None;
+  }
+
+  if (Name != "__atomic_load" && Name != "__atomic_store" &&
+      Name != "__atomic_exchange" && Name != "__atomic_compare_exchange")
+    return SHAtomicRuntimeCallKind::None;
+  if (Call.arg_empty())
+    return SHAtomicRuntimeCallKind::None;
+  const auto *Size = dyn_cast<ConstantInt>(Call.getArgOperand(0));
+  if (!Size || !Size->getType()->isIntegerTy(32) ||
+      (Size->getZExtValue() != 4 && Size->getZExtValue() != 8) ||
+      !IsPointerArg(1))
+    return SHAtomicRuntimeCallKind::None;
+
+  if (Name == "__atomic_load" || Name == "__atomic_store")
+    return Call.arg_size() == 4 && IsPointerArg(2) &&
+                   isSHAtomicOrderOperand(Call.getArgOperand(3)) &&
+                   Call.getType()->isVoidTy()
+               ? SHAtomicRuntimeCallKind::Operation
+               : SHAtomicRuntimeCallKind::None;
+  if (Name == "__atomic_exchange")
+    return Call.arg_size() == 5 && IsPointerArg(2) && IsPointerArg(3) &&
+                   isSHAtomicOrderOperand(Call.getArgOperand(4)) &&
+                   Call.getType()->isVoidTy()
+               ? SHAtomicRuntimeCallKind::Operation
+               : SHAtomicRuntimeCallKind::None;
+  return Call.arg_size() == 6 && IsPointerArg(2) && IsPointerArg(3) &&
+                 isSHAtomicOrderOperand(Call.getArgOperand(4)) &&
+                 isSHAtomicOrderOperand(Call.getArgOperand(5)) &&
+                 Call.getType()->isIntegerTy(1) &&
+                 Call.hasRetAttr(Attribute::ZExt)
+             ? SHAtomicRuntimeCallKind::CompareExchange
+             : SHAtomicRuntimeCallKind::None;
+}
+
+bool llvm::isSHAtomicCompareExchangeCall(const CallBase &Call) {
+  return getSHAtomicRuntimeCallKind(Call) ==
+         SHAtomicRuntimeCallKind::CompareExchange;
+}
+
 static void validateSHAllocaUses(const AllocaInst &Alloca) {
   SmallVector<const Value *, 8> Worklist(1, &Alloca);
   SmallPtrSet<const Value *, 8> Visited;
@@ -260,12 +387,14 @@ static void validateSHAllocaUses(const AllocaInst &Alloca) {
         for (unsigned ArgNo = 0; ArgNo != Call->arg_size(); ++ArgNo) {
           if (Call->getArgOperand(ArgNo) != Pointer)
             continue;
-          if (isa<MemIntrinsic>(Call) ||
+          if (isa<MemIntrinsic>(Call) || isa<LifetimeIntrinsic>(Call) ||
               Call->getIntrinsicID() == Intrinsic::vastart ||
               Call->getIntrinsicID() == Intrinsic::vacopy ||
               Call->getIntrinsicID() == Intrinsic::vaend ||
               Call->paramHasAttr(ArgNo, Attribute::ByVal) ||
-              Call->paramHasAttr(ArgNo, Attribute::StructRet)) {
+              Call->paramHasAttr(ArgNo, Attribute::StructRet) ||
+              getSHAtomicRuntimeCallKind(*Call) !=
+                  SHAtomicRuntimeCallKind::None) {
             IsSupportedCallUse = true;
             break;
           }
@@ -274,6 +403,55 @@ static void validateSHAllocaUses(const AllocaInst &Alloca) {
           continue;
       }
       report_fatal_error("SH stack object address escape is not supported");
+    }
+  }
+}
+
+void llvm::validateSHAtomics(const Function &F) {
+  auto RequireSupportedScope = [](SyncScope::ID Scope) {
+    if (Scope != SyncScope::System && Scope != SyncScope::SingleThread)
+      report_fatal_error("SH synchronization scope is not supported");
+  };
+  auto RequireSupportedType = [](Type *Ty, unsigned PointerAddressSpace) {
+    bool Supported = Ty->isIntegerTy(32) || Ty->isIntegerTy(64) ||
+                     (Ty->isPointerTy() && Ty->getPointerAddressSpace() == 0);
+    if (!Supported || PointerAddressSpace != 0)
+      report_fatal_error(
+          "SH generic atomic operation is not supported for this type");
+  };
+
+  for (const BasicBlock &BB : F) {
+    for (const Instruction &I : BB) {
+      if (const auto *Fence = dyn_cast<FenceInst>(&I)) {
+        RequireSupportedScope(Fence->getSyncScopeID());
+        continue;
+      }
+      if (const auto *Load = dyn_cast<LoadInst>(&I); Load && Load->isAtomic()) {
+        RequireSupportedScope(Load->getSyncScopeID());
+        RequireSupportedType(Load->getType(), Load->getPointerAddressSpace());
+        continue;
+      }
+      if (const auto *Store = dyn_cast<StoreInst>(&I);
+          Store && Store->isAtomic()) {
+        RequireSupportedScope(Store->getSyncScopeID());
+        RequireSupportedType(Store->getValueOperand()->getType(),
+                             Store->getPointerAddressSpace());
+        continue;
+      }
+      if (const auto *RMW = dyn_cast<AtomicRMWInst>(&I)) {
+        RequireSupportedScope(RMW->getSyncScopeID());
+        Type *Ty = RMW->getValOperand()->getType();
+        RequireSupportedType(Ty, RMW->getPointerAddressSpace());
+        if (Ty->isPointerTy() && RMW->getOperation() != AtomicRMWInst::Xchg)
+          report_fatal_error(
+              "SH generic atomic operation is not supported for this type");
+        continue;
+      }
+      if (const auto *CAS = dyn_cast<AtomicCmpXchgInst>(&I)) {
+        RequireSupportedScope(CAS->getSyncScopeID());
+        RequireSupportedType(CAS->getCompareOperand()->getType(),
+                             CAS->getPointerAddressSpace());
+      }
     }
   }
 }
@@ -374,9 +552,10 @@ void llvm::validateSHIR(const Function &F) {
       if (isa<SelectInst>(&I))
         report_fatal_error("SH select is not supported");
       if (isa<AtomicRMWInst>(&I) || isa<AtomicCmpXchgInst>(&I))
-        report_fatal_error(
-            "SH atomic read-modify-write operations are not supported");
+        report_fatal_error("SH generic atomic operation survived AtomicExpand");
       if (Call) {
+        SHAtomicRuntimeCallKind AtomicCallKind =
+            getSHAtomicRuntimeCallKind(*Call);
         requireSupportedCallingConvention(Call->getCallingConv());
         if (isa<InvokeInst>(Call))
           report_fatal_error("SH exception-handling calls are not supported");
@@ -387,6 +566,14 @@ void llvm::validateSHIR(const Function &F) {
           continue;
         }
         switch (Call->getIntrinsicID()) {
+        case Intrinsic::sh_tas_b:
+          if (Call->getArgOperand(0)->getType()->getPointerAddressSpace() != 0)
+            report_fatal_error(
+                "SH TAS.B intrinsic requires an address-space-zero pointer");
+          continue;
+        case Intrinsic::lifetime_start:
+        case Intrinsic::lifetime_end:
+          continue;
         case Intrinsic::vastart:
           if (!F.isVarArg())
             report_fatal_error("SH va_start requires a variadic function");
@@ -421,7 +608,10 @@ void llvm::validateSHIR(const Function &F) {
         }
 
         Type *ReturnTy = Call->getType();
-        if (!ReturnTy->isVoidTy() && !isSupportedSHValueType(ReturnTy))
+        bool IsAtomicBoolean =
+            AtomicCallKind == SHAtomicRuntimeCallKind::CompareExchange;
+        if (!ReturnTy->isVoidTy() && !isSupportedSHValueType(ReturnTy) &&
+            !(IsAtomicBoolean && ReturnTy->isIntegerTy(1)))
           report_fatal_error(
               "SH calls only support void, i32, i64, and pointer return "
               "values");
@@ -910,11 +1100,10 @@ bool SHTargetLowering::CanLowerReturn(
     const SmallVectorImpl<ISD::OutputArg> &Outs, LLVMContext &Context,
     const Type *RetTy) const {
   (void)Context;
-  if (RetTy->isIntegerTy(1))
-    report_fatal_error(
-        "SH comparison results may only be used by conditional branches");
   if (CallConv != CallingConv::C)
     return false;
+  if (RetTy->isIntegerTy(1))
+    return Outs.size() == 1 && Outs[0].VT == MVT::i32 && Outs[0].Flags.isZExt();
   if (RetTy->isVoidTy())
     return Outs.empty();
   if (RetTy->isAggregateType() &&
@@ -1259,16 +1448,19 @@ SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
   Type *ReturnTy = CLI.OrigRetTy;
   if (!ReturnTy)
     report_fatal_error("SH call is missing its return type");
+  bool IsAtomicBooleanResult = CLI.CB && ReturnTy->isIntegerTy(1) &&
+                               isSHAtomicCompareExchangeCall(*CLI.CB);
   if (ReturnTy->isAggregateType() &&
       !isDirectSHAggregateReturn(CLI.DAG.getDataLayout(), ReturnTy))
     report_fatal_error("SH indirect aggregate call result is missing sret");
-  if (!ReturnTy->isVoidTy() && !isSupportedSHValueType(ReturnTy))
+  if (!ReturnTy->isVoidTy() && !isSupportedSHValueType(ReturnTy) &&
+      !IsAtomicBooleanResult)
     report_fatal_error(
         "SH calls only support void, i32, i64, and pointer return values");
   SmallVector<SHValuePart, 4> ReturnParts;
-  if (!ReturnTy->isVoidTy())
+  if (!ReturnTy->isVoidTy() && !IsAtomicBooleanResult)
     ReturnParts = getSHValueParts(*this, CLI.DAG.getDataLayout(), ReturnTy);
-  if (ReturnParts.size() != CLI.Ins.size() ||
+  if ((IsAtomicBooleanResult ? 1 : ReturnParts.size()) != CLI.Ins.size() ||
       llvm::any_of(CLI.Ins,
                    [](const ISD::InputArg &In) { return In.VT != MVT::i32; }))
     report_fatal_error("SH call result ABI parts are inconsistent");
@@ -1507,8 +1699,8 @@ SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
 
   if (!CLI.Ins.empty()) {
     SHABIState ReturnState;
-    SHABIValue ABIValue =
-        ReturnState.allocate(getSHABITypeSize(DataLayout, ReturnTy));
+    SHABIValue ABIValue = ReturnState.allocate(
+        IsAtomicBooleanResult ? 4 : getSHABITypeSize(DataLayout, ReturnTy));
     if (ABIValue.Words.size() > 2)
       report_fatal_error("SH direct call result exceeds r0-r1");
     SmallVector<SDValue, 2> Words;
@@ -1530,6 +1722,24 @@ SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
   return Chain;
 }
 
+void SHTargetLowering::getTgtMemIntrinsic(SmallVectorImpl<IntrinsicInfo> &Infos,
+                                          const CallBase &I,
+                                          MachineFunction &MF,
+                                          unsigned Intrinsic) const {
+  if (Intrinsic != Intrinsic::sh_tas_b)
+    return;
+  IntrinsicInfo Info;
+  Info.opc = ISD::INTRINSIC_W_CHAIN;
+  Info.memVT = MVT::i8;
+  Info.ptrVal = I.getArgOperand(0);
+  Info.size = 1;
+  Info.align = Align(1);
+  Info.flags = MachineMemOperand::MOLoad | MachineMemOperand::MOStore;
+  Info.ssid = SyncScope::System;
+  Info.order = AtomicOrdering::Monotonic;
+  Infos.push_back(Info);
+}
+
 SDValue SHTargetLowering::LowerVASTART(SDValue Op, SelectionDAG &DAG) const {
   MachineFunction &MF = DAG.getMachineFunction();
   const Function &F = MF.getFunction();
@@ -1541,6 +1751,26 @@ SDValue SHTargetLowering::LowerVASTART(SDValue Op, SelectionDAG &DAG) const {
   const Value *Storage = cast<SrcValueSDNode>(Op.getOperand(2))->getValue();
   return DAG.getStore(Op.getOperand(0), DL, Cursor, Op.getOperand(1),
                       MachinePointerInfo(Storage), Align(4));
+}
+
+SDValue SHTargetLowering::LowerATOMIC_FENCE(SDValue Op,
+                                            SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+  SyncScope::ID Scope = static_cast<SyncScope::ID>(Op.getConstantOperandVal(2));
+  if (Scope == SyncScope::SingleThread)
+    return DAG.getNode(ISD::MEMBARRIER, DL, MVT::Other, Op.getOperand(0));
+  if (Scope != SyncScope::System)
+    report_fatal_error("SH synchronization scope is not supported");
+
+  ArgListTy Args;
+  CallLoweringInfo CLI(DAG);
+  CLI.setDebugLoc(DL)
+      .setChain(Op.getOperand(0))
+      .setLibCallee(CallingConv::C, Type::getVoidTy(*DAG.getContext()),
+                    DAG.getExternalSymbol("__sync_synchronize",
+                                          getPointerTy(DAG.getDataLayout())),
+                    std::move(Args));
+  return LowerCallTo(CLI).second;
 }
 
 static SDValue lowerSHSymbolAddress(SHConstantPoolValue *CPV, const SDLoc &DL,
@@ -1873,6 +2103,8 @@ void SHTargetLowering::ReplaceNodeResults(SDNode *N,
 SDValue SHTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   if (Op.getOpcode() == ISD::VASTART)
     return LowerVASTART(Op, DAG);
+  if (Op.getOpcode() == ISD::ATOMIC_FENCE)
+    return LowerATOMIC_FENCE(Op, DAG);
   if (Op.getOpcode() == ISD::SETCC &&
       Op.getOperand(0).getValueType() == MVT::i64) {
     SDLoc DL(Op);

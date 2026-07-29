@@ -1,8 +1,8 @@
 ; RUN: split-file %s %t
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/i128.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=I128
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/atomic-load.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ATOMIC-LOAD
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/atomic-rmw.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ATOMIC-RMW
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/atomic-cmpxchg.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ATOMIC-RMW
+; RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/atomic-load.ll -o /dev/null
+; RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/atomic-rmw.ll -o /dev/null
+; RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/atomic-cmpxchg.ll -o /dev/null
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/unaligned-load.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=UNALIGNED-LOAD
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/unaligned-store.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=UNALIGNED-STORE
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/overflow.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INTRINSIC
@@ -14,8 +14,6 @@
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/large-outgoing.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=OUTGOING
 
 ; I128: LLVM ERROR: SH functions only support void, i32, i64, and pointer return values
-; ATOMIC-LOAD: LLVM ERROR: SH atomic loads are not supported
-; ATOMIC-RMW: LLVM ERROR: SH atomic read-modify-write operations are not supported
 ; UNALIGNED-LOAD: LLVM ERROR: SH requires 4-byte alignment for 32- and 64-bit loads
 ; UNALIGNED-STORE: LLVM ERROR: SH requires 4-byte alignment for 32- and 64-bit stores
 ; INTRINSIC: LLVM ERROR: SH intrinsics are not supported

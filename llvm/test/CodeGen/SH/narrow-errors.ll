@@ -20,8 +20,8 @@
 
 ; UNALIGNED-LOAD: LLVM ERROR: SH requires 2-byte alignment for 16-bit loads
 ; UNALIGNED-STORE: LLVM ERROR: SH requires 2-byte alignment for 16-bit stores
-; ATOMIC-LOAD: LLVM ERROR: SH atomic loads are not supported
-; ATOMIC-STORE: LLVM ERROR: SH atomic stores are not supported
+; ATOMIC-LOAD: LLVM ERROR: SH generic atomic operation is not supported for this type
+; ATOMIC-STORE: LLVM ERROR: SH generic atomic operation is not supported for this type
 ; ARGUMENT: LLVM ERROR: SH function arguments must be scalar i32, i64, or pointers
 ; RETURN: LLVM ERROR: SH functions only support void, i32, i64, and pointer return values
 ; CALL-ARGUMENT: LLVM ERROR: SH calls only support scalar i32, i64, and pointer arguments

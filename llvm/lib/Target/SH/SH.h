@@ -22,6 +22,8 @@ class PassRegistry;
 class SHTargetMachine;
 
 void validateSHIR(const Function &F);
+void validateSHAtomics(const Function &F);
+bool isSHAtomicCompareExchangeCall(const CallBase &Call);
 
 class SHDAGToDAGISelPass : public SelectionDAGISelPass {
 public:
@@ -37,6 +39,13 @@ public:
 };
 
 FunctionPass *createSHLowerI64StackAlignLegacyPass();
+
+class SHAtomicValidatePass : public PassInfoMixin<SHAtomicValidatePass> {
+public:
+  PreservedAnalyses run(Function &F, FunctionAnalysisManager &FAM);
+};
+
+FunctionPass *createSHAtomicValidateLegacyPass();
 
 class SHDelaySlotFillerPass : public PassInfoMixin<SHDelaySlotFillerPass> {
 public:
@@ -65,6 +74,7 @@ FunctionPass *createSHLiteralPoolRangeCheckLegacyPass();
 
 void initializeSHAsmPrinterPass(PassRegistry &);
 void initializeSHDAGToDAGISelLegacyPass(PassRegistry &);
+void initializeSHAtomicValidateLegacyPass(PassRegistry &);
 void initializeSHLowerI64StackAlignLegacyPass(PassRegistry &);
 void initializeSHDelaySlotFillerLegacyPass(PassRegistry &);
 void initializeSHLiteralIslandLegacyPass(PassRegistry &);

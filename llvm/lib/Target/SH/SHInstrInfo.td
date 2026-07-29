@@ -79,6 +79,12 @@ def LongMemRegAsmOperand : AsmOperandClass {
   let RenderMethod = "addLongMemRegOperands";
 }
 
+def TasMemRegAsmOperand : AsmOperandClass {
+  let Name = "TasMemReg";
+  let PredicateMethod = "isTasMemReg";
+  let RenderMethod = "addLongMemRegOperands";
+}
+
 def LongMemDispAsmOperand : AsmOperandClass {
   let Name = "LongMemDisp";
   let PredicateMethod = "isLongMemDisp";
@@ -119,6 +125,13 @@ def PostIncGPRAsmOperand : AsmOperandClass {
 def longmemreg : Operand<iPTR> {
   let MIOperandInfo = (ops GPR);
   let ParserMatchClass = LongMemRegAsmOperand;
+  let PrintMethod = "printLongMemReg";
+  let DecoderMethod = "DecodeGPRRegisterClass";
+}
+
+def tasmemreg : Operand<iPTR> {
+  let MIOperandInfo = (ops GPR);
+  let ParserMatchClass = TasMemRegAsmOperand;
   let PrintMethod = "printLongMemReg";
   let DecoderMethod = "DecodeGPRRegisterClass";
 }
@@ -233,6 +246,14 @@ def NOP : SHFixed<0x0009, "nop">;
 
 let Defs = [TBit] in
 def CLRT : SHFixed<0x0008, "clrt">;
+
+let Defs = [TBit], mayLoad = 1, mayStore = 1 in
+def TAS_B
+    : SHOneReg<0x1b, (outs), (ins tasmemreg:$dst), "tas.b\t$dst">;
+
+let Uses = [TBit] in
+def MOVT
+    : SHSpecialToReg<0x29, (outs GPR:$dst), (ins), "movt\t$dst">;
 
 let isCodeGenOnly = 1, Uses = [R15], Defs = [R15] in {
   def ADJCALLSTACKDOWN

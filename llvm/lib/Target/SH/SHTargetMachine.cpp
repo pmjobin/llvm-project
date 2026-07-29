@@ -41,6 +41,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeSHTarget() {
   PassRegistry &PR = *PassRegistry::getPassRegistry();
   initializeSHAsmPrinterPass(PR);
   initializeSHDAGToDAGISelLegacyPass(PR);
+  initializeSHAtomicValidateLegacyPass(PR);
   initializeSHLowerI64StackAlignLegacyPass(PR);
   initializeSHDelaySlotFillerLegacyPass(PR);
   initializeSHLiteralIslandLegacyPass(PR);
@@ -75,6 +76,8 @@ public:
     return getTM<SHTargetMachine>();
   }
   void addIRPasses() override {
+    addPass(createSHAtomicValidateLegacyPass());
+    addPass(createAtomicExpandLegacyPass());
     addPass(createSHLowerI64StackAlignLegacyPass());
     TargetPassConfig::addIRPasses();
   }

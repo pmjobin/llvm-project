@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SHFrameLowering.h"
+#include "SH.h"
 #include "SHInstrInfo.h"
 #include "SHMachineFunctionInfo.h"
 #include "SHSubtarget.h"
@@ -29,7 +30,14 @@ static uint64_t requireSupportedSHFrame(const MachineFunction &MF) {
     report_fatal_error("SH stack object alignment cannot exceed 4 bytes");
 
   uint64_t StackSize = MFI.getStackSize();
-  if (StackSize > 60)
+  bool IsExtendedAtomicCASFrame = false;
+  if (StackSize > 60 && StackSize <= 124)
+    for (const BasicBlock &BB : MF.getFunction())
+      for (const Instruction &I : BB)
+        if (const auto *Call = dyn_cast<CallBase>(&I);
+            Call && isSHAtomicCompareExchangeCall(*Call))
+          IsExtendedAtomicCASFrame = true;
+  if (StackSize > 60 && !IsExtendedAtomicCASFrame)
     report_fatal_error("SH stack frame size cannot exceed 60 bytes");
   if (StackSize % 4 != 0)
     report_fatal_error("SH stack frame size must be four-byte aligned");

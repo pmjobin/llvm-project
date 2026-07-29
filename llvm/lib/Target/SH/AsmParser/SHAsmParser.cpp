@@ -66,6 +66,9 @@ public:
            Kind == WordMemDisp || Kind == PreDecGPR || Kind == PostIncGPR;
   }
   bool isLongMemReg() const { return Kind == LongMemReg; }
+  bool isTasMemReg() const {
+    return Kind == LongMemReg && Reg >= SH::R0 && Reg <= SH::R15;
+  }
   bool isLongMemDisp() const { return Kind == LongMemDisp; }
   bool isByteMemDisp() const { return Kind == ByteMemDisp; }
   bool isWordMemDisp() const { return Kind == WordMemDisp; }

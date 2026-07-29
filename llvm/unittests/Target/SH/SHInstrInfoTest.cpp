@@ -10,6 +10,7 @@
 #include "SHISelLowering.h"
 #include "SHSubtarget.h"
 #include "SHTargetMachine.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineInstrBundle.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
@@ -23,6 +24,7 @@
 #include "gtest/gtest.h"
 #include <limits>
 #include <random>
+#include <type_traits>
 
 using namespace llvm;
 
@@ -185,6 +187,103 @@ TEST_F(SHInstrInfoTest, IndirectJumpHasPreciseProperties) {
   EXPECT_FALSE(Desc.hasUnmodeledSideEffects());
   EXPECT_TRUE(Desc.implicit_uses().empty());
   EXPECT_TRUE(Desc.implicit_defs().empty());
+}
+
+TEST_F(SHInstrInfoTest, AtomicPrimitivesHavePreciseProperties) {
+  const MCInstrDesc &Tas = TII->get(SH::TAS_B);
+  EXPECT_EQ(2u, Tas.getSize());
+  EXPECT_EQ(0u, Tas.getNumDefs());
+  EXPECT_EQ(1u, Tas.getNumOperands());
+  EXPECT_TRUE(Tas.mayLoad());
+  EXPECT_TRUE(Tas.mayStore());
+  EXPECT_FALSE(Tas.hasDelaySlot());
+  EXPECT_FALSE(Tas.isCall());
+  EXPECT_FALSE(Tas.isBranch());
+  EXPECT_TRUE(llvm::is_contained(Tas.implicit_defs(), SH::TBit));
+  EXPECT_TRUE(Tas.implicit_uses().empty());
+
+  const MCInstrDesc &Movt = TII->get(SH::MOVT);
+  EXPECT_EQ(2u, Movt.getSize());
+  EXPECT_EQ(1u, Movt.getNumDefs());
+  EXPECT_EQ(1u, Movt.getNumOperands());
+  EXPECT_FALSE(Movt.mayLoad());
+  EXPECT_FALSE(Movt.mayStore());
+  EXPECT_FALSE(Movt.hasDelaySlot());
+  EXPECT_TRUE(llvm::is_contained(Movt.implicit_uses(), SH::TBit));
+  EXPECT_TRUE(Movt.implicit_defs().empty());
+}
+
+TEST_F(SHInstrInfoTest, GenericAtomicsAreNeverNativelyLockFree) {
+  const SHSubtarget &ST = MF->getSubtarget<SHSubtarget>();
+  const TargetLowering *TLI = ST.getTargetLowering();
+  ASSERT_NE(nullptr, TLI);
+  EXPECT_EQ(0u, TLI->getMaxAtomicSizeInBitsSupported());
+
+  const std::pair<RTLIB::Libcall, RTLIB::LibcallImpl> Supported[] = {
+      {RTLIB::ATOMIC_LOAD, RTLIB::impl___atomic_load},
+      {RTLIB::ATOMIC_STORE, RTLIB::impl___atomic_store},
+      {RTLIB::ATOMIC_EXCHANGE, RTLIB::impl___atomic_exchange},
+      {RTLIB::ATOMIC_COMPARE_EXCHANGE, RTLIB::impl___atomic_compare_exchange},
+      {RTLIB::ATOMIC_LOAD_4, RTLIB::impl___atomic_load_4},
+      {RTLIB::ATOMIC_LOAD_8, RTLIB::impl___atomic_load_8},
+      {RTLIB::ATOMIC_STORE_4, RTLIB::impl___atomic_store_4},
+      {RTLIB::ATOMIC_STORE_8, RTLIB::impl___atomic_store_8},
+      {RTLIB::ATOMIC_EXCHANGE_4, RTLIB::impl___atomic_exchange_4},
+      {RTLIB::ATOMIC_EXCHANGE_8, RTLIB::impl___atomic_exchange_8},
+      {RTLIB::ATOMIC_COMPARE_EXCHANGE_4,
+       RTLIB::impl___atomic_compare_exchange_4},
+      {RTLIB::ATOMIC_COMPARE_EXCHANGE_8,
+       RTLIB::impl___atomic_compare_exchange_8},
+      {RTLIB::ATOMIC_FETCH_ADD_4, RTLIB::impl___atomic_fetch_add_4},
+      {RTLIB::ATOMIC_FETCH_ADD_8, RTLIB::impl___atomic_fetch_add_8},
+      {RTLIB::ATOMIC_FETCH_SUB_4, RTLIB::impl___atomic_fetch_sub_4},
+      {RTLIB::ATOMIC_FETCH_SUB_8, RTLIB::impl___atomic_fetch_sub_8},
+      {RTLIB::ATOMIC_FETCH_AND_4, RTLIB::impl___atomic_fetch_and_4},
+      {RTLIB::ATOMIC_FETCH_AND_8, RTLIB::impl___atomic_fetch_and_8},
+      {RTLIB::ATOMIC_FETCH_OR_4, RTLIB::impl___atomic_fetch_or_4},
+      {RTLIB::ATOMIC_FETCH_OR_8, RTLIB::impl___atomic_fetch_or_8},
+      {RTLIB::ATOMIC_FETCH_XOR_4, RTLIB::impl___atomic_fetch_xor_4},
+      {RTLIB::ATOMIC_FETCH_XOR_8, RTLIB::impl___atomic_fetch_xor_8},
+      {RTLIB::ATOMIC_FETCH_NAND_4, RTLIB::impl___atomic_fetch_nand_4},
+      {RTLIB::ATOMIC_FETCH_NAND_8, RTLIB::impl___atomic_fetch_nand_8},
+  };
+  for (auto [Call, Impl] : Supported)
+    EXPECT_EQ(Impl, TLI->getLibcallImpl(Call));
+
+  const RTLIB::Libcall Unsupported[] = {
+      RTLIB::ATOMIC_LOAD_1,
+      RTLIB::ATOMIC_LOAD_2,
+      RTLIB::ATOMIC_LOAD_16,
+      RTLIB::ATOMIC_STORE_1,
+      RTLIB::ATOMIC_STORE_2,
+      RTLIB::ATOMIC_STORE_16,
+      RTLIB::ATOMIC_EXCHANGE_1,
+      RTLIB::ATOMIC_EXCHANGE_2,
+      RTLIB::ATOMIC_EXCHANGE_16,
+      RTLIB::ATOMIC_COMPARE_EXCHANGE_1,
+      RTLIB::ATOMIC_COMPARE_EXCHANGE_2,
+      RTLIB::ATOMIC_COMPARE_EXCHANGE_16,
+      RTLIB::ATOMIC_FETCH_ADD_1,
+      RTLIB::ATOMIC_FETCH_ADD_2,
+      RTLIB::ATOMIC_FETCH_ADD_16,
+      RTLIB::ATOMIC_FETCH_SUB_1,
+      RTLIB::ATOMIC_FETCH_SUB_2,
+      RTLIB::ATOMIC_FETCH_SUB_16,
+      RTLIB::ATOMIC_FETCH_AND_1,
+      RTLIB::ATOMIC_FETCH_AND_2,
+      RTLIB::ATOMIC_FETCH_AND_16,
+      RTLIB::ATOMIC_FETCH_OR_1,
+      RTLIB::ATOMIC_FETCH_OR_2,
+      RTLIB::ATOMIC_FETCH_OR_16,
+      RTLIB::ATOMIC_FETCH_XOR_1,
+      RTLIB::ATOMIC_FETCH_XOR_2,
+      RTLIB::ATOMIC_FETCH_XOR_16,
+      RTLIB::ATOMIC_FETCH_NAND_1,
+      RTLIB::ATOMIC_FETCH_NAND_2,
+      RTLIB::ATOMIC_FETCH_NAND_16,
+  };
+  for (RTLIB::Libcall Call : Unsupported)
+    EXPECT_EQ(RTLIB::Unsupported, TLI->getLibcallImpl(Call));
 }
 
 TEST_F(SHInstrInfoTest, IndirectJumpIsNotAnalyzedOrRemovedAsDirectBranch) {
@@ -1394,6 +1493,188 @@ TEST(SHVarArgsModelTest, SavedRegisterAndOverflowImagesRoundTrip) {
       EXPECT_EQ(ExpectedWords, Cursor);
     }
   }
+}
+
+enum class AtomicModelOperation {
+  Load,
+  Store,
+  Exchange,
+  Add,
+  Sub,
+  And,
+  Nand,
+  Or,
+  Xor,
+  SignedMax,
+  SignedMin,
+  UnsignedMax,
+  UnsignedMin,
+  CompareExchange,
+};
+
+template <typename T> struct AtomicShimResult {
+  T Old;
+  T Memory;
+  T Expected;
+  bool Success;
+  unsigned SuccessOrder;
+  unsigned FailureOrder;
+};
+
+template <typename T>
+static AtomicShimResult<T>
+runAtomicShim(AtomicModelOperation Operation, T Memory, T Operand, T Expected,
+              bool Weak, bool SpuriousFailure, unsigned SuccessOrder,
+              unsigned FailureOrder) {
+  T Old = Memory;
+  bool Success = false;
+  using SignedT = std::make_signed_t<T>;
+  switch (Operation) {
+  case AtomicModelOperation::Load:
+    break;
+  case AtomicModelOperation::Store:
+    Memory = Operand;
+    break;
+  case AtomicModelOperation::Exchange:
+    Memory = Operand;
+    break;
+  case AtomicModelOperation::Add:
+    Memory = Old + Operand;
+    break;
+  case AtomicModelOperation::Sub:
+    Memory = Old - Operand;
+    break;
+  case AtomicModelOperation::And:
+    Memory = Old & Operand;
+    break;
+  case AtomicModelOperation::Nand:
+    Memory = ~(Old & Operand);
+    break;
+  case AtomicModelOperation::Or:
+    Memory = Old | Operand;
+    break;
+  case AtomicModelOperation::Xor:
+    Memory = Old ^ Operand;
+    break;
+  case AtomicModelOperation::SignedMax:
+    Memory = static_cast<SignedT>(Old) > static_cast<SignedT>(Operand)
+                 ? Old
+                 : Operand;
+    break;
+  case AtomicModelOperation::SignedMin:
+    Memory = static_cast<SignedT>(Old) < static_cast<SignedT>(Operand)
+                 ? Old
+                 : Operand;
+    break;
+  case AtomicModelOperation::UnsignedMax:
+    Memory = std::max(Old, Operand);
+    break;
+  case AtomicModelOperation::UnsignedMin:
+    Memory = std::min(Old, Operand);
+    break;
+  case AtomicModelOperation::CompareExchange:
+    Success = Old == Expected && !(Weak && SpuriousFailure);
+    if (Success)
+      Memory = Operand;
+    else
+      Expected = Old;
+    break;
+  }
+  return {Old, Memory, Expected, Success, SuccessOrder, FailureOrder};
+}
+
+template <typename T> static void testAtomicRuntimeModel(uint64_t Seed) {
+  std::mt19937_64 Generator(Seed);
+  constexpr AtomicModelOperation Operations[] = {
+      AtomicModelOperation::Load,        AtomicModelOperation::Store,
+      AtomicModelOperation::Exchange,    AtomicModelOperation::Add,
+      AtomicModelOperation::Sub,         AtomicModelOperation::And,
+      AtomicModelOperation::Nand,        AtomicModelOperation::Or,
+      AtomicModelOperation::Xor,         AtomicModelOperation::SignedMax,
+      AtomicModelOperation::SignedMin,   AtomicModelOperation::UnsignedMax,
+      AtomicModelOperation::UnsignedMin, AtomicModelOperation::CompareExchange,
+  };
+  constexpr unsigned Orders[] = {0, 2, 3, 4, 5};
+  for (unsigned Scenario = 0; Scenario != 10000; ++Scenario) {
+    AtomicModelOperation Operation =
+        Operations[Generator() % std::size(Operations)];
+    T Initial = static_cast<T>(Generator());
+    T Operand = static_cast<T>(Generator());
+    T Expected = Scenario % 3 == 0 ? Initial : static_cast<T>(Generator());
+    bool Weak = Scenario % 2 != 0;
+    bool SpuriousFailure = Scenario % 17 == 0;
+    unsigned SuccessOrder = Orders[Generator() % std::size(Orders)];
+    unsigned FailureOrder = Orders[Generator() % std::size(Orders)];
+
+    T ReferenceMemory = Initial;
+    T ReferenceExpected = Expected;
+    bool ReferenceSuccess = false;
+    using SignedT = std::make_signed_t<T>;
+    switch (Operation) {
+    case AtomicModelOperation::Load:
+      break;
+    case AtomicModelOperation::Store:
+    case AtomicModelOperation::Exchange:
+      ReferenceMemory = Operand;
+      break;
+    case AtomicModelOperation::Add:
+      ReferenceMemory = Initial + Operand;
+      break;
+    case AtomicModelOperation::Sub:
+      ReferenceMemory = Initial - Operand;
+      break;
+    case AtomicModelOperation::And:
+      ReferenceMemory = Initial & Operand;
+      break;
+    case AtomicModelOperation::Nand:
+      ReferenceMemory = ~(Initial & Operand);
+      break;
+    case AtomicModelOperation::Or:
+      ReferenceMemory = Initial | Operand;
+      break;
+    case AtomicModelOperation::Xor:
+      ReferenceMemory = Initial ^ Operand;
+      break;
+    case AtomicModelOperation::SignedMax:
+      if (static_cast<SignedT>(Initial) < static_cast<SignedT>(Operand))
+        ReferenceMemory = Operand;
+      break;
+    case AtomicModelOperation::SignedMin:
+      if (static_cast<SignedT>(Initial) > static_cast<SignedT>(Operand))
+        ReferenceMemory = Operand;
+      break;
+    case AtomicModelOperation::UnsignedMax:
+      if (Initial < Operand)
+        ReferenceMemory = Operand;
+      break;
+    case AtomicModelOperation::UnsignedMin:
+      if (Initial > Operand)
+        ReferenceMemory = Operand;
+      break;
+    case AtomicModelOperation::CompareExchange:
+      ReferenceSuccess = Initial == Expected && !(Weak && SpuriousFailure);
+      if (ReferenceSuccess)
+        ReferenceMemory = Operand;
+      else
+        ReferenceExpected = Initial;
+      break;
+    }
+
+    AtomicShimResult<T> Result =
+        runAtomicShim(Operation, Initial, Operand, Expected, Weak,
+                      SpuriousFailure, SuccessOrder, FailureOrder);
+    EXPECT_EQ(Initial, Result.Old) << "scenario " << Scenario;
+    EXPECT_EQ(ReferenceMemory, Result.Memory) << "scenario " << Scenario;
+    EXPECT_EQ(ReferenceExpected, Result.Expected) << "scenario " << Scenario;
+    EXPECT_EQ(ReferenceSuccess, Result.Success) << "scenario " << Scenario;
+    EXPECT_EQ(SuccessOrder, Result.SuccessOrder) << "scenario " << Scenario;
+    EXPECT_EQ(FailureOrder, Result.FailureOrder) << "scenario " << Scenario;
+  }
+}
+
+TEST(SHAtomicRuntimeModelTest, I32AndI64OperationsMatchIndependentModel) {
+  testAtomicRuntimeModel<uint32_t>(0x534843150032);
+  testAtomicRuntimeModel<uint64_t>(0x534843150064);
 }
 
 } // namespace

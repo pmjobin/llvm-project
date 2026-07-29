@@ -154,6 +154,30 @@ bool SHRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator MI,
     return false;
   }
 
+  if (IsLong && !IsLoad && ByteOffset > 60) {
+    if (ByteOffset > 120)
+      report_fatal_error(Twine("SH finalized longword frame store offset ") +
+                         Twine(ByteOffset) +
+                         " must be four-byte aligned and in [0, 120] from r15");
+    const SHInstrInfo *TII = MF.getSubtarget<SHSubtarget>().getInstrInfo();
+    MachineBasicBlock &MBB = *Instr.getParent();
+    int64_t Adjustment = ByteOffset - 60;
+    BuildMI(MBB, MI, Instr.getDebugLoc(), TII->get(SH::ADDri), SH::R15)
+        .addReg(SH::R15)
+        .addImm(Adjustment);
+    BuildMI(MBB, MI, Instr.getDebugLoc(), TII->get(SH::MOVL_store_disp))
+        .add(Instr.getOperand(0))
+        .addReg(SH::R15)
+        .addImm(60)
+        .setMIFlags(Instr.getFlags())
+        .cloneMemRefs(Instr);
+    BuildMI(MBB, MI, Instr.getDebugLoc(), TII->get(SH::ADDri), SH::R15)
+        .addReg(SH::R15)
+        .addImm(-Adjustment);
+    MBB.erase(MI);
+    return false;
+  }
+
   if (IsLong && (ByteOffset < 0 || ByteOffset > 60 || ByteOffset % 4 != 0))
     report_fatal_error(Twine("SH finalized frame reference offset ") +
                        Twine(ByteOffset) +

@@ -10,6 +10,7 @@
 #include "SHISelLowering.h"
 #include "SHTargetMachine.h"
 #include "llvm/CodeGen/SelectionDAGISel.h"
+#include "llvm/IR/IntrinsicsSH.h"
 #include "llvm/Support/Debug.h"
 
 using namespace llvm;
@@ -140,6 +141,20 @@ public:
                             Condition.getOperand(4), N->getOperand(2),
                             N->getOperand(0)};
       CurDAG->SelectNodeTo(N, SH::BR_CC64_PSEUDO, MVT::Other, Operands);
+      return;
+    }
+    if (N->getOpcode() == ISD::INTRINSIC_W_CHAIN &&
+        N->getConstantOperandVal(1) == Intrinsic::sh_tas_b) {
+      SDLoc DL(N);
+      SDValue TASOperands[] = {N->getOperand(2), N->getOperand(0)};
+      MachineSDNode *TAS = CurDAG->getMachineNode(
+          SH::TAS_B, DL, CurDAG->getVTList(MVT::Other, MVT::Glue), TASOperands);
+      CurDAG->setNodeMemRefs(TAS, cast<MemIntrinsicSDNode>(N)->memoperands());
+      MachineSDNode *MOVT =
+          CurDAG->getMachineNode(SH::MOVT, DL, MVT::i32, SDValue(TAS, 1));
+      ReplaceUses(SDValue(N, 0), SDValue(MOVT, 0));
+      ReplaceUses(SDValue(N, 1), SDValue(TAS, 0));
+      CurDAG->RemoveDeadNode(N);
       return;
     }
     SDValue FrameIndex;

@@ -9,6 +9,7 @@
 #include "SH.h"
 #include "SHAsmPrinter.h"
 #include "SHTargetMachine.h"
+#include "llvm/CodeGen/AtomicExpand.h"
 #include "llvm/CodeGen/BranchRelaxation.h"
 #include "llvm/IR/PassInstrumentation.h"
 #include "llvm/MC/MCStreamer.h"
@@ -29,6 +30,8 @@ public:
                        PassInstrumentationCallbacks *PIC)
       : Base(TM, Opts, PIC) {}
   void addIRPasses(PassManagerWrapper &PMW) const {
+    addFunctionPass(SHAtomicValidatePass(), PMW);
+    addFunctionPass(AtomicExpandPass(TM), PMW);
     addFunctionPass(SHLowerI64StackAlignPass(), PMW);
     Base::addIRPasses(PMW);
   }
@@ -63,6 +66,7 @@ void SHTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
                             "sh-asm-printer-begin");
     PIC->addClassToPassName(SHAsmPrinterPass::name(), "sh-asm-printer");
     PIC->addClassToPassName(SHAsmPrinterEndPass::name(), "sh-asm-printer-end");
+    PIC->addClassToPassName(SHAtomicValidatePass::name(), "sh-atomic-validate");
     PIC->addClassToPassName(SHLowerI64StackAlignPass::name(),
                             "sh-lower-i64-stack-align");
     PIC->addClassToPassName(SHLiteralIslandPass::name(), "sh-literal-islands");

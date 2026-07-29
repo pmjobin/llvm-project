@@ -16,12 +16,29 @@
 #include "llvm/Pass.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Transforms/Utils/Local.h"
 
 using namespace llvm;
 
 #define DEBUG_TYPE "sh-lower-i64-stack-align"
 
 namespace {
+
+class SHAtomicValidateLegacy : public FunctionPass {
+public:
+  static char ID;
+
+  SHAtomicValidateLegacy() : FunctionPass(ID) {}
+
+  bool runOnFunction(Function &F) override {
+    validateSHAtomics(F);
+    return false;
+  }
+
+  StringRef getPassName() const override {
+    return "SH validate atomic operations";
+  }
+};
 
 static bool isSupportedSHAggregateElement(Type *Ty) {
   if (Ty->isIntegerTy(8) || Ty->isIntegerTy(16) || Ty->isIntegerTy(32) ||
@@ -427,8 +444,128 @@ static bool lowerI64StackAlignment(Function &F) {
   return Changed;
 }
 
+static bool isSHAtomicCASDesiredValue(const Value &Candidate) {
+  for (const User *Use : Candidate.users()) {
+    if (const auto *Call = dyn_cast<CallBase>(Use)) {
+      if (!isSHAtomicCompareExchangeCall(*Call))
+        continue;
+      StringRef Name = Call->getCalledFunction()->getName();
+      unsigned DesiredArg = Name == "__atomic_compare_exchange" ? 3 : 2;
+      if (Call->getArgOperand(DesiredArg) == &Candidate)
+        return true;
+    }
+    if (const auto *Cast = dyn_cast<CastInst>(Use))
+      if (isSHAtomicCASDesiredValue(*Cast))
+        return true;
+    const auto *Store = dyn_cast<StoreInst>(Use);
+    if (!Store || Store->getValueOperand() != &Candidate)
+      continue;
+    const Value *Storage = Store->getPointerOperand()->stripPointerCasts();
+    const auto *Alloca = dyn_cast<AllocaInst>(Storage);
+    if (!Alloca)
+      continue;
+    for (const User *StorageUse : Alloca->users()) {
+      const auto *Call = dyn_cast<CallBase>(StorageUse);
+      if (Call && isSHAtomicCompareExchangeCall(*Call) &&
+          Call->getCalledFunction()->getName() == "__atomic_compare_exchange" &&
+          Call->getArgOperand(3)->stripPointerCasts() == Alloca)
+        return true;
+    }
+  }
+  return false;
+}
+
+static void branchOnSHAtomicCondition(Value *Condition, BasicBlock *From,
+                                      BasicBlock *IfTrue, BasicBlock *IfFalse) {
+  auto *Logical = dyn_cast<BinaryOperator>(Condition);
+  if (!Logical || (Logical->getOpcode() != Instruction::And &&
+                   Logical->getOpcode() != Instruction::Or)) {
+    Value *BranchCondition = Condition;
+    if (auto *Compare = dyn_cast<ICmpInst>(Condition);
+        Compare && Compare->getParent() != From) {
+      Instruction *Clone = Compare->clone();
+      Clone->insertInto(From, From->end());
+      BranchCondition = Clone;
+    }
+    CondBrInst::Create(BranchCondition, IfTrue, IfFalse, From);
+    return;
+  }
+
+  BasicBlock *RHS = BasicBlock::Create(From->getContext(), "atomic.cond.rhs",
+                                       From->getParent(), IfTrue);
+  if (Logical->getOpcode() == Instruction::And)
+    branchOnSHAtomicCondition(Logical->getOperand(0), From, RHS, IfFalse);
+  else
+    branchOnSHAtomicCondition(Logical->getOperand(0), From, IfTrue, RHS);
+  branchOnSHAtomicCondition(Logical->getOperand(1), RHS, IfTrue, IfFalse);
+}
+
+static void lowerSHAtomicSelect(SelectInst &Select) {
+  BasicBlock *Original = Select.getParent();
+  BasicBlock *Continuation =
+      Original->splitBasicBlock(Select.getIterator(), "atomic.select.end");
+  Original->getTerminator()->eraseFromParent();
+  BasicBlock *IfTrue =
+      BasicBlock::Create(Select.getContext(), "atomic.select.true",
+                         Original->getParent(), Continuation);
+  BasicBlock *IfFalse =
+      BasicBlock::Create(Select.getContext(), "atomic.select.false",
+                         Original->getParent(), Continuation);
+  branchOnSHAtomicCondition(Select.getCondition(), Original, IfTrue, IfFalse);
+  UncondBrInst::Create(Continuation, IfTrue);
+  UncondBrInst::Create(Continuation, IfFalse);
+
+  PHINode *Result = PHINode::Create(Select.getType(), 2, "atomic.selected",
+                                    Select.getIterator());
+  Result->addIncoming(Select.getTrueValue(), IfTrue);
+  Result->addIncoming(Select.getFalseValue(), IfFalse);
+  Value *Condition = Select.getCondition();
+  Select.replaceAllUsesWith(Result);
+  Select.eraseFromParent();
+  RecursivelyDeleteTriviallyDeadInstructions(Condition);
+}
+
+static bool lowerSHAtomicRMWValues(Function &F) {
+  SmallVector<IntrinsicInst *, 4> SaturatingOps;
+  for (BasicBlock &BB : F)
+    for (Instruction &I : BB)
+      if (auto *Intrinsic = dyn_cast<IntrinsicInst>(&I);
+          Intrinsic && Intrinsic->getIntrinsicID() == Intrinsic::usub_sat &&
+          isSHAtomicCASDesiredValue(*Intrinsic))
+        SaturatingOps.push_back(Intrinsic);
+
+  bool Changed = false;
+  for (IntrinsicInst *Intrinsic : SaturatingOps) {
+    IRBuilder<> Builder(Intrinsic);
+    Value *LHS = Intrinsic->getArgOperand(0);
+    Value *RHS = Intrinsic->getArgOperand(1);
+    Value *Difference = Builder.CreateSub(LHS, RHS, "atomic.usub");
+    Value *InRange = Builder.CreateICmpUGE(LHS, RHS, "atomic.usub.inrange");
+    Value *Result = Builder.CreateSelect(
+        InRange, Difference, ConstantInt::getNullValue(Intrinsic->getType()),
+        "atomic.usub.sat");
+    Intrinsic->replaceAllUsesWith(Result);
+    Intrinsic->eraseFromParent();
+    Changed = true;
+  }
+
+  SmallVector<SelectInst *, 8> Selects;
+  for (BasicBlock &BB : F)
+    for (Instruction &I : BB)
+      if (auto *Select = dyn_cast<SelectInst>(&I);
+          Select && isSHAtomicCASDesiredValue(*Select))
+        Selects.push_back(Select);
+
+  for (SelectInst *Select : Selects) {
+    lowerSHAtomicSelect(*Select);
+    Changed = true;
+  }
+  return Changed;
+}
+
 static bool prepareSHIR(Function &F) {
-  bool Changed = lowerSHMemoryLibcalls(F);
+  bool Changed = lowerSHAtomicRMWValues(F);
+  Changed |= lowerSHMemoryLibcalls(F);
   Changed |= lowerSHVarArgs(F);
   Changed |= lowerAggregateMemory(F);
   Changed |= lowerI64StackAlignment(F);
@@ -451,20 +588,32 @@ public:
 
 } // namespace
 
+char SHAtomicValidateLegacy::ID = 0;
 char SHLowerI64StackAlignLegacy::ID = 0;
+
+INITIALIZE_PASS(SHAtomicValidateLegacy, "sh-atomic-validate",
+                "SH validate atomic operations", false, true)
 
 INITIALIZE_PASS(SHLowerI64StackAlignLegacy, DEBUG_TYPE,
                 "SH lower i64 stack alignment", false, false)
 
+FunctionPass *llvm::createSHAtomicValidateLegacyPass() {
+  return new SHAtomicValidateLegacy();
+}
+
 FunctionPass *llvm::createSHLowerI64StackAlignLegacyPass() {
   return new SHLowerI64StackAlignLegacy();
+}
+
+PreservedAnalyses SHAtomicValidatePass::run(Function &F,
+                                            FunctionAnalysisManager &FAM) {
+  validateSHAtomics(F);
+  return PreservedAnalyses::all();
 }
 
 PreservedAnalyses SHLowerI64StackAlignPass::run(Function &F,
                                                 FunctionAnalysisManager &FAM) {
   if (!prepareSHIR(F))
     return PreservedAnalyses::all();
-  PreservedAnalyses PA;
-  PA.preserveSet<CFGAnalyses>();
-  return PA;
+  return PreservedAnalyses::none();
 }
