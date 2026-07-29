@@ -1,0 +1,114 @@
+# RUN: split-file %s %t
+# RUN: not --crash llc -x mir -mtriple=sh-unknown-elf -run-pass=finalize-isel %t/missing-mmo.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=MISSING-MMO
+# RUN: not --crash llc -x mir -mtriple=shle-unknown-elf -run-pass=finalize-isel %t/bad-mmo.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=BAD-MMO
+# RUN: not --crash llc -x mir -mtriple=sh-unknown-elf -run-pass=finalize-isel %t/relative.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=RELATIVE
+# RUN: not --crash llc -x mir -mtriple=shle-unknown-elf -start-after=finalize-isel %t/unexpanded.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=UNEXPANDED
+
+# MISSING-MMO: LLVM ERROR: SH jump-table dispatch requires one table-entry load memory operand
+# BAD-MMO: LLVM ERROR: SH jump-table dispatch requires an invariant, dereferenceable, four-byte aligned jump-table load
+# RELATIVE: LLVM ERROR: SH jump-table dispatch requires four-byte absolute block addresses
+# UNEXPANDED: LLVM ERROR: SH jump-table dispatch reached final emission without expansion
+
+#--- missing-mmo.mir
+--- |
+  define void @missing_mmo() {
+    ret void
+  }
+...
+---
+name:            missing_mmo
+tracksRegLiveness: true
+noVRegs:         true
+jumpTable:
+  kind:            block-address
+  entries:
+    - id:              0
+      blocks:          [ '%bb.1' ]
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4, $r5
+
+    SH_JT_DISPATCH $r4, $r5, %jump-table.0
+
+  bb.1:
+    RTS implicit $pr
+...
+
+#--- bad-mmo.mir
+--- |
+  define void @bad_mmo(ptr %p) {
+    ret void
+  }
+...
+---
+name:            bad_mmo
+tracksRegLiveness: true
+noVRegs:         true
+jumpTable:
+  kind:            block-address
+  entries:
+    - id:              0
+      blocks:          [ '%bb.1' ]
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4, $r5
+
+    SH_JT_DISPATCH $r4, $r5, %jump-table.0 :: (load (s32) from %ir.p)
+
+  bb.1:
+    RTS implicit $pr
+...
+
+#--- relative.mir
+--- |
+  define void @relative_table() {
+    ret void
+  }
+...
+---
+name:            relative_table
+tracksRegLiveness: true
+noVRegs:         true
+jumpTable:
+  kind:            label-difference32
+  entries:
+    - id:              0
+      blocks:          [ '%bb.1' ]
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4, $r5
+
+    SH_JT_DISPATCH $r4, $r5, %jump-table.0 :: (dereferenceable invariant load (s32) from jump-table)
+
+  bb.1:
+    RTS implicit $pr
+...
+
+#--- unexpanded.mir
+--- |
+  define void @unexpanded_dispatch() {
+    ret void
+  }
+...
+---
+name:            unexpanded_dispatch
+tracksRegLiveness: true
+noVRegs:         true
+jumpTable:
+  kind:            block-address
+  entries:
+    - id:              0
+      blocks:          [ '%bb.1' ]
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4, $r5
+
+    SH_JT_DISPATCH $r4, $r5, %jump-table.0 :: (dereferenceable invariant load (s32) from jump-table)
+
+  bb.1:
+    RTS implicit $pr
+...

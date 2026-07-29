@@ -8,11 +8,9 @@
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/minmax.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INTRINSIC
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/vector.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VECTOR
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/vector-shift.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VECTOR
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/block-address.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ADDRESS
 
 ; INTRINSIC: LLVM ERROR: SH intrinsics are not supported
 ; VECTOR: LLVM ERROR: SH only supports i8, i16, i32, and selected i64 integer operations
-; ADDRESS: LLVM ERROR: SH block addresses are not supported
 
 ;--- funnel.ll
 declare i32 @llvm.fshl.i32(i32, i32, i32)
@@ -88,14 +86,4 @@ define i32 @vector_shift(i32 %value, i32 %count) {
 	%shifted = shl <2 x i32> %vector_value, %vector_count
 	%result = extractelement <2 x i32> %shifted, i32 0
 	ret i32 %result
-}
-
-;--- block-address.ll
-define void @block_address(ptr %destination_slot) {
-entry:
-	store volatile ptr blockaddress(@block_address, %destination), ptr %destination_slot
-	br label %destination
-
-destination:
-	ret void
 }

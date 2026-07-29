@@ -192,6 +192,9 @@ def SDT_SHCallSeqStart
     : SDCallSeqStart<[SDTCisVT<0, i32>, SDTCisVT<1, i32>]>;
 def SDT_SHCallSeqEnd
     : SDCallSeqEnd<[SDTCisVT<0, i32>, SDTCisVT<1, i32>]>;
+def SDT_SHBrJT
+    : SDTypeProfile<0, 3, [SDTCisVT<0, i32>, SDTCisVT<1, i32>,
+                           SDTCisVT<2, i32>]>;
 
 def SHret : SDNode<"SHISD::RET_GLUE", SDTNone,
                    [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
@@ -219,6 +222,9 @@ def SHshlparts : SDNode<"SHISD::SHL_PARTS", SDT_SHShiftParts>;
 def SHsrlparts : SDNode<"SHISD::SRL_PARTS", SDT_SHShiftParts>;
 def SHsraparts : SDNode<"SHISD::SRA_PARTS", SDT_SHShiftParts>;
 def SHsetcc64 : SDNode<"SHISD::SETCC64", SDT_SHSetCC64>;
+def SHbrjt
+    : SDNode<"SHISD::BR_JT", SDT_SHBrJT,
+             [SDNPHasChain, SDNPMayLoad, SDNPMemOperand]>;
 
 def non_simm8 : ImmLeaf<i32, [{ return !isInt<8>(Imm); }]>;
 def u5imm : ImmLeaf<i32, [{ return isUInt<5>(Imm); }]>;
@@ -484,6 +490,18 @@ let isBranch = 1, isTerminator = 1, Uses = [TBit] in {
 let isBranch = 1, isTerminator = 1, isBarrier = 1, hasDelaySlot = 1 in
 def BRA : SHBranch12<0xa, (ins brtarget12:$target), "bra\t$target",
                      [(br bb:$target)]>;
+
+let isBranch = 1, isIndirectBranch = 1, isTerminator = 1, isBarrier = 1,
+    hasDelaySlot = 1 in
+def JMP : SHIndirectBranch<(ins GPR:$target, variable_ops), "jmp\t@$target",
+                           [(brind GPR:$target)]>;
+
+let usesCustomInserter = 1, isBranch = 1, isIndirectBranch = 1,
+    isTerminator = 1, isBarrier = 1, mayLoad = 1 in
+def SH_JT_DISPATCH
+    : SHPseudo<(outs), (ins GPR:$index, GPR:$base, i32imm:$jti)> {
+  let Pattern = [(SHbrjt GPR:$index, GPR:$base, tjumptable:$jti)];
+}
 
 let isCall = 1, hasDelaySlot = 1, Defs = [PR] in {
   def BSR : SHBranch12<0xb, (ins calltarget12:$target), "bsr\t$target",

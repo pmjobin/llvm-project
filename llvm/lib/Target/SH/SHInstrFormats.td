@@ -106,6 +106,16 @@ class SHIndirectCall<dag Ins, string Asm, list<dag> pattern = []>
   let Inst{7-0} = 0x0b;
 }
 
+class SHIndirectBranch<dag Ins, string Asm, list<dag> pattern = []>
+    : SHInst<(outs), Ins, Asm> {
+  bits<4> target;
+
+  let Pattern = pattern;
+  let Inst{15-12} = 0x4;
+  let Inst{11-8} = target;
+  let Inst{7-0} = 0x2b;
+}
+
 class SHPRStack<bits<4> LowNibble, dag Outs, dag Ins, string Asm>
     : SHInst<Outs, Ins, Asm> {
   bits<4> base_wb;

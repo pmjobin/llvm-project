@@ -14,6 +14,8 @@
 #include "llvm/CodeGen/MachineInstrBundle.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/IR/Module.h"
+#include "llvm/MC/MCInstBuilder.h"
+#include "llvm/MC/MCInstrAnalysis.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/TargetSelect.h"
@@ -87,6 +89,8 @@ TEST_F(SHInstrInfoTest, GetInstSizeInBytesAccountsForDelaySlots) {
                           .addExternalSymbol("callee");
   MachineInstr *Jsr =
       BuildMI(Standalone, DebugLoc(), TII->get(SH::JSR)).addReg(SH::R4);
+  MachineInstr *Jmp =
+      BuildMI(Standalone, DebugLoc(), TII->get(SH::JMP)).addReg(SH::R4);
   MachineInstr *Add =
       BuildMI(Standalone, DebugLoc(), TII->get(SH::ADDri), SH::R15)
           .addReg(SH::R15)
@@ -110,6 +114,7 @@ TEST_F(SHInstrInfoTest, GetInstSizeInBytesAccountsForDelaySlots) {
   EXPECT_EQ(4u, TII->getInstSizeInBytes(*Rts));
   EXPECT_EQ(4u, TII->getInstSizeInBytes(*Bsr));
   EXPECT_EQ(4u, TII->getInstSizeInBytes(*Jsr));
+  EXPECT_EQ(4u, TII->getInstSizeInBytes(*Jmp));
 
   MachineBasicBlock *BraBundleBlock = createBlock();
   Bra = BuildMI(BraBundleBlock, DebugLoc(), TII->get(SH::BRA)).addMBB(Target);
@@ -151,6 +156,245 @@ TEST_F(SHInstrInfoTest, GetInstSizeInBytesAccountsForDelaySlots) {
   finalizeBundle(*JsrBundleBlock, Jsr->getIterator(),
                  std::next(Nop->getIterator()));
   EXPECT_EQ(4u, TII->getInstSizeInBytes(JsrBundleBlock->front()));
+
+  MachineBasicBlock *JmpBundleBlock = createBlock();
+  Jmp = BuildMI(JmpBundleBlock, DebugLoc(), TII->get(SH::JMP)).addReg(SH::R4);
+  Nop = BuildMI(JmpBundleBlock, DebugLoc(), TII->get(SH::NOP));
+  MIBundleBuilder(*JmpBundleBlock, Jmp->getIterator(),
+                  std::next(Nop->getIterator()));
+  finalizeBundle(*JmpBundleBlock, Jmp->getIterator(),
+                 std::next(Nop->getIterator()));
+  EXPECT_EQ(4u, TII->getInstSizeInBytes(JmpBundleBlock->front()));
+}
+
+TEST_F(SHInstrInfoTest, IndirectJumpHasPreciseProperties) {
+  const MCInstrDesc &Desc = TII->get(SH::JMP);
+  EXPECT_EQ(2u, Desc.getSize());
+  EXPECT_EQ(0u, Desc.getNumDefs());
+  EXPECT_EQ(1u, Desc.getNumOperands());
+  EXPECT_TRUE(Desc.isVariadic());
+  EXPECT_TRUE(Desc.isBranch());
+  EXPECT_TRUE(Desc.isIndirectBranch());
+  EXPECT_TRUE(Desc.isTerminator());
+  EXPECT_TRUE(Desc.isBarrier());
+  EXPECT_TRUE(Desc.hasDelaySlot());
+  EXPECT_FALSE(Desc.isCall());
+  EXPECT_FALSE(Desc.isReturn());
+  EXPECT_FALSE(Desc.mayLoad());
+  EXPECT_FALSE(Desc.mayStore());
+  EXPECT_FALSE(Desc.hasUnmodeledSideEffects());
+  EXPECT_TRUE(Desc.implicit_uses().empty());
+  EXPECT_TRUE(Desc.implicit_defs().empty());
+}
+
+TEST_F(SHInstrInfoTest, IndirectJumpIsNotAnalyzedOrRemovedAsDirectBranch) {
+  MachineBasicBlock *Dispatch = createBlock();
+  MachineBasicBlock *FirstTarget = createBlock();
+  MachineBasicBlock *SecondTarget = createBlock();
+  Dispatch->addSuccessor(FirstTarget);
+  Dispatch->addSuccessor(SecondTarget);
+  MachineInstr *Jmp =
+      BuildMI(Dispatch, DebugLoc(), TII->get(SH::JMP)).addReg(SH::R4);
+
+  MachineBasicBlock *TBB = nullptr;
+  MachineBasicBlock *FBB = nullptr;
+  SmallVector<MachineOperand, 4> Condition;
+  EXPECT_TRUE(TII->analyzeBranch(*Dispatch, TBB, FBB, Condition));
+  EXPECT_EQ(nullptr, TBB);
+  EXPECT_EQ(nullptr, FBB);
+  EXPECT_TRUE(Condition.empty());
+  EXPECT_EQ(nullptr, TII->getBranchDestBlock(*Jmp));
+  EXPECT_EQ(0u, TII->removeBranch(*Dispatch));
+  EXPECT_EQ(SH::JMP, Dispatch->back().getOpcode());
+  EXPECT_EQ(2u, Dispatch->succ_size());
+}
+
+TEST_F(SHInstrInfoTest, MCAnalysisClassifiesIndirectControlTransfer) {
+  Triple TT("sh-unknown-elf");
+  std::string Error;
+  const Target *Target = TargetRegistry::lookupTarget(TT, Error);
+  ASSERT_NE(nullptr, Target) << Error;
+  std::unique_ptr<const MCInstrInfo> Info(Target->createMCInstrInfo());
+  std::unique_ptr<const MCInstrAnalysis> Analysis(
+      Target->createMCInstrAnalysis(Info.get()));
+  ASSERT_NE(nullptr, Info);
+  ASSERT_NE(nullptr, Analysis);
+
+  MCInst Jmp = MCInstBuilder(SH::JMP).addReg(SH::R4);
+  MCInst Jsr = MCInstBuilder(SH::JSR).addReg(SH::R4);
+  MCInst Rts = MCInstBuilder(SH::RTS);
+  MCInst Bra = MCInstBuilder(SH::BRA).addImm(4);
+  MCInst Bt = MCInstBuilder(SH::BT).addImm(4);
+  MCInst Bf = MCInstBuilder(SH::BF).addImm(4);
+
+  EXPECT_TRUE(Analysis->isBranch(Jmp));
+  EXPECT_TRUE(Analysis->isIndirectBranch(Jmp));
+  EXPECT_TRUE(Analysis->isTerminator(Jmp));
+  EXPECT_TRUE(Analysis->isBarrier(Jmp));
+  EXPECT_FALSE(Analysis->isCall(Jmp));
+  EXPECT_FALSE(Analysis->isReturn(Jmp));
+  uint64_t Destination = 0;
+  EXPECT_FALSE(Analysis->evaluateBranch(Jmp, 0x100, 2, Destination));
+
+  EXPECT_TRUE(Analysis->isCall(Jsr));
+  EXPECT_FALSE(Analysis->isIndirectBranch(Jsr));
+  EXPECT_TRUE(Analysis->isReturn(Rts));
+  EXPECT_FALSE(Analysis->isCall(Rts));
+  EXPECT_TRUE(Analysis->isUnconditionalBranch(Bra));
+  EXPECT_TRUE(Analysis->isConditionalBranch(Bt));
+  EXPECT_TRUE(Analysis->isConditionalBranch(Bf));
+}
+
+namespace {
+
+struct SwitchTableModel {
+  int32_t Minimum;
+  unsigned DefaultDestination;
+  SmallVector<unsigned, 32> Entries;
+};
+
+static SwitchTableModel
+buildSwitchTableModel(ArrayRef<std::pair<int32_t, unsigned>> Cases,
+                      unsigned DefaultDestination) {
+  assert(!Cases.empty());
+  int32_t Minimum = Cases.front().first;
+  int32_t Maximum = Cases.front().first;
+  for (auto [Value, Destination] : Cases) {
+    (void)Destination;
+    Minimum = std::min(Minimum, Value);
+    Maximum = std::max(Maximum, Value);
+  }
+  uint64_t Range = static_cast<uint64_t>(static_cast<int64_t>(Maximum) -
+                                         static_cast<int64_t>(Minimum));
+  assert(Range < 128 && "test model only builds compact switch tables");
+
+  SwitchTableModel Model{
+      Minimum, DefaultDestination,
+      SmallVector<unsigned, 32>(Range + 1, DefaultDestination)};
+  for (auto [Value, Destination] : Cases) {
+    uint32_t Index =
+        static_cast<uint32_t>(Value) - static_cast<uint32_t>(Minimum);
+    Model.Entries[Index] = Destination;
+  }
+  return Model;
+}
+
+static unsigned evaluateSwitchTable(const SwitchTableModel &Model,
+                                    int32_t Value) {
+  uint32_t Index =
+      static_cast<uint32_t>(Value) - static_cast<uint32_t>(Model.Minimum);
+  if (Index >= Model.Entries.size())
+    return Model.DefaultDestination;
+  return Model.Entries[Index];
+}
+
+static unsigned
+evaluateSwitchCases(ArrayRef<std::pair<int32_t, unsigned>> Cases,
+                    unsigned DefaultDestination, int32_t Value) {
+  for (auto [CaseValue, Destination] : Cases)
+    if (Value == CaseValue)
+      return Destination;
+  return DefaultDestination;
+}
+
+static void verifySwitchTableModel(ArrayRef<std::pair<int32_t, unsigned>> Cases,
+                                   unsigned DefaultDestination,
+                                   ArrayRef<int32_t> Values) {
+  SwitchTableModel Model = buildSwitchTableModel(Cases, DefaultDestination);
+  for (int32_t Value : Values)
+    EXPECT_EQ(evaluateSwitchCases(Cases, DefaultDestination, Value),
+              evaluateSwitchTable(Model, Value))
+        << "switch value " << Value << ", minimum " << Model.Minimum;
+}
+
+} // namespace
+
+TEST_F(SHInstrInfoTest, SwitchTableModelMatchesSwitchSemantics) {
+  constexpr std::pair<int32_t, unsigned> NegativeCases[] = {
+      {-4, 1}, {-3, 2}, {-1, 2}, {2, 3}};
+  constexpr int32_t NegativeValues[] = {-6, -5, -4, -3, -2, -1, 0, 1, 2, 3};
+  verifySwitchTableModel(NegativeCases, 9, NegativeValues);
+
+  constexpr std::pair<int32_t, unsigned> LowBoundaryCases[] = {
+      {std::numeric_limits<int32_t>::min(), 1},
+      {std::numeric_limits<int32_t>::min() + 2, 2},
+      {std::numeric_limits<int32_t>::min() + 5, 1}};
+  constexpr int32_t LowBoundaryValues[] = {
+      std::numeric_limits<int32_t>::min(),
+      std::numeric_limits<int32_t>::min() + 1,
+      std::numeric_limits<int32_t>::min() + 5,
+      std::numeric_limits<int32_t>::min() + 6,
+      std::numeric_limits<int32_t>::max()};
+  verifySwitchTableModel(LowBoundaryCases, 7, LowBoundaryValues);
+
+  constexpr std::pair<int32_t, unsigned> HighBoundaryCases[] = {
+      {std::numeric_limits<int32_t>::max() - 5, 1},
+      {std::numeric_limits<int32_t>::max() - 2, 2},
+      {std::numeric_limits<int32_t>::max(), 3}};
+  constexpr int32_t HighBoundaryValues[] = {
+      std::numeric_limits<int32_t>::min(),
+      std::numeric_limits<int32_t>::max() - 6,
+      std::numeric_limits<int32_t>::max() - 5,
+      std::numeric_limits<int32_t>::max() - 4,
+      std::numeric_limits<int32_t>::max()};
+  verifySwitchTableModel(HighBoundaryCases, 7, HighBoundaryValues);
+
+  constexpr std::pair<int32_t, unsigned> PromotedI8Cases[] = {
+      {static_cast<int8_t>(-128), 1},
+      {static_cast<int8_t>(-126), 2},
+      {static_cast<int8_t>(-123), 1}};
+  constexpr int32_t PromotedI8Values[] = {
+      static_cast<int8_t>(-128), static_cast<int8_t>(-127),
+      static_cast<int8_t>(-123), static_cast<int8_t>(127)};
+  verifySwitchTableModel(PromotedI8Cases, 8, PromotedI8Values);
+
+  constexpr std::pair<int32_t, unsigned> PromotedI16Cases[] = {
+      {static_cast<int16_t>(-32768), 1},
+      {static_cast<int16_t>(-32766), 2},
+      {static_cast<int16_t>(-32763), 1}};
+  constexpr int32_t PromotedI16Values[] = {
+      static_cast<int16_t>(-32768), static_cast<int16_t>(-32767),
+      static_cast<int16_t>(-32763), static_cast<int16_t>(32767)};
+  verifySwitchTableModel(PromotedI16Cases, 8, PromotedI16Values);
+}
+
+TEST_F(SHInstrInfoTest, RandomizedSwitchTableModelMatchesIndependentOracle) {
+  std::mt19937 Generator(0x53484a54);
+  for (unsigned Iteration = 0; Iteration != 10000; ++Iteration) {
+    int32_t Minimum = static_cast<int32_t>(Generator() % 2000001) - 1000000;
+    unsigned Range = 5 + Generator() % 28;
+    unsigned CaseCount = 4 + Generator() % std::min(12u, Range - 3);
+    unsigned DefaultDestination = Generator() % 8;
+    bool Used[33] = {};
+    SmallVector<std::pair<int32_t, unsigned>, 16> Cases;
+    while (Cases.size() != CaseCount) {
+      unsigned Offset = Generator() % (Range + 1);
+      if (Used[Offset])
+        continue;
+      Used[Offset] = true;
+      Cases.emplace_back(Minimum + static_cast<int32_t>(Offset),
+                         Generator() % 8);
+    }
+
+    int32_t Value;
+    switch (Iteration % 4) {
+    case 0:
+      Value = Minimum - 1 - static_cast<int32_t>(Generator() % 16);
+      break;
+    case 1:
+      Value = Minimum + static_cast<int32_t>(Range) + 1 +
+              static_cast<int32_t>(Generator() % 16);
+      break;
+    default:
+      Value = Minimum + static_cast<int32_t>(Generator() % (Range + 1));
+      break;
+    }
+
+    SwitchTableModel Model = buildSwitchTableModel(Cases, DefaultDestination);
+    EXPECT_EQ(evaluateSwitchCases(Cases, DefaultDestination, Value),
+              evaluateSwitchTable(Model, Value))
+        << "randomized iteration " << Iteration;
+  }
 }
 
 TEST_F(SHInstrInfoTest, CCallRegisterMaskMatchesABI) {

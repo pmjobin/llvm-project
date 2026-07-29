@@ -73,6 +73,26 @@ void SHMCInstLower::lower(const MachineInstr *MI, MCInst &OutMI) const {
       OutMI.addOperand(MCOperand::createExpr(Expr));
       break;
     }
+    case MachineOperand::MO_JumpTableIndex: {
+      if (MI->getOpcode() == SH::JMP)
+        break;
+      const MCExpr *Expr =
+          MCSymbolRefExpr::create(Printer.GetJTISymbol(MO.getIndex()), Ctx);
+      if (MO.getOffset() != 0)
+        Expr = MCBinaryExpr::createAdd(
+            Expr, MCConstantExpr::create(MO.getOffset(), Ctx), Ctx);
+      OutMI.addOperand(MCOperand::createExpr(Expr));
+      break;
+    }
+    case MachineOperand::MO_BlockAddress: {
+      const MCExpr *Expr = MCSymbolRefExpr::create(
+          Printer.GetBlockAddressSymbol(MO.getBlockAddress()), Ctx);
+      if (MO.getOffset() != 0)
+        Expr = MCBinaryExpr::createAdd(
+            Expr, MCConstantExpr::create(MO.getOffset(), Ctx), Ctx);
+      OutMI.addOperand(MCOperand::createExpr(Expr));
+      break;
+    }
     case MachineOperand::MO_RegisterMask:
       break;
     default:

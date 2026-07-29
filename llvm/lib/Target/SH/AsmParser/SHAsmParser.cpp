@@ -536,7 +536,8 @@ ParseStatus SHAsmParser::parsePostIncGPR(OperandVector &Operands) {
 
 ParseStatus SHAsmParser::parseOperand(OperandVector &Operands,
                                       StringRef Mnemonic) {
-  if (Mnemonic == "jsr" && Parser.getTok().is(AsmToken::At)) {
+  if ((Mnemonic == "jsr" || Mnemonic == "jmp") &&
+      Parser.getTok().is(AsmToken::At)) {
     SMLoc AtLoc = Parser.getTok().getLoc();
     Operands.push_back(SHOperand::createToken("@", AtLoc));
     Parser.Lex();

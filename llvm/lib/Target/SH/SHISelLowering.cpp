@@ -10,12 +10,15 @@
 #include "SH.h"
 #include "SHConstantPoolValue.h"
 #include "SHSubtarget.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/CodeGen/MachineJumpTableInfo.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/PseudoSourceValue.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
@@ -73,6 +76,8 @@ SHTargetLowering::SHTargetLowering(const TargetMachine &TM,
         ISD::SETCC, ISD::GlobalAddress, ISD::BlockAddress, ISD::JumpTable,
         ISD::ConstantPool, ISD::GlobalTLSAddress, ISD::DYNAMIC_STACKALLOC})
     setOperationAction(Opcode, MVT::i32, Custom);
+  setOperationAction(ISD::BR_JT, MVT::Other, Custom);
+  setMinimumJumpTableEntries(4);
 
   setTargetDAGCombine(ISD::ADD);
   computeRegisterProperties(STI.getRegisterInfo());
@@ -181,17 +186,16 @@ static void validateSHAllocaUses(const AllocaInst &Alloca) {
   }
 }
 
-static bool containsUnsupportedSHAddressConstant(const Value *V) {
-  if (isa<BlockAddress>(V))
-    return true;
-  if (isa<GlobalValue>(V))
+static bool isBlockAddressInteger(const Value *V,
+                                  SmallPtrSetImpl<const Value *> &Visited) {
+  if (!Visited.insert(V).second)
     return false;
-  const auto *C = dyn_cast<Constant>(V);
-  if (!C)
-    return false;
-  for (const Use &Operand : C->operands())
-    if (containsUnsupportedSHAddressConstant(Operand.get()))
-      return true;
+  if (const auto *Cast = dyn_cast<PtrToIntInst>(V))
+    return isa<BlockAddress>(Cast->getPointerOperand()->stripPointerCasts());
+  if (const auto *Phi = dyn_cast<PHINode>(V))
+    return llvm::any_of(Phi->incoming_values(), [&](const Value *Incoming) {
+      return isBlockAddressInteger(Incoming, Visited);
+    });
   return false;
 }
 
@@ -217,16 +221,13 @@ void llvm::validateSHIR(const Function &F) {
       report_fatal_error("SH exception-handling pads are not supported");
     for (const Instruction &I : BB) {
       const auto *Call = dyn_cast<CallBase>(&I);
-      for (const Use &Operand : I.operands()) {
-        if (Call && Operand.get() == Call->getCalledOperand())
-          continue;
-        if (containsUnsupportedSHAddressConstant(Operand.get()))
-          report_fatal_error("SH block addresses are not supported");
+      if (const auto *Switch = dyn_cast<SwitchInst>(&I)) {
+        Type *ConditionTy = Switch->getCondition()->getType();
+        if (!ConditionTy->isIntegerTy(8) && !ConditionTy->isIntegerTy(16) &&
+            !ConditionTy->isIntegerTy(32) && !ConditionTy->isIntegerTy(64))
+          report_fatal_error(
+              "SH switch conditions must be i8, i16, i32, or i64");
       }
-      if (isa<SwitchInst>(&I))
-        report_fatal_error("SH switch is not supported");
-      if (isa<IndirectBrInst>(&I))
-        report_fatal_error("SH indirectbr is not supported");
       if (isa<CallBrInst>(&I))
         report_fatal_error("SH callbr is not supported");
       if (isa<SelectInst>(&I))
@@ -364,6 +365,10 @@ void llvm::validateSHIR(const Function &F) {
       }
 
       if (const auto *BinOp = dyn_cast<BinaryOperator>(&I)) {
+        SmallPtrSet<const Value *, 8> Visited;
+        if (isBlockAddressInteger(BinOp->getOperand(0), Visited) ||
+            isBlockAddressInteger(BinOp->getOperand(1), Visited))
+          report_fatal_error("SH block-address arithmetic is not supported");
         Type *Ty = BinOp->getType();
         if (!Ty->isIntegerTy(8) && !Ty->isIntegerTy(16) &&
             !Ty->isIntegerTy(32) && !Ty->isIntegerTy(64))
@@ -784,6 +789,58 @@ SDValue SHTargetLowering::LowerGlobalAddress(SDValue Op,
   return lowerSHSymbolAddress(CPV, SDLoc(Op), DAG);
 }
 
+SDValue SHTargetLowering::LowerBlockAddress(SDValue Op,
+                                            SelectionDAG &DAG) const {
+  const auto *Block = cast<BlockAddressSDNode>(Op);
+  int64_t Addend = Block->getOffset();
+  if (!isInt<32>(Addend))
+    report_fatal_error("SH block address addend must fit signed 32 bits");
+  SHConstantPoolValue *CPV = SHConstantPoolValue::create(
+      Block->getBlockAddress(), static_cast<int32_t>(Addend));
+  return lowerSHSymbolAddress(CPV, SDLoc(Op), DAG);
+}
+
+SDValue SHTargetLowering::LowerJumpTable(SDValue Op, SelectionDAG &DAG) const {
+  const auto *Table = cast<JumpTableSDNode>(Op);
+  if (Table->getIndex() < 0)
+    report_fatal_error("SH jump-table index must be nonnegative");
+  SHConstantPoolValue *CPV = SHConstantPoolValue::create(
+      *DAG.getContext(), static_cast<unsigned>(Table->getIndex()), 0);
+  return lowerSHSymbolAddress(CPV, SDLoc(Op), DAG);
+}
+
+SDValue SHTargetLowering::LowerBR_JT(SDValue Op, SelectionDAG &DAG) const {
+  SDValue Chain = Op.getOperand(0);
+  SDValue Table = Op.getOperand(1);
+  SDValue Index = Op.getOperand(2);
+  const auto *JT = cast<JumpTableSDNode>(Table);
+  if (Index.getValueType() != MVT::i32)
+    report_fatal_error("SH jump-table index must be i32");
+  if (JT->getIndex() < 0)
+    report_fatal_error("SH jump-table index must be nonnegative");
+
+  MachineFunction &MF = DAG.getMachineFunction();
+  const MachineJumpTableInfo *MJTI = MF.getJumpTableInfo();
+  if (!MJTI ||
+      static_cast<unsigned>(JT->getIndex()) >= MJTI->getJumpTables().size())
+    report_fatal_error("SH jump-table branch has an invalid table index");
+  if (MJTI->getEntryKind() != MachineJumpTableInfo::EK_BlockAddress)
+    report_fatal_error("SH only supports absolute block-address jump tables");
+  if (MJTI->getEntrySize(DAG.getDataLayout()) != 4 ||
+      MJTI->getEntryAlignment(DAG.getDataLayout()) != 4)
+    report_fatal_error("SH jump-table entries must be four-byte words");
+
+  SDValue TargetJT = DAG.getTargetJumpTable(JT->getIndex(), MVT::i32);
+  SDValue Ops[] = {Chain, Index, Table, TargetJT};
+  MachineMemOperand::Flags Flags = MachineMemOperand::MOLoad |
+                                   MachineMemOperand::MODereferenceable |
+                                   MachineMemOperand::MOInvariant;
+  return DAG.getMemIntrinsicNode(SHISD::BR_JT, SDLoc(Op),
+                                 DAG.getVTList(MVT::Other), Ops, MVT::i32,
+                                 MachinePointerInfo::getJumpTable(MF), Align(4),
+                                 Flags, LocationSize::precise(4));
+}
+
 SDValue SHTargetLowering::LowerConstantPool(SDValue Op,
                                             SelectionDAG &DAG) const {
   const auto *CP = cast<ConstantPoolSDNode>(Op);
@@ -1015,14 +1072,16 @@ SDValue SHTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
     report_fatal_error("SH dynamic alloca is not supported");
   if (Op.getOpcode() == ISD::GlobalAddress)
     return LowerGlobalAddress(Op, DAG);
+  if (Op.getOpcode() == ISD::BR_JT)
+    return LowerBR_JT(Op, DAG);
   if (Op.getOpcode() == ISD::ConstantPool)
     return LowerConstantPool(Op, DAG);
   if (Op.getOpcode() == ISD::GlobalTLSAddress)
     report_fatal_error("SH thread-local storage is not supported");
   if (Op.getOpcode() == ISD::BlockAddress)
-    report_fatal_error("SH block addresses are not supported");
+    return LowerBlockAddress(Op, DAG);
   if (Op.getOpcode() == ISD::JumpTable)
-    report_fatal_error("SH jump tables are not supported");
+    return LowerJumpTable(Op, DAG);
   if (Op.getOpcode() == ISD::SETCC)
     report_fatal_error(
         "SH comparison results may only be used by conditional branches");
@@ -1045,6 +1104,64 @@ SDValue SHTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
 
 static Register createGPR(MachineRegisterInfo &MRI) {
   return MRI.createVirtualRegister(&SH::GPRRegClass);
+}
+
+static MachineBasicBlock *emitJumpTableDispatch(MachineInstr &MI,
+                                                MachineBasicBlock *MBB) {
+  if (MI.getNumOperands() != 3 || !MI.getOperand(0).isReg() ||
+      !MI.getOperand(1).isReg() || !MI.getOperand(2).isJTI())
+    report_fatal_error(
+        "malformed SH jump-table dispatch operands; expected index, base, and "
+        "jump-table index");
+
+  MachineFunction &MF = *MBB->getParent();
+  MachineRegisterInfo &MRI = MF.getRegInfo();
+  const SHInstrInfo &TII = *MF.getSubtarget<SHSubtarget>().getInstrInfo();
+  const MachineJumpTableInfo *MJTI = MF.getJumpTableInfo();
+  unsigned JTI = MI.getOperand(2).getIndex();
+  if (!MJTI || JTI >= MJTI->getJumpTables().size())
+    report_fatal_error("SH jump-table dispatch has an invalid table index");
+  if (MJTI->getEntryKind() != MachineJumpTableInfo::EK_BlockAddress ||
+      MJTI->getEntrySize(MF.getDataLayout()) != 4 ||
+      MJTI->getEntryAlignment(MF.getDataLayout()) != 4)
+    report_fatal_error(
+        "SH jump-table dispatch requires four-byte absolute block addresses");
+
+  if (MI.memoperands().size() != 1)
+    report_fatal_error(
+        "SH jump-table dispatch requires one table-entry load memory operand");
+  MachineMemOperand *MMO = *MI.memoperands_begin();
+  const PseudoSourceValue *PSV = MMO->getPseudoValue();
+  if (!MMO->isLoad() || MMO->isStore() ||
+      MMO->getSize() != LocationSize::precise(4) ||
+      MMO->getAlign() < Align(4) || !MMO->isInvariant() ||
+      !MMO->isDereferenceable() || !PSV || !PSV->isJumpTable())
+    report_fatal_error(
+        "SH jump-table dispatch requires an invariant, dereferenceable, "
+        "four-byte aligned jump-table load");
+
+  const DebugLoc &DL = MI.getDebugLoc();
+  Register Index = MI.getOperand(0).getReg();
+  Register Base = MI.getOperand(1).getReg();
+  Register IndexCopy = createGPR(MRI);
+  Register Scaled = createGPR(MRI);
+  Register BaseCopy = createGPR(MRI);
+  Register EntryAddress = createGPR(MRI);
+  Register Target = createGPR(MRI);
+
+  BuildMI(*MBB, MI, DL, TII.get(SH::MOVrr), IndexCopy).addReg(Index);
+  BuildMI(*MBB, MI, DL, TII.get(SH::SHLL2), Scaled).addReg(IndexCopy);
+  BuildMI(*MBB, MI, DL, TII.get(SH::MOVrr), BaseCopy).addReg(Base);
+  BuildMI(*MBB, MI, DL, TII.get(SH::ADDrr), EntryAddress)
+      .addReg(BaseCopy)
+      .addReg(Scaled);
+  BuildMI(*MBB, MI, DL, TII.get(SH::MOVL_load_reg), Target)
+      .addReg(EntryAddress)
+      .addMemOperand(MMO);
+  BuildMI(*MBB, MI, DL, TII.get(SH::JMP)).addReg(Target).addJumpTableIndex(JTI);
+
+  MI.eraseFromParent();
+  return MBB;
 }
 
 static MachineBasicBlock *emitMultiply(MachineInstr &MI,
@@ -1668,6 +1785,8 @@ SHTargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
     return emitVariableI64Shift(MI, MBB);
   case SH::BR_CC64_PSEUDO:
     return emitI64CompareBranch(MI, MBB);
+  case SH::SH_JT_DISPATCH:
+    return emitJumpTableDispatch(MI, MBB);
   }
 }
 
@@ -1805,7 +1924,24 @@ const char *SHTargetLowering::getTargetNodeName(unsigned Opcode) const {
     return "SHISD::SRA_PARTS";
   case SHISD::SETCC64:
     return "SHISD::SETCC64";
+  case SHISD::BR_JT:
+    return "SHISD::BR_JT";
   default:
     return nullptr;
   }
+}
+
+unsigned SHTargetLowering::getJumpTableEncoding() const {
+  if (getTargetMachine().getRelocationModel() != Reloc::Static)
+    report_fatal_error("SH jump tables require static relocation");
+  return MachineJumpTableInfo::EK_BlockAddress;
+}
+
+bool SHTargetLowering::isSuitableForJumpTable(const SwitchInst *SI,
+                                              uint64_t NumCases, uint64_t Range,
+                                              ProfileSummaryInfo *PSI,
+                                              BlockFrequencyInfo *BFI) const {
+  if (SI->getCondition()->getType()->getIntegerBitWidth() > 32)
+    return false;
+  return TargetLowering::isSuitableForJumpTable(SI, NumCases, Range, PSI, BFI);
 }

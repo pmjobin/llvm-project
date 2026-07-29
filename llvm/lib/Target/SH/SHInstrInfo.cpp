@@ -322,6 +322,8 @@ bool SHInstrInfo::reverseBranchCondition(
 
 MachineBasicBlock *
 SHInstrInfo::getBranchDestBlock(const MachineInstr &MI) const {
+  if (MI.getOpcode() == SH::JMP)
+    return nullptr;
   assert((MI.getOpcode() == SH::BRA || MI.getOpcode() == SH::BT ||
           MI.getOpcode() == SH::BF) &&
          "not an SH direct branch");

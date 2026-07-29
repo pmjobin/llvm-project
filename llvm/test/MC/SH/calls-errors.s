@@ -24,7 +24,6 @@
 ! SYNTAX: error: invalid operand for instruction
 ! SYNTAX: error: unrecognized instruction mnemonic
 ! SYNTAX: error: unrecognized instruction mnemonic
-! SYNTAX: error: unrecognized instruction mnemonic
 ! SYNTAX: error: invalid operand for instruction
 ! SYNTAX: error: unrecognized instruction mnemonic
 ! SYNTAX: error: invalid register name
@@ -83,7 +82,6 @@ lds.l @r15,pr
 lds.l @r15+,r0
 bsrf r4
 braf r4
-jmp @r4
 sts pr,r0
 lds r0,pr
 sts.l PR,@-r15

@@ -50,9 +50,16 @@ public:
   void AdjustInstrPostInstrSelection(MachineInstr &MI,
                                      SDNode *Node) const override;
   SDValue LowerBR_CC(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerBR_JT(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerBlockAddress(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerConstantPool(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerGlobalAddress(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerJumpTable(SDValue Op, SelectionDAG &DAG) const;
   const char *getTargetNodeName(unsigned Opcode) const override;
+  unsigned getJumpTableEncoding() const override;
+  bool isSuitableForJumpTable(const SwitchInst *SI, uint64_t NumCases,
+                              uint64_t Range, ProfileSummaryInfo *PSI,
+                              BlockFrequencyInfo *BFI) const override;
   bool isIntDivCheap(EVT VT, AttributeList Attr) const override;
   bool isSelectSupported(SelectSupportKind) const override { return false; }
   bool allowsMisalignedMemoryAccesses(

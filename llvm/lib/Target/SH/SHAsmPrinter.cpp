@@ -52,8 +52,6 @@ static bool isSupportedGlobalType(Type *Ty) {
 }
 
 static void validateGlobalInitializer(const Constant *C) {
-  if (isa<BlockAddress>(C))
-    report_fatal_error("SH block addresses are not supported");
   if (const auto *GV = dyn_cast<GlobalVariable>(C); GV && GV->isThreadLocal())
     report_fatal_error("SH thread-local storage is not supported");
   if (isa<GlobalValue>(C))
@@ -153,10 +151,15 @@ public:
     const auto *Value = static_cast<const SHConstantPoolValue *>(MCPV);
     assert(Value->getModifier() == SHConstantPoolValue::Modifier::None &&
            "unsupported SH constant-pool modifier");
-    MCSymbol *Symbol =
-        Value->isGlobalValue()
-            ? getSymbol(Value->getGlobalValue())
-            : GetExternalSymbolSymbol(Value->getExternalSymbol());
+    MCSymbol *Symbol;
+    if (Value->isGlobalValue())
+      Symbol = getSymbol(Value->getGlobalValue());
+    else if (Value->isExternalSymbol())
+      Symbol = GetExternalSymbolSymbol(Value->getExternalSymbol());
+    else if (Value->isJumpTable())
+      Symbol = GetJTISymbol(Value->getJumpTableIndex());
+    else
+      Symbol = GetBlockAddressSymbol(Value->getBlockAddress());
     const MCExpr *Expr = MCSymbolRefExpr::create(Symbol, OutContext);
     if (Value->getAddend() != 0)
       Expr = MCBinaryExpr::createAdd(
@@ -170,6 +173,9 @@ public:
       emitLiteralIslandEntry(*MI);
       return;
     }
+    if (MI->getOpcode() == SH::SH_JT_DISPATCH)
+      report_fatal_error(
+          "SH jump-table dispatch reached final emission without expansion");
     SHMCInstLower Lowering(OutContext, *this);
     MachineBasicBlock::const_instr_iterator I = MI->getIterator();
     MachineBasicBlock::const_instr_iterator E = MI->getParent()->instr_end();
