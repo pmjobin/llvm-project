@@ -8,7 +8,6 @@
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/overflow.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INTRINSIC
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/materialized-compare.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=MATERIALIZED
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/select.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=SELECT
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/varargs.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VARARGS
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/byval.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYVAL
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/vector.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VECTOR
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/calling-convention.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=CALLING-CONVENTION
@@ -22,7 +21,6 @@
 ; INTRINSIC: LLVM ERROR: SH intrinsics are not supported
 ; MATERIALIZED: LLVM ERROR: SH comparison results may only be used by conditional branches
 ; SELECT: LLVM ERROR: SH select is not supported
-; VARARGS: LLVM ERROR: SH varargs are not supported
 ; BYVAL: LLVM ERROR: SH calls only support scalar i32, i64, and pointer arguments
 ; VECTOR: LLVM ERROR: SH only supports i8, i16, i32, and selected i64 integer operations
 ; CALLING-CONVENTION: LLVM ERROR: SH only supports the C calling convention
@@ -83,11 +81,6 @@ define i32 @materialized_i64_compare(i64 %a, i64 %b) {
 ;--- select.ll
 define i64 @select_i64(i64 %a, i64 %b) {
 	%value = select i1 true, i64 %a, i64 %b
-	ret i64 %value
-}
-
-;--- varargs.ll
-define i64 @varargs_i64(i64 %value, ...) {
 	ret i64 %value
 }
 

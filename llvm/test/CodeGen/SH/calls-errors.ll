@@ -1,6 +1,4 @@
 ; RUN: split-file %s %t
-; RUN: not --crash llc -mtriple=shle-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/varargs-call.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VARARGS-CALL
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/varargs-definition.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VARARGS
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/float-argument.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ARGUMENT
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/byval.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ARGUMENT
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/sret.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=SRET
@@ -16,8 +14,6 @@
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/calling-convention.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=CC
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/inline-asm.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INLINE-ASM
 
-; VARARGS-CALL: LLVM ERROR: SH varargs calls are not supported
-; VARARGS: LLVM ERROR: SH varargs are not supported
 ; ARGUMENT: LLVM ERROR: SH calls only support scalar i32, i64, and pointer arguments
 ; SRET: LLVM ERROR: SH sret requires a fixed aggregate containing only integers and address-space-zero pointers
 ; RETURN: LLVM ERROR: SH calls only support void, i32, i64, and pointer return values
@@ -28,18 +24,6 @@
 ; FRAME: LLVM ERROR: SH stack frame size cannot exceed 60 bytes
 ; CC: LLVM ERROR: SH only supports the C calling convention
 ; INLINE-ASM: LLVM ERROR: SH inline assembly is not supported
-
-;--- varargs-call.ll
-define i32 @varargs_call(ptr %fn) {
-	%result = call i32 (i32, ...) %fn(i32 1, i32 2)
-	ret i32 %result
-}
-
-;--- varargs-definition.ll
-define i32 @varargs_definition(ptr %fn, ...) {
-	%result = call i32 %fn()
-	ret i32 %result
-}
 
 ;--- float-argument.ll
 define void @float_argument(ptr %fn) {

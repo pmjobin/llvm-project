@@ -14,6 +14,8 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Pass.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/MathExtras.h"
 
 using namespace llvm;
 
@@ -35,6 +37,100 @@ static bool isSupportedSHAggregateElement(Type *Ty) {
     return llvm::all_of(StructTy->elements(), isSupportedSHAggregateElement);
   }
   return false;
+}
+
+static bool isSupportedSHVarArgType(Type *Ty) {
+  return Ty->isIntegerTy(32) || Ty->isIntegerTy(64) ||
+         (Ty->isPointerTy() && Ty->getPointerAddressSpace() == 0) ||
+         (Ty->isAggregateType() && isSupportedSHAggregateElement(Ty));
+}
+
+static LoadInst *reconstructSHVarArgAggregate(IRBuilder<> &Builder, Function &F,
+                                              Type *Ty, Value *Cursor,
+                                              uint64_t ValueSize) {
+  IRBuilder<> EntryBuilder(&*F.getEntryBlock().getFirstInsertionPt());
+  AllocaInst *Temporary = EntryBuilder.CreateAlloca(Ty, nullptr, "vaarg.tmp");
+  Temporary->setAlignment(Align(4));
+
+  Type *Int8Ty = Builder.getInt8Ty();
+  Type *Int32Ty = Builder.getInt32Ty();
+  for (uint64_t Offset = 0; Offset < ValueSize; Offset += 4) {
+    uint64_t ValidBytes = std::min<uint64_t>(4, ValueSize - Offset);
+    uint64_t SourceOffset =
+        Offset + (!F.getDataLayout().isLittleEndian() ? 4 - ValidBytes : 0);
+    if (ValidBytes == 4) {
+      Value *Source = Builder.CreateConstGEP1_64(Int8Ty, Cursor, SourceOffset,
+                                                 "vaarg.source");
+      LoadInst *Chunk =
+          Builder.CreateAlignedLoad(Int32Ty, Source, Align(4), "vaarg.chunk");
+      Value *Destination = Builder.CreateConstGEP1_64(Int8Ty, Temporary, Offset,
+                                                      "vaarg.destination");
+      Builder.CreateAlignedStore(Chunk, Destination, Align(4));
+      continue;
+    }
+    for (uint64_t Byte = 0; Byte != ValidBytes; ++Byte) {
+      Value *Source = Builder.CreateConstGEP1_64(
+          Int8Ty, Cursor, SourceOffset + Byte, "vaarg.source");
+      LoadInst *Piece =
+          Builder.CreateAlignedLoad(Int8Ty, Source, Align(1), "vaarg.byte");
+      Value *Destination = Builder.CreateConstGEP1_64(
+          Int8Ty, Temporary, Offset + Byte, "vaarg.destination");
+      Builder.CreateAlignedStore(Piece, Destination, Align(1));
+    }
+  }
+  return Builder.CreateAlignedLoad(Ty, Temporary, Align(4));
+}
+
+static bool lowerSHVarArgs(Function &F) {
+  const DataLayout &DL = F.getDataLayout();
+  SmallVector<VAArgInst *, 8> Worklist;
+  for (BasicBlock &BB : F)
+    for (Instruction &I : BB)
+      if (auto *VA = dyn_cast<VAArgInst>(&I))
+        Worklist.push_back(VA);
+
+  for (VAArgInst *VA : Worklist) {
+    if (!F.isVarArg())
+      report_fatal_error("SH va_arg requires a variadic function");
+    Type *Ty = VA->getType();
+    if (!isSupportedSHVarArgType(Ty))
+      report_fatal_error(
+          "SH va_arg requires a supported default-promoted ABI type");
+    Value *VAListStorage = VA->getPointerOperand();
+    if (VAListStorage->getType()->getPointerAddressSpace() != 0)
+      report_fatal_error("SH va_list only supports address space zero");
+    if (!Ty->isSized())
+      report_fatal_error("SH va_arg type must have a fixed size");
+    TypeSize Size = DL.getTypeAllocSize(Ty);
+    if (Size.isScalable() || Size.getFixedValue() == 0)
+      report_fatal_error("SH va_arg type must have a nonzero fixed size");
+
+    IRBuilder<> Builder(VA);
+    Type *PointerTy = PointerType::getUnqual(F.getContext());
+    LoadInst *Cursor = Builder.CreateAlignedLoad(PointerTy, VAListStorage,
+                                                 Align(4), "vaarg.cursor");
+    Value *ValueAddress = Cursor;
+    uint64_t ValueSize = Size.getFixedValue();
+    if (Ty->isAggregateType() && alignTo(ValueSize, 4) > 60)
+      report_fatal_error("SH va_arg aggregate size cannot exceed 60 bytes");
+    LoadInst *LoadedValue;
+    if (Ty->isAggregateType()) {
+      LoadedValue =
+          reconstructSHVarArgAggregate(Builder, F, Ty, Cursor, ValueSize);
+    } else {
+      if (!DL.isLittleEndian() && ValueSize < 4)
+        ValueAddress = Builder.CreateConstGEP1_64(Builder.getInt8Ty(), Cursor,
+                                                  4 - ValueSize);
+      Align ValueAlign = std::min(DL.getABITypeAlign(Ty), Align(4));
+      LoadedValue = Builder.CreateAlignedLoad(Ty, ValueAddress, ValueAlign);
+    }
+    Value *NextCursor = Builder.CreateConstGEP1_64(
+        Builder.getInt8Ty(), Cursor, alignTo(ValueSize, 4), "vaarg.next");
+    Builder.CreateAlignedStore(NextCursor, VAListStorage, Align(4));
+    VA->replaceAllUsesWith(LoadedValue);
+    VA->eraseFromParent();
+  }
+  return !Worklist.empty();
 }
 
 static Align getSHScalarMemoryAlignment(Type *Ty) {
@@ -333,6 +429,7 @@ static bool lowerI64StackAlignment(Function &F) {
 
 static bool prepareSHIR(Function &F) {
   bool Changed = lowerSHMemoryLibcalls(F);
+  Changed |= lowerSHVarArgs(F);
   Changed |= lowerAggregateMemory(F);
   Changed |= lowerI64StackAlignment(F);
   validateSHIR(F);

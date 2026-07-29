@@ -8,6 +8,7 @@
 
 #include "SHFrameLowering.h"
 #include "SHInstrInfo.h"
+#include "SHMachineFunctionInfo.h"
 #include "SHSubtarget.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
@@ -54,8 +55,13 @@ void SHFrameLowering::emitPrologue(MachineFunction &MF,
   if (MF.getFrameInfo().hasCalls()) {
     int FI = getPRSpillFrameIndex(MF);
     int64_t PROffset = MF.getFrameInfo().getObjectOffset(FI);
-    if (PROffset > -4 || PROffset % 4 != 0 ||
-        static_cast<uint64_t>(-PROffset) > StackSize)
+    unsigned VarArgsSaveSize =
+        MF.getInfo<SHMachineFunctionInfo>()->getVarArgsSaveSize();
+    bool IsValidOffset =
+        MF.getFunction().isVarArg()
+            ? PROffset == -static_cast<int64_t>(VarArgsSaveSize + 4)
+            : PROffset <= -4 && PROffset % 4 == 0;
+    if (!IsValidOffset || static_cast<uint64_t>(-PROffset) > StackSize)
       report_fatal_error("SH PR save area has an invalid frame offset");
     uint64_t BeforePR = static_cast<uint64_t>(-PROffset) - 4;
     if (BeforePR != 0) {
@@ -96,8 +102,13 @@ void SHFrameLowering::emitEpilogue(MachineFunction &MF,
   if (MF.getFrameInfo().hasCalls()) {
     int FI = getPRSpillFrameIndex(MF);
     int64_t PROffset = MF.getFrameInfo().getObjectOffset(FI);
-    if (PROffset > -4 || PROffset % 4 != 0 ||
-        static_cast<uint64_t>(-PROffset) > StackSize)
+    unsigned VarArgsSaveSize =
+        MF.getInfo<SHMachineFunctionInfo>()->getVarArgsSaveSize();
+    bool IsValidOffset =
+        MF.getFunction().isVarArg()
+            ? PROffset == -static_cast<int64_t>(VarArgsSaveSize + 4)
+            : PROffset <= -4 && PROffset % 4 == 0;
+    if (!IsValidOffset || static_cast<uint64_t>(-PROffset) > StackSize)
       report_fatal_error("SH PR restore area has an invalid frame offset");
     BeforePR = static_cast<uint64_t>(-PROffset) - 4;
     StackSize -= static_cast<uint64_t>(-PROffset);
@@ -139,10 +150,14 @@ bool SHFrameLowering::assignCalleeSavedSpillSlots(
     return false;
 
   MachineFrameInfo &MFI = MF.getFrameInfo();
-  int64_t LowestFixedOffset = 0;
-  for (int FI = MFI.getObjectIndexBegin(); FI != 0; ++FI)
-    LowestFixedOffset = std::min(LowestFixedOffset, MFI.getObjectOffset(FI));
-  MFI.CreateFixedSpillStackObject(4, LowestFixedOffset - 4, true);
+  unsigned VarArgsSaveSize =
+      MF.getInfo<SHMachineFunctionInfo>()->getVarArgsSaveSize();
+  int64_t PROffset = -static_cast<int64_t>(VarArgsSaveSize + 4);
+  // Nonvariadic byval formals may still use a fixed register/stack bridge.
+  if (!MF.getFunction().isVarArg())
+    for (int FI = MFI.getObjectIndexBegin(); FI != 0; ++FI)
+      PROffset = std::min(PROffset, MFI.getObjectOffset(FI) - 4);
+  MFI.CreateFixedSpillStackObject(4, PROffset, true);
   for (auto I = CSI.begin(); I != CSI.end(); ++I) {
     if (I->getReg() != SH::PR)
       continue;

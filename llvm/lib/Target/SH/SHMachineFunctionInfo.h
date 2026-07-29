@@ -15,12 +15,24 @@ namespace llvm {
 
 class SHMachineFunctionInfo : public MachineFunctionInfo {
   Register SRetReturnReg;
+  int VarArgsFrameIndex = 0;
+  unsigned VarArgsSaveSize = 0;
+  bool HasVarArgsSaveArea = false;
 
 public:
   SHMachineFunctionInfo(const Function &, const TargetSubtargetInfo *) {}
 
   Register getSRetReturnReg() const { return SRetReturnReg; }
   void setSRetReturnReg(Register Reg) { SRetReturnReg = Reg; }
+
+  bool hasVarArgsSaveArea() const { return HasVarArgsSaveArea; }
+  int getVarArgsFrameIndex() const { return VarArgsFrameIndex; }
+  unsigned getVarArgsSaveSize() const { return VarArgsSaveSize; }
+  void setVarArgsSaveArea(int FrameIndex, unsigned SaveSize) {
+    VarArgsFrameIndex = FrameIndex;
+    VarArgsSaveSize = SaveSize;
+    HasVarArgsSaveArea = true;
+  }
 };
 
 } // namespace llvm

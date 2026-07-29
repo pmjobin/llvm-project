@@ -76,6 +76,10 @@ SHTargetLowering::SHTargetLowering(const TargetMachine &TM,
         ISD::ConstantPool, ISD::GlobalTLSAddress, ISD::DYNAMIC_STACKALLOC})
     setOperationAction(Opcode, MVT::i32, Custom);
   setOperationAction(ISD::BR_JT, MVT::Other, Custom);
+  setOperationAction(ISD::VASTART, MVT::Other, Custom);
+  setOperationAction(ISD::VAARG, MVT::Other, Expand);
+  setOperationAction(ISD::VACOPY, MVT::Other, Expand);
+  setOperationAction(ISD::VAEND, MVT::Other, Expand);
   setMinimumJumpTableEntries(4);
 
   setTargetDAGCombine(ISD::ADD);
@@ -147,6 +151,12 @@ static bool isSupportedSHAggregateType(Type *Ty) {
 
 static bool isSupportedSHValueType(Type *Ty) {
   return isSupportedSHScalarType(Ty) || isSupportedSHAggregateType(Ty);
+}
+
+static bool isSupportedSHVarArgType(Type *Ty) {
+  return Ty->isIntegerTy(32) || Ty->isIntegerTy(64) ||
+         (Ty->isPointerTy() && Ty->getPointerAddressSpace() == 0) ||
+         isSupportedSHAggregateType(Ty);
 }
 
 static uint64_t getFixedSHTypeAllocSize(const DataLayout &DL, Type *Ty) {
@@ -251,6 +261,9 @@ static void validateSHAllocaUses(const AllocaInst &Alloca) {
           if (Call->getArgOperand(ArgNo) != Pointer)
             continue;
           if (isa<MemIntrinsic>(Call) ||
+              Call->getIntrinsicID() == Intrinsic::vastart ||
+              Call->getIntrinsicID() == Intrinsic::vacopy ||
+              Call->getIntrinsicID() == Intrinsic::vaend ||
               Call->paramHasAttr(ArgNo, Attribute::ByVal) ||
               Call->paramHasAttr(ArgNo, Attribute::StructRet)) {
             IsSupportedCallUse = true;
@@ -341,8 +354,6 @@ void llvm::validateSHIR(const Function &F) {
   }
   if (SRetCount > 1)
     report_fatal_error("SH functions may have only one sret parameter");
-  if (F.isVarArg())
-    report_fatal_error("SH varargs are not supported");
   if (F.hasFnAttribute("stackrealign") ||
       (F.getFnStackAlign() && *F.getFnStackAlign() > Align(4)))
     report_fatal_error("SH stack realignment is not supported");
@@ -375,10 +386,33 @@ void llvm::validateSHIR(const Function &F) {
           validateSHMemoryIntrinsic(*MI);
           continue;
         }
+        switch (Call->getIntrinsicID()) {
+        case Intrinsic::vastart:
+          if (!F.isVarArg())
+            report_fatal_error("SH va_start requires a variadic function");
+          if (llvm::none_of(F.args(), [](const Argument &Arg) {
+                return !Arg.hasStructRetAttr();
+              }))
+            report_fatal_error(
+                "SH va_start requires at least one fixed parameter");
+          if (Call->getArgOperand(0)->getType()->getPointerAddressSpace() != 0)
+            report_fatal_error("SH va_list only supports address space zero");
+          continue;
+        case Intrinsic::vacopy:
+          if (Call->getArgOperand(0)->getType()->getPointerAddressSpace() !=
+                  0 ||
+              Call->getArgOperand(1)->getType()->getPointerAddressSpace() != 0)
+            report_fatal_error("SH va_list only supports address space zero");
+          continue;
+        case Intrinsic::vaend:
+          if (Call->getArgOperand(0)->getType()->getPointerAddressSpace() != 0)
+            report_fatal_error("SH va_list only supports address space zero");
+          continue;
+        default:
+          break;
+        }
         if (Call->getIntrinsicID() != Intrinsic::not_intrinsic)
           report_fatal_error("SH intrinsics are not supported");
-        if (Call->getFunctionType()->isVarArg())
-          report_fatal_error("SH varargs calls are not supported");
         if (const auto *CallInst = dyn_cast<llvm::CallInst>(Call)) {
           if (CallInst->isMustTailCall())
             report_fatal_error("SH musttail calls are not supported");
@@ -394,6 +428,12 @@ void llvm::validateSHIR(const Function &F) {
         unsigned CallSRetCount = 0;
         for (unsigned ArgNo = 0; ArgNo != Call->arg_size(); ++ArgNo) {
           Type *ArgTy = Call->getArgOperand(ArgNo)->getType();
+          bool IsUnnamed = Call->getFunctionType()->isVarArg() &&
+                           ArgNo >= Call->getFunctionType()->getNumParams();
+          if (IsUnnamed && !isSupportedSHVarArgType(ArgTy))
+            report_fatal_error(
+                "SH variadic arguments must use supported default-promoted "
+                "ABI types");
           if (Call->paramHasAttr(ArgNo, Attribute::ByVal)) {
             if (!ArgTy->isPointerTy() || ArgTy->getPointerAddressSpace() != 0)
               report_fatal_error(
@@ -659,6 +699,7 @@ public:
   }
 
   unsigned getStackSize() const { return StackSize; }
+  unsigned getRegisterCursor() const { return NextRegister; }
 };
 
 struct SHValuePart {
@@ -872,7 +913,7 @@ bool SHTargetLowering::CanLowerReturn(
   if (RetTy->isIntegerTy(1))
     report_fatal_error(
         "SH comparison results may only be used by conditional branches");
-  if (CallConv != CallingConv::C || IsVarArg)
+  if (CallConv != CallingConv::C)
     return false;
   if (RetTy->isVoidTy())
     return Outs.empty();
@@ -899,8 +940,6 @@ SDValue SHTargetLowering::LowerFormalArguments(
   const Function &F = MF.getFunction();
   const DataLayout &DataLayout = DAG.getDataLayout();
   validateSHIR(F);
-  if (IsVarArg || F.isVarArg())
-    report_fatal_error("SH varargs are not supported");
 
   MachineRegisterInfo &MRI = MF.getRegInfo();
   MachineFrameInfo &MFI = MF.getFrameInfo();
@@ -970,6 +1009,43 @@ SDValue SHTargetLowering::LowerFormalArguments(
         report_fatal_error("SH byval argument size is inconsistent");
       Align Alignment = Ins[ArgIns[0]].Flags.getNonZeroByValAlign();
       requireSupportedSHByValType(DataLayout, ABIType, Alignment);
+
+      // Keep addressable named values below the target-owned variadic and PR
+      // areas instead of constructing a fixed register/stack bridge across
+      // them.
+      if (F.isVarArg()) {
+        int FI = MFI.CreateStackObject(Size, Alignment, /*isSpillSlot=*/false);
+        MFI.setIsAliasedObjectIndex(FI, true);
+        SDValue LocalBase = DAG.getFrameIndex(FI, MVT::i32);
+        SmallVector<SDValue, 8> TransferChains;
+        for (const SHABIWord &Word : ABIValue.Words) {
+          SDValue Value;
+          if (Word.isRegister()) {
+            Value = copyFromRegister(Word.Reg);
+          } else {
+            int64_t StackOffset = Word.StackOffset;
+            if (!DataLayout.isLittleEndian() && Size < 4 &&
+                ABIValue.Words.size() == 1)
+              StackOffset += 4 - Size;
+            Align StackAlignment = commonAlignment(Align(4), StackOffset);
+            int SourceFI = MFI.CreateFixedObject(Word.ValidBytes, StackOffset,
+                                                 /*IsImmutable=*/true);
+            MFI.setObjectAlignment(SourceFI, StackAlignment);
+            SDValue SourceBase = DAG.getFrameIndex(SourceFI, MVT::i32);
+            Value = loadSHABIWord(
+                DAG, DL, Chain, SourceBase,
+                MachinePointerInfo::getFixedStack(MF, SourceFI), StackAlignment,
+                0, Word.ValidBytes, TransferChains);
+          }
+          storeSHABIWord(DAG, DL, Chain, LocalBase,
+                         MachinePointerInfo::getStack(MF, 0), Alignment,
+                         Word.ByteOffset, Word.ValidBytes, Value,
+                         TransferChains);
+        }
+        ArgChains.append(TransferChains);
+        ABIValues[ArgIns[0]] = LocalBase;
+        continue;
+      }
 
       unsigned RegisterWords =
           llvm::count_if(ABIValue.Words, [](const SHABIWord &Word) {
@@ -1058,6 +1134,34 @@ SDValue SHTargetLowering::LowerFormalArguments(
 
   if (ABIState.getStackSize() > 60)
     report_fatal_error("SH incoming argument area cannot exceed 60 bytes");
+  if (IsVarArg || F.isVarArg()) {
+    unsigned FirstUnnamedRegister = ABIState.getRegisterCursor();
+    unsigned FirstStackOffset = ABIState.getStackSize();
+    unsigned SaveSize = 0;
+    int VarArgsFI;
+    if (FirstUnnamedRegister < std::size(SHArgumentRegisters)) {
+      SaveSize = (std::size(SHArgumentRegisters) - FirstUnnamedRegister) * 4;
+      VarArgsFI = MFI.CreateFixedObject(SaveSize, -static_cast<int>(SaveSize),
+                                        /*IsImmutable=*/false);
+      MFI.setObjectAlignment(VarArgsFI, Align(4));
+      SDValue SaveBase = DAG.getFrameIndex(VarArgsFI, MVT::i32);
+      SmallVector<SDValue, 4> SaveChains;
+      for (unsigned I = FirstUnnamedRegister;
+           I != std::size(SHArgumentRegisters); ++I) {
+        SDValue Value = copyFromRegister(SHArgumentRegisters[I]);
+        storeSHABIWord(DAG, DL, Chain, SaveBase,
+                       MachinePointerInfo::getFixedStack(MF, VarArgsFI),
+                       Align(4), (I - FirstUnnamedRegister) * 4, 4, Value,
+                       SaveChains);
+      }
+      ArgChains.append(SaveChains);
+    } else {
+      VarArgsFI = MFI.CreateFixedObject(4, FirstStackOffset,
+                                        /*IsImmutable=*/true);
+      MFI.setObjectAlignment(VarArgsFI, Align(4));
+    }
+    FuncInfo.setVarArgsSaveArea(VarArgsFI, SaveSize);
+  }
   if (!ArgChains.empty())
     Chain = DAG.getNode(ISD::TokenFactor, DL, MVT::Other, ArgChains);
   for (SDValue Value : ABIValues) {
@@ -1076,8 +1180,6 @@ SHTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
                               const SDLoc &DL, SelectionDAG &DAG) const {
   requireSupportedCallingConvention(CallConv);
   const Function &F = DAG.getMachineFunction().getFunction();
-  if (IsVarArg || F.isVarArg())
-    report_fatal_error("SH varargs are not supported");
   if (Outs.size() != OutVals.size())
     report_fatal_error("SH return value part count is inconsistent");
   MachineFunction &MF = DAG.getMachineFunction();
@@ -1143,8 +1245,6 @@ SHTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
 SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
                                     SmallVectorImpl<SDValue> &InVals) const {
   requireSupportedCallingConvention(CLI.CallConv);
-  if (CLI.IsVarArg)
-    report_fatal_error("SH varargs calls are not supported");
   if (CLI.CB && isa<InvokeInst>(CLI.CB))
     report_fatal_error("SH exception-handling calls are not supported");
   if (CLI.CB && isa<InlineAsm>(CLI.CB->getCalledOperand()))
@@ -1186,8 +1286,16 @@ SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
   };
   SmallVector<SHCallArgument, 8> CallArguments;
   SHABIState ABIState;
+  unsigned NumFixedArgs = CLI.CB && CLI.CB->getFunctionType()->isVarArg()
+                              ? CLI.CB->getFunctionType()->getNumParams()
+                              : CLI.Args.size();
   for (unsigned ArgIndex = 0; ArgIndex != CLI.Args.size(); ++ArgIndex) {
     const ArgListEntry &Arg = CLI.Args[ArgIndex];
+    if (CLI.IsVarArg && ArgIndex >= NumFixedArgs &&
+        (!Arg.OrigTy || !isSupportedSHVarArgType(Arg.OrigTy)))
+      report_fatal_error(
+          "SH variadic arguments must use supported default-promoted ABI "
+          "types");
     if (!Arg.OrigTy || Arg.IsInAlloca || Arg.IsPreallocated || Arg.IsByRef ||
         Arg.IsNest || Arg.IsReturned || Arg.IsSwiftSelf || Arg.IsSwiftAsync ||
         Arg.IsSwiftError)
@@ -1420,6 +1528,19 @@ SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
   }
 
   return Chain;
+}
+
+SDValue SHTargetLowering::LowerVASTART(SDValue Op, SelectionDAG &DAG) const {
+  MachineFunction &MF = DAG.getMachineFunction();
+  const Function &F = MF.getFunction();
+  SHMachineFunctionInfo &FuncInfo = *MF.getInfo<SHMachineFunctionInfo>();
+  if (!F.isVarArg() || !FuncInfo.hasVarArgsSaveArea())
+    report_fatal_error("SH va_start requires a variadic function");
+  SDLoc DL(Op);
+  SDValue Cursor = DAG.getFrameIndex(FuncInfo.getVarArgsFrameIndex(), MVT::i32);
+  const Value *Storage = cast<SrcValueSDNode>(Op.getOperand(2))->getValue();
+  return DAG.getStore(Op.getOperand(0), DL, Cursor, Op.getOperand(1),
+                      MachinePointerInfo(Storage), Align(4));
 }
 
 static SDValue lowerSHSymbolAddress(SHConstantPoolValue *CPV, const SDLoc &DL,
@@ -1750,6 +1871,8 @@ void SHTargetLowering::ReplaceNodeResults(SDNode *N,
 }
 
 SDValue SHTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
+  if (Op.getOpcode() == ISD::VASTART)
+    return LowerVASTART(Op, DAG);
   if (Op.getOpcode() == ISD::SETCC &&
       Op.getOperand(0).getValueType() == MVT::i64) {
     SDLoc DL(Op);

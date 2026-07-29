@@ -9,7 +9,6 @@
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/aggregate-cc.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=CC
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/aggregate-select.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=SELECT
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/aggregate-align-eight.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=STACK-ALIGN
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/vararg-aggregate.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VARARGS
 ; RUN: not llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/multiple-sret.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=MULTIPLE-SRET
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/volatile-dynamic.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VOLATILE-DYNAMIC
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/volatile-large-memcpy.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VOLATILE-60
@@ -29,7 +28,6 @@
 ; CC: LLVM ERROR: SH only supports the C calling convention
 ; SELECT: LLVM ERROR: SH select is not supported
 ; STACK-ALIGN: LLVM ERROR: SH stack object alignment cannot exceed 4 bytes
-; VARARGS: LLVM ERROR: SH varargs are not supported
 ; MULTIPLE-SRET: Cannot have multiple 'sret' parameters!
 ; VOLATILE-DYNAMIC: LLVM ERROR: SH volatile memory intrinsics require a constant size
 ; VOLATILE-60: LLVM ERROR: SH volatile memory intrinsic size cannot exceed 60 bytes
@@ -123,14 +121,6 @@ define %S8 @aggregate_select(%S8 %left, %S8 %right) {
 define void @aggregate_align_eight() {
 	%value = alloca %S8, align 8
 	store %S8 zeroinitializer, ptr %value, align 8
-	ret void
-}
-
-;--- vararg-aggregate.ll
-%S4 = type { i32 }
-
-define void @vararg_aggregate(ptr %list, ...) {
-	%value = va_arg ptr %list, %S4
 	ret void
 }
 

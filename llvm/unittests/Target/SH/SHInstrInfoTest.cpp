@@ -1310,4 +1310,90 @@ TEST_F(SHInstrInfoTest, MemoryAccessPlanPreservesExactByteImages) {
   }
 }
 
+TEST(SHVarArgsModelTest, SavedRegisterAndOverflowImagesRoundTrip) {
+  struct Argument {
+    SmallVector<uint8_t, 12> Bytes;
+  };
+  auto appendArgument = [](SmallVectorImpl<SmallVector<uint8_t, 4>> &Slots,
+                           ArrayRef<uint8_t> Bytes, bool IsLittleEndian) {
+    for (unsigned Offset = 0; Offset < Bytes.size(); Offset += 4) {
+      unsigned ValidBytes =
+          std::min(4u, static_cast<unsigned>(Bytes.size() - Offset));
+      SmallVector<uint8_t, 4> Slot(4, 0);
+      unsigned SlotOffset =
+          !IsLittleEndian && ValidBytes != 4 ? 4 - ValidBytes : 0;
+      llvm::copy(Bytes.slice(Offset, ValidBytes), Slot.begin() + SlotOffset);
+      Slots.push_back(std::move(Slot));
+    }
+  };
+  auto readArgument = [](ArrayRef<SmallVector<uint8_t, 4>> Slots,
+                         unsigned &Cursor, unsigned Size, bool IsLittleEndian) {
+    SmallVector<uint8_t, 12> Result;
+    for (unsigned Offset = 0; Offset < Size; Offset += 4) {
+      unsigned ValidBytes = std::min(4u, Size - Offset);
+      unsigned SlotOffset =
+          !IsLittleEndian && ValidBytes != 4 ? 4 - ValidBytes : 0;
+      llvm::append_range(
+          Result, ArrayRef(Slots[Cursor++]).slice(SlotOffset, ValidBytes));
+    }
+    return Result;
+  };
+
+  std::mt19937 Generator(0x53484314);
+  constexpr unsigned AggregateSizes[] = {1, 2, 3, 5, 6, 7, 8, 9, 12};
+  for (bool IsLittleEndian : {false, true}) {
+    for (unsigned Scenario = 0; Scenario != 10000; ++Scenario) {
+      unsigned FixedCursor = Generator() % 5;
+      unsigned FixedStackWords = FixedCursor == 4 ? Generator() % 4 : 0;
+      unsigned ArgumentCount = 1 + Generator() % 12;
+      SmallVector<Argument, 12> Arguments;
+      for (unsigned I = 0; I != ArgumentCount; ++I) {
+        unsigned Kind = Generator() % 3;
+        unsigned Size =
+            Kind == 0 ? 4
+            : Kind == 1
+                ? 8
+                : AggregateSizes[Generator() % std::size(AggregateSizes)];
+        Argument Arg;
+        for (unsigned Byte = 0; Byte != Size; ++Byte)
+          Arg.Bytes.push_back(static_cast<uint8_t>(Generator()));
+        Arguments.push_back(std::move(Arg));
+      }
+
+      SmallVector<SmallVector<uint8_t, 4>, 32> RegisterAndStackSlots;
+      for (unsigned I = 0; I != FixedCursor; ++I)
+        RegisterAndStackSlots.push_back(SmallVector<uint8_t, 4>(4, 0));
+      for (unsigned I = 0; I != FixedStackWords; ++I)
+        RegisterAndStackSlots.push_back(SmallVector<uint8_t, 4>(4, 0));
+      for (const Argument &Arg : Arguments)
+        appendArgument(RegisterAndStackSlots, Arg.Bytes, IsLittleEndian);
+      RegisterAndStackSlots.resize(
+          std::max(4u, static_cast<unsigned>(RegisterAndStackSlots.size())),
+          SmallVector<uint8_t, 4>(4, 0));
+
+      SmallVector<SmallVector<uint8_t, 4>, 32> VaImage;
+      if (FixedCursor < 4)
+        llvm::append_range(VaImage, ArrayRef(RegisterAndStackSlots)
+                                        .slice(FixedCursor, 4 - FixedCursor));
+      unsigned FirstOverflow = std::max(4u, FixedCursor) + FixedStackWords;
+      llvm::append_range(
+          VaImage, ArrayRef(RegisterAndStackSlots).drop_front(FirstOverflow));
+
+      unsigned Cursor = 0;
+      for (const Argument &Arg : Arguments) {
+        ASSERT_LE(Cursor + divideCeil(Arg.Bytes.size(), 4u), VaImage.size())
+            << "scenario " << Scenario << " endian " << IsLittleEndian;
+        SmallVector<uint8_t, 12> Extracted =
+            readArgument(VaImage, Cursor, Arg.Bytes.size(), IsLittleEndian);
+        EXPECT_EQ(Arg.Bytes, Extracted)
+            << "scenario " << Scenario << " endian " << IsLittleEndian;
+      }
+      unsigned ExpectedWords = 0;
+      for (const Argument &Arg : Arguments)
+        ExpectedWords += divideCeil(Arg.Bytes.size(), 4u);
+      EXPECT_EQ(ExpectedWords, Cursor);
+    }
+  }
+}
+
 } // namespace

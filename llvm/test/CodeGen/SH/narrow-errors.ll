@@ -25,7 +25,7 @@
 ; ARGUMENT: LLVM ERROR: SH function arguments must be scalar i32, i64, or pointers
 ; RETURN: LLVM ERROR: SH functions only support void, i32, i64, and pointer return values
 ; CALL-ARGUMENT: LLVM ERROR: SH calls only support scalar i32, i64, and pointer arguments
-; VARARG: LLVM ERROR: SH varargs calls are not supported
+; VARARG: LLVM ERROR: SH variadic arguments must use supported default-promoted ABI types
 ; ARITHMETIC: LLVM ERROR: SH variable narrow integer shifts are not supported
 ; VECTOR: LLVM ERROR: SH only supports 8-, 16-, 32-, and 64-bit integer and pointer loads
 ; MATERIALIZED: LLVM ERROR: SH comparison results may only be used by conditional branches
