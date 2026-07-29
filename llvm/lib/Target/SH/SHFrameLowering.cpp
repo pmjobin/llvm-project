@@ -38,8 +38,7 @@ static uint64_t requireSupportedSHFrame(const MachineFunction &MF) {
 static int getPRSpillFrameIndex(const MachineFunction &MF) {
   const MachineFrameInfo &MFI = MF.getFrameInfo();
   for (int FI = MFI.getObjectIndexBegin(); FI != 0; ++FI)
-    if (MFI.isSpillSlotObjectIndex(FI) && MFI.getObjectOffset(FI) == -4 &&
-        MFI.getObjectSize(FI) == 4)
+    if (MFI.isSpillSlotObjectIndex(FI) && MFI.getObjectSize(FI) == 4)
       return FI;
   report_fatal_error("SH non-leaf function is missing its PR save area");
 }
@@ -54,6 +53,19 @@ void SHFrameLowering::emitPrologue(MachineFunction &MF,
   MachineBasicBlock::iterator Insert = MBB.begin();
   if (MF.getFrameInfo().hasCalls()) {
     int FI = getPRSpillFrameIndex(MF);
+    int64_t PROffset = MF.getFrameInfo().getObjectOffset(FI);
+    if (PROffset > -4 || PROffset % 4 != 0 ||
+        static_cast<uint64_t>(-PROffset) > StackSize)
+      report_fatal_error("SH PR save area has an invalid frame offset");
+    uint64_t BeforePR = static_cast<uint64_t>(-PROffset) - 4;
+    if (BeforePR != 0) {
+      MachineInstrBuilder Adjust =
+          BuildMI(MBB, Insert, DebugLoc(), TII->get(SH::ADDri), SH::R15)
+              .addReg(SH::R15)
+              .addImm(-static_cast<int64_t>(BeforePR))
+              .setMIFlag(MachineInstr::FrameSetup);
+      Insert = std::next(Adjust->getIterator());
+    }
     MachineMemOperand *MMO =
         MF.getMachineMemOperand(MachinePointerInfo::getFixedStack(MF, FI),
                                 MachineMemOperand::MOStore, 4, Align(4));
@@ -63,7 +75,7 @@ void SHFrameLowering::emitPrologue(MachineFunction &MF,
             .addMemOperand(MMO)
             .setMIFlag(MachineInstr::FrameSetup);
     Insert = std::next(Save->getIterator());
-    StackSize -= 4;
+    StackSize -= static_cast<uint64_t>(-PROffset);
   }
   if (StackSize != 0)
     BuildMI(MBB, Insert, DebugLoc(), TII->get(SH::ADDri), SH::R15)
@@ -80,8 +92,16 @@ void SHFrameLowering::emitEpilogue(MachineFunction &MF,
 
   MachineBasicBlock::iterator Insert = MBB.getFirstTerminator();
   const SHInstrInfo *TII = MF.getSubtarget<SHSubtarget>().getInstrInfo();
-  if (MF.getFrameInfo().hasCalls())
-    StackSize -= 4;
+  uint64_t BeforePR = 0;
+  if (MF.getFrameInfo().hasCalls()) {
+    int FI = getPRSpillFrameIndex(MF);
+    int64_t PROffset = MF.getFrameInfo().getObjectOffset(FI);
+    if (PROffset > -4 || PROffset % 4 != 0 ||
+        static_cast<uint64_t>(-PROffset) > StackSize)
+      report_fatal_error("SH PR restore area has an invalid frame offset");
+    BeforePR = static_cast<uint64_t>(-PROffset) - 4;
+    StackSize -= static_cast<uint64_t>(-PROffset);
+  }
   if (StackSize != 0)
     BuildMI(MBB, Insert, DebugLoc(), TII->get(SH::ADDri), SH::R15)
         .addReg(SH::R15)
@@ -96,6 +116,11 @@ void SHFrameLowering::emitEpilogue(MachineFunction &MF,
         .addReg(SH::R15)
         .addMemOperand(MMO)
         .setMIFlag(MachineInstr::FrameDestroy);
+    if (BeforePR != 0)
+      BuildMI(MBB, Insert, DebugLoc(), TII->get(SH::ADDri), SH::R15)
+          .addReg(SH::R15)
+          .addImm(BeforePR)
+          .setMIFlag(MachineInstr::FrameDestroy);
   }
 }
 
@@ -113,7 +138,11 @@ bool SHFrameLowering::assignCalleeSavedSpillSlots(
   if (!MF.getFrameInfo().hasCalls())
     return false;
 
-  MF.getFrameInfo().CreateFixedSpillStackObject(4, -4, true);
+  MachineFrameInfo &MFI = MF.getFrameInfo();
+  int64_t LowestFixedOffset = 0;
+  for (int FI = MFI.getObjectIndexBegin(); FI != 0; ++FI)
+    LowestFixedOffset = std::min(LowestFixedOffset, MFI.getObjectOffset(FI));
+  MFI.CreateFixedSpillStackObject(4, LowestFixedOffset - 4, true);
   for (auto I = CSI.begin(); I != CSI.end(); ++I) {
     if (I->getReg() != SH::PR)
       continue;

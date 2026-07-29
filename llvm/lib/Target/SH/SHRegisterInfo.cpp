@@ -61,6 +61,33 @@ bool SHRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator MI,
                                          RegScavenger *RS) const {
   MachineInstr &Instr = *MI;
   unsigned Opcode = Instr.getOpcode();
+  if (Opcode == SH::LEA_FI) {
+    if (FIOperandNum != 1 || Instr.getNumOperands() != 3 ||
+        !Instr.getOperand(0).isReg() ||
+        !Instr.getOperand(FIOperandNum + 1).isImm())
+      report_fatal_error("SH frame address pseudo is malformed");
+    MachineFunction &MF = *Instr.getParent()->getParent();
+    const MachineFrameInfo &MFI = MF.getFrameInfo();
+    int FrameIndex = Instr.getOperand(FIOperandNum).getIndex();
+    int64_t ByteOffset = MFI.getObjectOffset(FrameIndex) +
+                         static_cast<int64_t>(MFI.getStackSize()) +
+                         static_cast<int64_t>(SPAdj) +
+                         Instr.getOperand(FIOperandNum + 1).getImm();
+    if (ByteOffset < 0 || ByteOffset > 127)
+      report_fatal_error(Twine("SH finalized frame address offset ") +
+                         Twine(ByteOffset) + " must be in [0, 127] from r15");
+    const SHInstrInfo *TII = MF.getSubtarget<SHSubtarget>().getInstrInfo();
+    MachineBasicBlock &MBB = *Instr.getParent();
+    Register Destination = Instr.getOperand(0).getReg();
+    BuildMI(MBB, MI, Instr.getDebugLoc(), TII->get(SH::MOVrr), Destination)
+        .addReg(SH::R15);
+    if (ByteOffset != 0)
+      BuildMI(MBB, MI, Instr.getDebugLoc(), TII->get(SH::ADDri), Destination)
+          .addReg(Destination)
+          .addImm(ByteOffset);
+    MBB.erase(MI);
+    return false;
+  }
   bool IsLong = Opcode == SH::MOVL_load_disp || Opcode == SH::MOVL_store_disp;
   bool IsByte = Opcode == SH::MOVB_load_frame || Opcode == SH::MOVB_store_frame;
   bool IsWord = Opcode == SH::MOVW_load_frame || Opcode == SH::MOVW_store_frame;
@@ -77,6 +104,55 @@ bool SHRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator MI,
                        static_cast<int64_t>(MFI.getStackSize()) +
                        static_cast<int64_t>(SPAdj) +
                        Instr.getOperand(FIOperandNum + 1).getImm();
+
+  bool IsLoad = Opcode == SH::MOVL_load_disp || Opcode == SH::MOVB_load_frame ||
+                Opcode == SH::MOVW_load_frame;
+  if (IsLong && ByteOffset % 4 != 0)
+    report_fatal_error(Twine("SH finalized longword frame reference offset ") +
+                       Twine(ByteOffset) + " must be four-byte aligned");
+  if (IsWord && ByteOffset % 2 != 0)
+    report_fatal_error(Twine("SH finalized word frame reference offset ") +
+                       Twine(ByteOffset) +
+                       " must be even and in [0, 30] from r15");
+  bool NeedsAddressRegister =
+      (IsLong && IsLoad && (ByteOffset < 0 || ByteOffset > 60)) ||
+      (IsByte && (ByteOffset < 0 || ByteOffset > 15)) ||
+      (IsWord && (ByteOffset < 0 || ByteOffset > 30));
+  if (NeedsAddressRegister) {
+    if (ByteOffset < 0 || ByteOffset > 127)
+      report_fatal_error(Twine("SH finalized materialized frame offset ") +
+                         Twine(ByteOffset) + " must be in [0, 127] from r15");
+    const SHInstrInfo *TII = MF.getSubtarget<SHSubtarget>().getInstrInfo();
+    MachineBasicBlock &MBB = *Instr.getParent();
+    unsigned RegisterOpcode =
+        IsLong   ? SH::MOVL_load_reg
+        : IsByte ? (IsLoad ? SH::MOVB_load_reg : SH::MOVB_store_reg)
+                 : (IsLoad ? SH::MOVW_load_reg : SH::MOVW_store_reg);
+    Register Address = IsLoad ? Instr.getOperand(0).getReg() : SH::R0;
+    BuildMI(MBB, MI, Instr.getDebugLoc(), TII->get(SH::MOVrr), Address)
+        .addReg(SH::R15);
+    if (ByteOffset != 0)
+      BuildMI(MBB, MI, Instr.getDebugLoc(), TII->get(SH::ADDri), Address)
+          .addReg(Address)
+          .addImm(ByteOffset);
+    if (IsLoad) {
+      MachineInstrBuilder Load =
+          BuildMI(MBB, MI, Instr.getDebugLoc(), TII->get(RegisterOpcode),
+                  Instr.getOperand(0).getReg())
+              .addReg(Address)
+              .setMIFlags(Instr.getFlags())
+              .cloneMemRefs(Instr);
+      Load->getOperand(0).setIsDead(Instr.getOperand(0).isDead());
+    } else {
+      BuildMI(MBB, MI, Instr.getDebugLoc(), TII->get(RegisterOpcode))
+          .add(Instr.getOperand(0))
+          .addReg(Address, RegState::Kill)
+          .setMIFlags(Instr.getFlags())
+          .cloneMemRefs(Instr);
+    }
+    MBB.erase(MI);
+    return false;
+  }
 
   if (IsLong && (ByteOffset < 0 || ByteOffset > 60 || ByteOffset % 4 != 0))
     report_fatal_error(Twine("SH finalized frame reference offset ") +

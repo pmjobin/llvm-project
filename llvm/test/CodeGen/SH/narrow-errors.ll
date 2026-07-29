@@ -17,9 +17,6 @@
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/variable-shift-i16.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ARITHMETIC
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/vector.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VECTOR
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/materialized-compare.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=MATERIALIZED
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/memcpy.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INTRINSIC
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/memmove.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INTRINSIC
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/memset.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INTRINSIC
 
 ; UNALIGNED-LOAD: LLVM ERROR: SH requires 2-byte alignment for 16-bit loads
 ; UNALIGNED-STORE: LLVM ERROR: SH requires 2-byte alignment for 16-bit stores
@@ -32,7 +29,6 @@
 ; ARITHMETIC: LLVM ERROR: SH variable narrow integer shifts are not supported
 ; VECTOR: LLVM ERROR: SH only supports 8-, 16-, 32-, and 64-bit integer and pointer loads
 ; MATERIALIZED: LLVM ERROR: SH comparison results may only be used by conditional branches
-; INTRINSIC: LLVM ERROR: SH intrinsics are not supported
 
 ;--- unaligned-load.ll
 define i32 @unaligned_load(ptr %p) {
@@ -168,28 +164,4 @@ define i32 @materialized_compare(ptr %p, ptr %q) {
 	%compare = icmp eq i8 %a, %b
 	%result = zext i1 %compare to i32
 	ret i32 %result
-}
-
-;--- memcpy.ll
-declare void @llvm.memcpy.p0.p0.i32(ptr, ptr, i32, i1 immarg)
-
-define void @unsupported_memcpy(ptr %dst, ptr %src) {
-	call void @llvm.memcpy.p0.p0.i32(ptr align 1 %dst, ptr align 1 %src, i32 4, i1 false)
-	ret void
-}
-
-;--- memmove.ll
-declare void @llvm.memmove.p0.p0.i32(ptr, ptr, i32, i1 immarg)
-
-define void @unsupported_memmove(ptr %dst, ptr %src) {
-	call void @llvm.memmove.p0.p0.i32(ptr align 1 %dst, ptr align 1 %src, i32 4, i1 false)
-	ret void
-}
-
-;--- memset.ll
-declare void @llvm.memset.p0.i32(ptr, i8, i32, i1 immarg)
-
-define void @unsupported_memset(ptr %dst) {
-	call void @llvm.memset.p0.i32(ptr align 1 %dst, i8 0, i32 4, i1 false)
-	ret void
 }

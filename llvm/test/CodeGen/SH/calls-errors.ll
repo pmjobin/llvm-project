@@ -2,11 +2,9 @@
 ; RUN: not --crash llc -mtriple=shle-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/varargs-call.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VARARGS-CALL
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/varargs-definition.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=VARARGS
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/float-argument.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ARGUMENT
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/aggregate-argument.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ARGUMENT
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/byval.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ARGUMENT
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/sret.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ARGUMENT
+; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/sret.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=SRET
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/float-return.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=RETURN
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/aggregate-return.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=RETURN
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/tail.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=TAIL
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/musttail.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=MUSTTAIL
 ; RUN: rm -f %t/range.o %t/range-le.o
@@ -21,6 +19,7 @@
 ; VARARGS-CALL: LLVM ERROR: SH varargs calls are not supported
 ; VARARGS: LLVM ERROR: SH varargs are not supported
 ; ARGUMENT: LLVM ERROR: SH calls only support scalar i32, i64, and pointer arguments
+; SRET: LLVM ERROR: SH sret requires a fixed aggregate containing only integers and address-space-zero pointers
 ; RETURN: LLVM ERROR: SH calls only support void, i32, i64, and pointer return values
 ; TAIL: LLVM ERROR: SH tail calls are not supported
 ; MUSTTAIL: LLVM ERROR: SH musttail calls are not supported
@@ -48,12 +47,6 @@ define void @float_argument(ptr %fn) {
 	ret void
 }
 
-;--- aggregate-argument.ll
-define void @aggregate_argument(ptr %fn) {
-	call void %fn({ i32, i32 } { i32 1, i32 2 })
-	ret void
-}
-
 ;--- byval.ll
 define void @byval_argument(ptr %fn, ptr %value) {
 	call void %fn(ptr byval(i32) %value)
@@ -70,13 +63,6 @@ define void @sret_argument(ptr %fn, ptr %value) {
 define i32 @float_return(ptr %fn) {
 	%value = call float %fn()
 	%result = bitcast float %value to i32
-	ret i32 %result
-}
-
-;--- aggregate-return.ll
-define i32 @aggregate_return(ptr %fn) {
-	%value = call { i32, i32 } %fn()
-	%result = extractvalue { i32, i32 } %value, 0
 	ret i32 %result
 }
 

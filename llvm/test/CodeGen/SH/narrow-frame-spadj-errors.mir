@@ -1,10 +1,18 @@
 # RUN: split-file %s %t
-# RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %t/byte-sixteen.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTE
-# RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %t/word-thirty-two.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=WORD
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %t/byte-sixteen.mir -o - | FileCheck %s --check-prefix=BYTE
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %t/word-thirty-two.mir -o - | FileCheck %s --check-prefix=WORD
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %t/long-seventy-six.mir -o - | FileCheck %s --check-prefix=LONG
 # RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %t/word-odd.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=ODD
 
-# BYTE: LLVM ERROR: SH finalized byte frame reference offset 16 must be in [0, 15] from r15
-# WORD: LLVM ERROR: SH finalized word frame reference offset 32 must be even and in [0, 30] from r15
+# BYTE: $r1 = MOVrr $r15
+# BYTE-NEXT: $r1 = ADDri $r1, 16
+# BYTE-NEXT: dead $r1 = MOVB_load_reg $r1
+# WORD: $r1 = MOVrr $r15
+# WORD-NEXT: $r1 = ADDri $r1, 32
+# WORD-NEXT: dead $r1 = MOVW_load_reg $r1
+# LONG: $r1 = MOVrr $r15
+# LONG-NEXT: $r1 = ADDri $r1, 76
+# LONG-NEXT: dead $r1 = MOVL_load_reg $r1
 # ODD: LLVM ERROR: SH finalized word frame reference offset 29 must be even and in [0, 30] from r15
 
 #--- byte-sixteen.mir
@@ -50,6 +58,29 @@ body:             |
     ADJCALLSTACKDOWN 12, 0, implicit-def dead $r15, implicit $r15
     dead $r1 = MOVW_load_frame %fixed-stack.0, 0, implicit-def dead $r0 :: (load (s16) from %fixed-stack.0)
     ADJCALLSTACKUP 12, 0, implicit-def dead $r15, implicit $r15
+    RTS implicit $pr
+...
+
+#--- long-seventy-six.mir
+--- |
+  define void @long_seventy_six() {
+    ret void
+  }
+...
+---
+name:            long_seventy_six
+tracksRegLiveness: true
+noVRegs:         true
+frameInfo:
+  adjustsStack:    true
+fixedStack:
+  - { id: 0, type: default, offset: 16, size: 4, alignment: 4, stack-id: default,
+      isImmutable: true, isAliased: false }
+body:             |
+  bb.0:
+    ADJCALLSTACKDOWN 60, 0, implicit-def dead $r15, implicit $r15
+    dead $r1 = MOVL_load_disp %fixed-stack.0, 0 :: (load (s32) from %fixed-stack.0)
+    ADJCALLSTACKUP 60, 0, implicit-def dead $r15, implicit $r15
     RTS implicit $pr
 ...
 

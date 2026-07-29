@@ -8,6 +8,7 @@
 
 #include "SHTargetMachine.h"
 #include "SH.h"
+#include "SHMachineFunctionInfo.h"
 #include "TargetInfo/SHTargetInfo.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
@@ -93,4 +94,11 @@ public:
 
 TargetPassConfig *SHTargetMachine::createPassConfig(PassManagerBase &PM) {
   return new SHPassConfig(*this, PM);
+}
+
+MachineFunctionInfo *SHTargetMachine::createMachineFunctionInfo(
+    BumpPtrAllocator &Allocator, const Function &F,
+    const TargetSubtargetInfo *STI) const {
+  return SHMachineFunctionInfo::create<SHMachineFunctionInfo>(Allocator, F,
+                                                              STI);
 }

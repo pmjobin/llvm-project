@@ -1,4 +1,4 @@
-# RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o /dev/null 2>&1 | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o - | FileCheck %s
 
 --- |
   define i32 @spadj_sixty_four() {
@@ -22,4 +22,6 @@ body:             |
     RTS implicit $pr, implicit $r0
 ...
 
-# CHECK: LLVM ERROR: SH finalized frame reference offset 64 must be four-byte aligned and in [0, 60] from r15
+# CHECK: $r0 = MOVrr $r15
+# CHECK-NEXT: $r0 = ADDri $r0, 64
+# CHECK-NEXT: $r0 = MOVL_load_reg $r0

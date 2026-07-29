@@ -1179,4 +1179,135 @@ TEST_F(SHInstrInfoTest, RemoveBranchReportsFinalEmittedSize) {
   EXPECT_TRUE(ConditionalAndBundledBra->empty());
 }
 
+TEST_F(SHInstrInfoTest, MemoryAccessPlanPreservesExactByteImages) {
+  auto loadChunk = [](ArrayRef<uint8_t> Bytes, unsigned Offset, unsigned Width,
+                      bool IsLittleEndian) {
+    uint32_t Value = 0;
+    for (unsigned Byte = 0; Byte != Width; ++Byte) {
+      unsigned Shift = 8 * (IsLittleEndian ? Byte : Width - 1 - Byte);
+      Value |= static_cast<uint32_t>(Bytes[Offset + Byte]) << Shift;
+    }
+    return Value;
+  };
+  auto storeChunk = [](MutableArrayRef<uint8_t> Bytes, unsigned Offset,
+                       unsigned Width, uint32_t Value, bool IsLittleEndian) {
+    for (unsigned Byte = 0; Byte != Width; ++Byte) {
+      unsigned Shift = 8 * (IsLittleEndian ? Byte : Width - 1 - Byte);
+      Bytes[Offset + Byte] = static_cast<uint8_t>(Value >> Shift);
+    }
+  };
+  auto copyWithPlan = [&](MutableArrayRef<uint8_t> Bytes, unsigned Destination,
+                          unsigned Source, unsigned Size, Align Alignment,
+                          bool IsLittleEndian, bool IsMove) {
+    SmallVector<unsigned, 16> Widths = SH::planMemoryAccesses(Size, Alignment);
+    SmallVector<uint32_t, 16> Loaded;
+    unsigned Offset = 0;
+    if (IsMove)
+      for (unsigned Width : Widths) {
+        Loaded.push_back(
+            loadChunk(Bytes, Source + Offset, Width, IsLittleEndian));
+        Offset += Width;
+      }
+    Offset = 0;
+    for (auto [Index, Width] : enumerate(Widths)) {
+      uint32_t Value =
+          IsMove ? Loaded[Index]
+                 : loadChunk(Bytes, Source + Offset, Width, IsLittleEndian);
+      storeChunk(Bytes, Destination + Offset, Width, Value, IsLittleEndian);
+      Offset += Width;
+    }
+  };
+  auto memsetWithPlan =
+      [&](MutableArrayRef<uint8_t> Bytes, unsigned Destination, unsigned Size,
+          uint8_t ByteValue, Align Alignment, bool IsLittleEndian) {
+        unsigned Offset = 0;
+        for (unsigned Width : SH::planMemoryAccesses(Size, Alignment)) {
+          uint32_t Value = 0;
+          for (unsigned Byte = 0; Byte != Width; ++Byte) {
+            unsigned Shift = 8 * (IsLittleEndian ? Byte : Width - 1 - Byte);
+            Value |= static_cast<uint32_t>(ByteValue) << Shift;
+          }
+          storeChunk(Bytes, Destination + Offset, Width, Value, IsLittleEndian);
+          Offset += Width;
+        }
+      };
+  auto referenceMove = [](MutableArrayRef<uint8_t> Bytes, unsigned Destination,
+                          unsigned Source, unsigned Size) {
+    SmallVector<uint8_t, 64> SourceImage(Bytes.slice(Source, Size).begin(),
+                                         Bytes.slice(Source, Size).end());
+    llvm::copy(SourceImage, Bytes.begin() + Destination);
+  };
+
+  constexpr unsigned RequiredSizes[] = {0,  1,  2,  3,  4,  5,  7, 8,
+                                        12, 15, 16, 17, 28, 59, 60};
+  const Align Alignments[] = {Align(1), Align(2), Align(4)};
+  for (unsigned Size : RequiredSizes)
+    for (Align Alignment : Alignments)
+      for (bool IsLittleEndian : {false, true}) {
+        SmallVector<uint8_t, 192> Initial(192);
+        for (unsigned I = 0; I != Initial.size(); ++I)
+          Initial[I] = static_cast<uint8_t>(I * 37 + Size);
+
+        SmallVector<uint8_t, 192> Actual = Initial;
+        SmallVector<uint8_t, 192> Expected = Initial;
+        copyWithPlan(Actual, 96, 0, Size, Alignment, IsLittleEndian, false);
+        llvm::copy(ArrayRef(Expected).slice(0, Size), Expected.begin() + 96);
+        EXPECT_EQ(Expected, Actual);
+
+        for (auto [Destination, Source] :
+             {std::pair(12u, 8u), std::pair(8u, 12u), std::pair(8u, 8u)}) {
+          Actual = Initial;
+          Expected = Initial;
+          copyWithPlan(Actual, Destination, Source, Size, Alignment,
+                       IsLittleEndian, true);
+          referenceMove(Expected, Destination, Source, Size);
+          EXPECT_EQ(Expected, Actual);
+        }
+
+        Actual = Initial;
+        Expected = Initial;
+        memsetWithPlan(Actual, 64, Size, 0xa5, Alignment, IsLittleEndian);
+        llvm::fill(MutableArrayRef(Expected).slice(64, Size), 0xa5);
+        EXPECT_EQ(Expected, Actual);
+      }
+
+  std::mt19937 Generator(0x53484313);
+  for (unsigned Scenario = 0; Scenario != 10000; ++Scenario) {
+    unsigned Size = Generator() % 61;
+    Align Alignment = Align(1u << (Generator() % 3));
+    bool IsLittleEndian = Generator() & 1;
+    SmallVector<uint8_t, 256> Initial(256);
+    for (uint8_t &Byte : Initial)
+      Byte = static_cast<uint8_t>(Generator());
+
+    unsigned Source = Generator() % 65;
+    unsigned Destination = 128 + Generator() % 65;
+    SmallVector<uint8_t, 256> Actual = Initial;
+    SmallVector<uint8_t, 256> Expected = Initial;
+    copyWithPlan(Actual, Destination, Source, Size, Alignment, IsLittleEndian,
+                 false);
+    llvm::copy(ArrayRef(Expected).slice(Source, Size),
+               Expected.begin() + Destination);
+    EXPECT_EQ(Expected, Actual);
+
+    Source = Generator() % (257 - Size);
+    Destination = Generator() % (257 - Size);
+    Actual = Initial;
+    Expected = Initial;
+    copyWithPlan(Actual, Destination, Source, Size, Alignment, IsLittleEndian,
+                 true);
+    referenceMove(Expected, Destination, Source, Size);
+    EXPECT_EQ(Expected, Actual);
+
+    Destination = Generator() % (257 - Size);
+    uint8_t ByteValue = static_cast<uint8_t>(Generator());
+    Actual = Initial;
+    Expected = Initial;
+    memsetWithPlan(Actual, Destination, Size, ByteValue, Alignment,
+                   IsLittleEndian);
+    llvm::fill(MutableArrayRef(Expected).slice(Destination, Size), ByteValue);
+    EXPECT_EQ(Expected, Actual);
+  }
+}
+
 } // namespace

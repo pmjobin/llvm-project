@@ -142,6 +142,24 @@ public:
       CurDAG->SelectNodeTo(N, SH::BR_CC64_PSEUDO, MVT::Other, Operands);
       return;
     }
+    SDValue FrameIndex;
+    int64_t Offset = 0;
+    if (N->getOpcode() == ISD::FrameIndex)
+      FrameIndex = SDValue(N, 0);
+    else if (N->getOpcode() == ISD::ADD &&
+             N->getOperand(0).getOpcode() == ISD::FrameIndex)
+      if (const auto *Constant = dyn_cast<ConstantSDNode>(N->getOperand(1))) {
+        FrameIndex = N->getOperand(0);
+        Offset = Constant->getSExtValue();
+      }
+    if (FrameIndex) {
+      SDValue Operands[] = {
+          CurDAG->getTargetFrameIndex(
+              cast<FrameIndexSDNode>(FrameIndex)->getIndex(), MVT::i32),
+          CurDAG->getTargetConstant(Offset, SDLoc(N), MVT::i32)};
+      CurDAG->SelectNodeTo(N, SH::LEA_FI, MVT::i32, Operands);
+      return;
+    }
     SelectCode(N);
   }
 

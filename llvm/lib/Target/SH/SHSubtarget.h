@@ -20,6 +20,8 @@
 
 namespace llvm {
 
+class LibcallLoweringInfo;
+
 class SHSubtarget : public SHGenSubtargetInfo {
   SHInstrInfo InstrInfo;
   SHFrameLowering FrameLowering;
@@ -44,6 +46,7 @@ public:
   const SHSelectionDAGInfo *getSelectionDAGInfo() const override {
     return &TSInfo;
   }
+  void initLibcallLoweringInfo(LibcallLoweringInfo &Info) const override;
 };
 
 } // namespace llvm

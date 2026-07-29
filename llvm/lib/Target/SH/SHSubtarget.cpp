@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SHSubtarget.h"
+#include "llvm/CodeGen/LibcallLoweringInfo.h"
 
 using namespace llvm;
 
@@ -29,3 +30,9 @@ SHSubtarget::SHSubtarget(const Triple &TT, StringRef CPU, StringRef FS,
     : SHGenSubtargetInfo(TT, CPU, CPU, FS),
       InstrInfo(initializeSubtargetDependencies(CPU, FS)), FrameLowering(),
       TLInfo(TM, *this) {}
+
+void SHSubtarget::initLibcallLoweringInfo(LibcallLoweringInfo &Info) const {
+  Info.setLibcallImpl(RTLIB::MEMCPY, RTLIB::impl_memcpy);
+  Info.setLibcallImpl(RTLIB::MEMMOVE, RTLIB::impl_memmove);
+  Info.setLibcallImpl(RTLIB::MEMSET, RTLIB::impl_memset);
+}

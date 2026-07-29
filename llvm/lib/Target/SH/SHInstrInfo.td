@@ -316,6 +316,8 @@ let Constraints = "$dst = $dst_in" in {
 def MOVri : SHRegImm<0xe, (outs GPR:$dst), (ins simm8:$imm),
                      "mov\t$imm,$dst", [(set GPR:$dst, simm8:$imm)]>;
 
+def LEA_FI : SHPseudo<(outs GPR:$dst), (ins i32imm:$fi, i32imm:$disp)>;
+
 let Constraints = "$dst = $dst_in" in
 def ADDri : SHRegImm<0x7, (outs GPR:$dst),
                      (ins GPR:$dst_in, simm8:$imm), "add\t$imm,$dst",

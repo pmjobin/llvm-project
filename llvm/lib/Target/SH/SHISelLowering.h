@@ -19,7 +19,8 @@ class SHSubtarget;
 namespace SH {
 SmallVector<unsigned, 16> planConstantShift(unsigned PseudoOpcode,
                                             unsigned Amount);
-}
+SmallVector<unsigned, 16> planMemoryAccesses(uint64_t Size, Align Alignment);
+} // namespace SH
 
 class SHTargetLowering : public TargetLowering {
 public:
@@ -66,6 +67,8 @@ public:
       EVT VT, unsigned AddrSpace = 0, Align Alignment = Align(1),
       MachineMemOperand::Flags Flags = MachineMemOperand::MONone,
       unsigned *Fast = nullptr) const override;
+  EVT getOptimalMemOpType(LLVMContext &Context, const MemOp &Op,
+                          const AttributeList &FuncAttributes) const override;
 };
 
 } // namespace llvm

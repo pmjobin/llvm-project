@@ -1,5 +1,5 @@
-# RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o /dev/null 2>&1 | FileCheck %s
-# RUN: not --crash llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o /dev/null 2>&1 | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o - | FileCheck %s
 
 --- |
   define i64 @i64_frame_60_64() {
@@ -24,4 +24,7 @@ body:             |
     RTS implicit $pr, implicit $r0, implicit $r1
 ...
 
-# CHECK: LLVM ERROR: SH finalized frame reference offset 64 must be four-byte aligned and in [0, 60] from r15
+# CHECK: $r0 = MOVL_load_disp $r15, 60
+# CHECK-NEXT: $r1 = MOVrr $r15
+# CHECK-NEXT: $r1 = ADDri $r1, 64
+# CHECK-NEXT: $r1 = MOVL_load_reg $r1

@@ -14,15 +14,13 @@
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/swiftself.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ARGUMENT
 
 ; OUTGOING64: LLVM ERROR: SH outgoing call frame size cannot exceed 60 bytes
-; INCOMING64: LLVM ERROR: SH finalized frame reference offset 64 must be four-byte aligned and in [0, 60] from r15
+; INCOMING64: LLVM ERROR: SH incoming argument area cannot exceed 60 bytes
 ; ARGUMENT: LLVM ERROR: SH calls only support scalar i32, i64, and pointer arguments
 ; DYNAMIC: LLVM ERROR: SH dynamic alloca is not supported
 ; REALIGN: LLVM ERROR: SH stack realignment is not supported
 
 ;--- twenty.ll
-define internal i32 @take20(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a5, i32 %a6, i32 %a7, i32 %a8, i32 %a9, i32 %a10, i32 %a11, i32 %a12, i32 %a13, i32 %a14, i32 %a15, i32 %a16, i32 %a17, i32 %a18, i32 %a19) {
-	ret i32 %a19
-}
+declare i32 @take20(i32 %a0, i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a5, i32 %a6, i32 %a7, i32 %a8, i32 %a9, i32 %a10, i32 %a11, i32 %a12, i32 %a13, i32 %a14, i32 %a15, i32 %a16, i32 %a17, i32 %a18, i32 %a19)
 
 define i32 @call20() {
 	%result = call i32 @take20(i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1)

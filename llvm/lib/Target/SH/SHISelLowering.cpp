@@ -9,10 +9,11 @@
 #include "SHISelLowering.h"
 #include "SH.h"
 #include "SHConstantPoolValue.h"
+#include "SHMachineFunctionInfo.h"
 #include "SHSubtarget.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/CodeGen/CallingConvLower.h"
+#include "llvm/CodeGen/Analysis.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
@@ -24,15 +25,13 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Target/TargetMachine.h"
 
 using namespace llvm;
-
-#define GET_CALLING_CONV_IMPL
-#include "SHGenCallingConv.inc"
 
 SHTargetLowering::SHTargetLowering(const TargetMachine &TM,
                                    const SHSubtarget &STI)
@@ -80,6 +79,9 @@ SHTargetLowering::SHTargetLowering(const TargetMachine &TM,
   setMinimumJumpTableEntries(4);
 
   setTargetDAGCombine(ISD::ADD);
+  MaxStoresPerMemcpy = MaxStoresPerMemcpyOptSize = 60;
+  MaxStoresPerMemmove = MaxStoresPerMemmoveOptSize = 16;
+  MaxStoresPerMemset = MaxStoresPerMemsetOptSize = 60;
   computeRegisterProperties(STI.getRegisterInfo());
 }
 
@@ -114,7 +116,8 @@ SDValue SHTargetLowering::PerformDAGCombine(SDNode *N,
 
 static bool isSupportedSHMemoryType(Type *Ty) {
   return Ty->isIntegerTy(8) || Ty->isIntegerTy(16) || Ty->isIntegerTy(32) ||
-         Ty->isIntegerTy(64) || Ty->isPointerTy();
+         Ty->isIntegerTy(64) ||
+         (Ty->isPointerTy() && Ty->getPointerAddressSpace() == 0);
 }
 
 static bool isSupportedSHScalarType(Type *Ty) {
@@ -136,6 +139,67 @@ static bool isSupportedSHStackType(Type *Ty) {
     return true;
   }
   return false;
+}
+
+static bool isSupportedSHAggregateType(Type *Ty) {
+  return Ty->isAggregateType() && isSupportedSHStackType(Ty);
+}
+
+static bool isSupportedSHValueType(Type *Ty) {
+  return isSupportedSHScalarType(Ty) || isSupportedSHAggregateType(Ty);
+}
+
+static uint64_t getFixedSHTypeAllocSize(const DataLayout &DL, Type *Ty) {
+  if (!Ty->isSized())
+    report_fatal_error("SH aggregate type must have a fixed size");
+  TypeSize Size = DL.getTypeAllocSize(Ty);
+  if (Size.isScalable())
+    report_fatal_error("SH scalable aggregate types are not supported");
+  return Size.getFixedValue();
+}
+
+static bool isDirectSHAggregateReturn(const DataLayout &DL, Type *Ty) {
+  if (!isSupportedSHAggregateType(Ty))
+    return false;
+  uint64_t Size = getFixedSHTypeAllocSize(DL, Ty);
+  Align RequiredAlignment;
+  switch (Size) {
+  default:
+    return false;
+  case 1:
+    RequiredAlignment = Align(1);
+    break;
+  case 2:
+    RequiredAlignment = Align(2);
+    break;
+  case 4:
+  case 8:
+    RequiredAlignment = Align(4);
+    break;
+  }
+  return DL.getABITypeAlign(Ty) >= RequiredAlignment;
+}
+
+static void requireSupportedSHByValType(const DataLayout &DL, Type *Ty,
+                                        Align Alignment) {
+  if (!Ty || !isSupportedSHAggregateType(Ty))
+    report_fatal_error(
+        "SH calls only support scalar i32, i64, and pointer arguments");
+  if (getFixedSHTypeAllocSize(DL, Ty) == 0)
+    report_fatal_error("SH zero-sized byval arguments are not supported");
+  if (Alignment > Align(4))
+    report_fatal_error(
+        "SH byval alignment greater than 4 requires unsupported stack "
+        "realignment");
+}
+
+static void requireSupportedSHSRetType(const DataLayout &DL, Type *Ty) {
+  if (!Ty || !isSupportedSHAggregateType(Ty))
+    report_fatal_error(
+        "SH sret requires a fixed aggregate containing only integers and "
+        "address-space-zero pointers");
+  if (getFixedSHTypeAllocSize(DL, Ty) == 0)
+    report_fatal_error("SH zero-sized sret results are not supported");
 }
 
 static void requireSupportedSHMemoryAlignment(Type *Ty, Align Alignment,
@@ -181,6 +245,21 @@ static void validateSHAllocaUses(const AllocaInst &Alloca) {
       if (const auto *Store = dyn_cast<StoreInst>(Use))
         if (Store->getPointerOperand() == Pointer)
           continue;
+      if (const auto *Call = dyn_cast<CallBase>(Use)) {
+        bool IsSupportedCallUse = false;
+        for (unsigned ArgNo = 0; ArgNo != Call->arg_size(); ++ArgNo) {
+          if (Call->getArgOperand(ArgNo) != Pointer)
+            continue;
+          if (isa<MemIntrinsic>(Call) ||
+              Call->paramHasAttr(ArgNo, Attribute::ByVal) ||
+              Call->paramHasAttr(ArgNo, Attribute::StructRet)) {
+            IsSupportedCallUse = true;
+            break;
+          }
+        }
+        if (IsSupportedCallUse)
+          continue;
+      }
       report_fatal_error("SH stack object address escape is not supported");
     }
   }
@@ -199,18 +278,69 @@ static bool isBlockAddressInteger(const Value *V,
   return false;
 }
 
+static void validateSHMemoryIntrinsic(const MemIntrinsic &MI) {
+  Intrinsic::ID ID = MI.getIntrinsicID();
+  if (ID != Intrinsic::memcpy && ID != Intrinsic::memmove &&
+      ID != Intrinsic::memset)
+    report_fatal_error("SH atomic and inline-only memory intrinsics are not "
+                       "supported");
+  if (MI.getRawDest()->getType()->getPointerAddressSpace() != 0)
+    report_fatal_error("SH memory intrinsics only support address space zero");
+  if (const auto *Transfer = dyn_cast<AnyMemTransferInst>(&MI))
+    if (Transfer->getRawSource()->getType()->getPointerAddressSpace() != 0)
+      report_fatal_error(
+          "SH memory intrinsics only support address space zero");
+  if (!MI.getLength()->getType()->isIntegerTy(32))
+    report_fatal_error("SH memory intrinsic sizes must be i32");
+  if (!MI.isVolatile())
+    return;
+  const auto *Size = dyn_cast<ConstantInt>(MI.getLength());
+  if (!Size)
+    report_fatal_error("SH volatile memory intrinsics require a constant size");
+  uint64_t InlineLimit = ID == Intrinsic::memmove ? 16 : 60;
+  if (Size->getZExtValue() > InlineLimit)
+    report_fatal_error(
+        Twine("SH volatile memory intrinsic size cannot exceed ") +
+        Twine(InlineLimit) + " bytes");
+}
+
 void llvm::validateSHIR(const Function &F) {
+  const DataLayout &DL = F.getDataLayout();
   if (F.getReturnType()->isIntegerTy(1))
     report_fatal_error(
         "SH comparison results may only be used by conditional branches");
   if (!F.getReturnType()->isVoidTy() &&
-      !isSupportedSHScalarType(F.getReturnType()))
+      !isSupportedSHValueType(F.getReturnType()))
     report_fatal_error(
         "SH functions only support void, i32, i64, and pointer return values");
-  for (const Argument &Arg : F.args())
-    if (!isSupportedSHScalarType(Arg.getType()))
+  unsigned SRetCount = 0;
+  for (const Argument &Arg : F.args()) {
+    if (Arg.hasByValAttr()) {
+      if (!Arg.getType()->isPointerTy() ||
+          Arg.getType()->getPointerAddressSpace() != 0)
+        report_fatal_error(
+            "SH byval arguments require address-space-zero pointers");
+      requireSupportedSHByValType(
+          DL, Arg.getParamByValType(),
+          Arg.getParamAlign().value_or(
+              DL.getABITypeAlign(Arg.getParamByValType())));
+      continue;
+    }
+    if (Arg.hasStructRetAttr()) {
+      ++SRetCount;
+      if (!Arg.getType()->isPointerTy() ||
+          Arg.getType()->getPointerAddressSpace() != 0)
+        report_fatal_error(
+            "SH sret arguments require address-space-zero pointers");
+      requireSupportedSHSRetType(DL, Arg.getParamStructRetType());
+      continue;
+    }
+    if (!isSupportedSHValueType(Arg.getType()))
       report_fatal_error(
           "SH function arguments must be scalar i32, i64, or pointers");
+  }
+  if (SRetCount > 1)
+    report_fatal_error("SH functions may have only one sret parameter");
   if (F.isVarArg())
     report_fatal_error("SH varargs are not supported");
   if (F.hasFnAttribute("stackrealign") ||
@@ -241,6 +371,10 @@ void llvm::validateSHIR(const Function &F) {
           report_fatal_error("SH exception-handling calls are not supported");
         if (Call->isInlineAsm())
           report_fatal_error("SH inline assembly is not supported");
+        if (const auto *MI = dyn_cast<MemIntrinsic>(Call)) {
+          validateSHMemoryIntrinsic(*MI);
+          continue;
+        }
         if (Call->getIntrinsicID() != Intrinsic::not_intrinsic)
           report_fatal_error("SH intrinsics are not supported");
         if (Call->getFunctionType()->isVarArg())
@@ -253,15 +387,32 @@ void llvm::validateSHIR(const Function &F) {
         }
 
         Type *ReturnTy = Call->getType();
-        if (!ReturnTy->isVoidTy() && !isSupportedSHScalarType(ReturnTy))
+        if (!ReturnTy->isVoidTy() && !isSupportedSHValueType(ReturnTy))
           report_fatal_error(
               "SH calls only support void, i32, i64, and pointer return "
               "values");
+        unsigned CallSRetCount = 0;
         for (unsigned ArgNo = 0; ArgNo != Call->arg_size(); ++ArgNo) {
           Type *ArgTy = Call->getArgOperand(ArgNo)->getType();
-          if (!isSupportedSHScalarType(ArgTy) ||
-              Call->paramHasAttr(ArgNo, Attribute::ByVal) ||
-              Call->paramHasAttr(ArgNo, Attribute::StructRet) ||
+          if (Call->paramHasAttr(ArgNo, Attribute::ByVal)) {
+            if (!ArgTy->isPointerTy() || ArgTy->getPointerAddressSpace() != 0)
+              report_fatal_error(
+                  "SH byval arguments require address-space-zero pointers");
+            Type *ByValTy = Call->getParamByValType(ArgNo);
+            requireSupportedSHByValType(DL, ByValTy,
+                                        Call->getParamAlign(ArgNo).value_or(
+                                            DL.getABITypeAlign(ByValTy)));
+            continue;
+          }
+          if (Call->paramHasAttr(ArgNo, Attribute::StructRet)) {
+            ++CallSRetCount;
+            if (!ArgTy->isPointerTy() || ArgTy->getPointerAddressSpace() != 0)
+              report_fatal_error(
+                  "SH sret arguments require address-space-zero pointers");
+            requireSupportedSHSRetType(DL, Call->getParamStructRetType(ArgNo));
+            continue;
+          }
+          if (!isSupportedSHValueType(ArgTy) ||
               Call->paramHasAttr(ArgNo, Attribute::InAlloca) ||
               Call->paramHasAttr(ArgNo, Attribute::Preallocated) ||
               Call->paramHasAttr(ArgNo, Attribute::ByRef) ||
@@ -274,18 +425,18 @@ void llvm::validateSHIR(const Function &F) {
                 "SH calls only support scalar i32, i64, and pointer "
                 "arguments");
         }
+        if (CallSRetCount > 1)
+          report_fatal_error("SH calls may have only one sret parameter");
       }
       if (const auto *Phi = dyn_cast<PHINode>(&I)) {
         if (Phi->getType()->isIntegerTy(1))
           report_fatal_error("SH i1 PHIs are not supported");
         if (!Phi->getType()->isIntegerTy(8) &&
             !Phi->getType()->isIntegerTy(16) &&
-            !Phi->getType()->isIntegerTy(32) &&
-            !Phi->getType()->isIntegerTy(64) &&
-            !(Phi->getType()->isPointerTy() &&
-              Phi->getType()->getPointerAddressSpace() == 0))
+            !isSupportedSHValueType(Phi->getType()))
           report_fatal_error(
-              "SH only supports i8, i16, i32, i64, and pointer PHIs");
+              "SH only supports fixed integer aggregate, i8, i16, i32, i64, "
+              "and pointer PHIs");
       }
 
       if (const auto *Cmp = dyn_cast<ICmpInst>(&I)) {
@@ -443,23 +594,300 @@ void llvm::validateSHIR(const Function &F) {
   }
 }
 
+SmallVector<unsigned, 16> llvm::SH::planMemoryAccesses(uint64_t Size,
+                                                       Align Alignment) {
+  SmallVector<unsigned, 16> Widths;
+  for (uint64_t Offset = 0; Offset != Size;) {
+    uint64_t Remaining = Size - Offset;
+    Align EffectiveAlignment = commonAlignment(Alignment, Offset);
+    unsigned Width = Remaining >= 4 && EffectiveAlignment >= Align(4)   ? 4
+                     : Remaining >= 2 && EffectiveAlignment >= Align(2) ? 2
+                                                                        : 1;
+    Widths.push_back(Width);
+    Offset += Width;
+  }
+  return Widths;
+}
+
+namespace {
+
+constexpr MCRegister SHArgumentRegisters[] = {SH::R4, SH::R5, SH::R6, SH::R7};
+
+struct SHABIWord {
+  unsigned ByteOffset;
+  unsigned ValidBytes;
+  unsigned WordIndex;
+  MCRegister Reg;
+  int64_t StackOffset;
+
+  bool isRegister() const { return Reg != 0; }
+};
+
+struct SHABIValue {
+  uint64_t Size;
+  SmallVector<SHABIWord, 4> Words;
+};
+
+class SHABIState {
+  unsigned NextRegister = 0;
+  unsigned StackSize = 0;
+
+public:
+  SHABIValue allocate(uint64_t Size) {
+    if (Size == 0)
+      report_fatal_error("SH zero-sized aggregate arguments are not supported");
+    if (Size > UINT_MAX)
+      report_fatal_error("SH aggregate argument is too large");
+
+    SHABIValue Value{Size, {}};
+    unsigned WordCount = divideCeil(static_cast<unsigned>(Size), 4u);
+    for (unsigned WordIndex = 0; WordIndex != WordCount; ++WordIndex) {
+      unsigned ByteOffset = WordIndex * 4;
+      unsigned ValidBytes =
+          std::min<unsigned>(4, static_cast<unsigned>(Size) - ByteOffset);
+      if (NextRegister != std::size(SHArgumentRegisters)) {
+        Value.Words.push_back({ByteOffset, ValidBytes, WordIndex,
+                               SHArgumentRegisters[NextRegister++], -1});
+        continue;
+      }
+      Value.Words.push_back({ByteOffset, ValidBytes, WordIndex, 0, StackSize});
+      if (StackSize > UINT_MAX - 4)
+        report_fatal_error("SH aggregate argument area is too large");
+      StackSize += 4;
+    }
+    return Value;
+  }
+
+  unsigned getStackSize() const { return StackSize; }
+};
+
+struct SHValuePart {
+  unsigned ByteOffset;
+  unsigned ValidBytes;
+};
+
+static SmallVector<SHValuePart, 4>
+getSHValueParts(const SHTargetLowering &TLI, const DataLayout &DL, Type *Ty) {
+  SmallVector<EVT, 4> ValueVTs;
+  SmallVector<uint64_t, 4> Offsets;
+  ComputeValueVTs(TLI, DL, Ty, ValueVTs, nullptr, &Offsets, 0);
+  SmallVector<SHValuePart, 4> Parts;
+  for (auto [ValueVT, Offset] : zip_equal(ValueVTs, Offsets)) {
+    if (!ValueVT.isInteger())
+      report_fatal_error(
+          "SH aggregate values may contain only integers and pointers");
+    uint64_t StoreSize = ValueVT.getStoreSize().getFixedValue();
+    unsigned NumParts = TLI.getNumRegistersForCallingConv(
+        Ty->getContext(), CallingConv::C, ValueVT);
+    for (unsigned Part = 0; Part != NumParts; ++Part) {
+      unsigned PartOffset = Part * 4;
+      Parts.push_back({static_cast<unsigned>(Offset + PartOffset),
+                       std::min<unsigned>(4, static_cast<unsigned>(StoreSize) -
+                                                 PartOffset)});
+    }
+  }
+  return Parts;
+}
+
+static SDValue getSHByte(SelectionDAG &DAG, const SDLoc &DL, SDValue Value,
+                         unsigned Shift) {
+  if (Shift != 0)
+    Value = DAG.getNode(ISD::SRL, DL, MVT::i32, Value,
+                        DAG.getConstant(Shift, DL, MVT::i32));
+  return DAG.getNode(ISD::AND, DL, MVT::i32, Value,
+                     DAG.getConstant(0xff, DL, MVT::i32));
+}
+
+static SDValue putSHByte(SelectionDAG &DAG, const SDLoc &DL, SDValue Result,
+                         SDValue Byte, unsigned Shift) {
+  if (Shift != 0)
+    Byte = DAG.getNode(ISD::SHL, DL, MVT::i32, Byte,
+                       DAG.getConstant(Shift, DL, MVT::i32));
+  return DAG.getNode(ISD::OR, DL, MVT::i32, Result, Byte);
+}
+
+static unsigned getSHByteShift(bool IsLittleEndian, unsigned Width,
+                               unsigned Byte) {
+  return 8 * (IsLittleEndian ? Byte : Width - 1 - Byte);
+}
+
+static SmallVector<SDValue, 4>
+packSHABIValue(SelectionDAG &DAG, const SDLoc &DL, const SHABIValue &ABIValue,
+               ArrayRef<SHValuePart> Parts, ArrayRef<SDValue> Values) {
+  if (Parts.size() != Values.size())
+    report_fatal_error("SH aggregate ABI part count is inconsistent");
+  bool IsLittleEndian = DAG.getDataLayout().isLittleEndian();
+  SmallVector<SDValue, 4> Words(ABIValue.Words.size(),
+                                DAG.getConstant(0, DL, MVT::i32));
+  for (unsigned PartIndex = 0; PartIndex != Parts.size(); ++PartIndex) {
+    const SHValuePart &Part = Parts[PartIndex];
+    if (Values[PartIndex].getValueType() != MVT::i32)
+      report_fatal_error("SH aggregate ABI parts must be 32-bit values");
+    for (unsigned Byte = 0; Byte != Part.ValidBytes; ++Byte) {
+      unsigned AggregateByte = Part.ByteOffset + Byte;
+      unsigned WordIndex = AggregateByte / 4;
+      unsigned WordByte = AggregateByte % 4;
+      if (WordIndex >= ABIValue.Words.size() ||
+          WordByte >= ABIValue.Words[WordIndex].ValidBytes)
+        report_fatal_error("SH aggregate ABI part exceeds its object");
+      SDValue Piece =
+          getSHByte(DAG, DL, Values[PartIndex],
+                    getSHByteShift(IsLittleEndian, Part.ValidBytes, Byte));
+      Words[WordIndex] = putSHByte(
+          DAG, DL, Words[WordIndex], Piece,
+          getSHByteShift(IsLittleEndian, ABIValue.Words[WordIndex].ValidBytes,
+                         WordByte));
+    }
+  }
+  return Words;
+}
+
+static SmallVector<SDValue, 4>
+unpackSHABIValue(SelectionDAG &DAG, const SDLoc &DL, const SHABIValue &ABIValue,
+                 ArrayRef<SHValuePart> Parts, ArrayRef<SDValue> Words) {
+  if (ABIValue.Words.size() != Words.size())
+    report_fatal_error("SH aggregate ABI word count is inconsistent");
+  bool IsLittleEndian = DAG.getDataLayout().isLittleEndian();
+  SmallVector<SDValue, 4> Values;
+  for (const SHValuePart &Part : Parts) {
+    SDValue Value = DAG.getConstant(0, DL, MVT::i32);
+    for (unsigned Byte = 0; Byte != Part.ValidBytes; ++Byte) {
+      unsigned AggregateByte = Part.ByteOffset + Byte;
+      unsigned WordIndex = AggregateByte / 4;
+      unsigned WordByte = AggregateByte % 4;
+      if (WordIndex >= ABIValue.Words.size() ||
+          WordByte >= ABIValue.Words[WordIndex].ValidBytes)
+        report_fatal_error("SH aggregate ABI part exceeds its object");
+      SDValue Piece = getSHByte(
+          DAG, DL, Words[WordIndex],
+          getSHByteShift(IsLittleEndian, ABIValue.Words[WordIndex].ValidBytes,
+                         WordByte));
+      Value = putSHByte(DAG, DL, Value, Piece,
+                        getSHByteShift(IsLittleEndian, Part.ValidBytes, Byte));
+    }
+    Values.push_back(Value);
+  }
+  return Values;
+}
+
+static SDValue getSHMemoryAddress(SelectionDAG &DAG, const SDLoc &DL,
+                                  SDValue Base, uint64_t Offset) {
+  if (Offset == 0)
+    return Base;
+  return DAG.getNode(ISD::ADD, DL, MVT::i32, Base,
+                     DAG.getIntPtrConstant(Offset, DL));
+}
+
+static SDValue loadSHABIWord(SelectionDAG &DAG, const SDLoc &DL, SDValue Chain,
+                             SDValue Base, MachinePointerInfo PointerInfo,
+                             Align Alignment, unsigned ByteOffset,
+                             unsigned ValidBytes,
+                             SmallVectorImpl<SDValue> &Chains) {
+  bool IsLittleEndian = DAG.getDataLayout().isLittleEndian();
+  SDValue Result = DAG.getConstant(0, DL, MVT::i32);
+  unsigned Offset = 0;
+  for (unsigned Width : SH::planMemoryAccesses(
+           ValidBytes, commonAlignment(Alignment, ByteOffset))) {
+    SDValue Address = getSHMemoryAddress(DAG, DL, Base, ByteOffset + Offset);
+    SDValue Load;
+    if (Width == 4)
+      Load = DAG.getLoad(MVT::i32, DL, Chain, Address,
+                         PointerInfo.getWithOffset(ByteOffset + Offset),
+                         commonAlignment(Alignment, ByteOffset + Offset));
+    else
+      Load = DAG.getExtLoad(ISD::ZEXTLOAD, DL, MVT::i32, Chain, Address,
+                            PointerInfo.getWithOffset(ByteOffset + Offset),
+                            Width == 2 ? MVT::i16 : MVT::i8,
+                            commonAlignment(Alignment, ByteOffset + Offset));
+    Chains.push_back(Load.getValue(1));
+    for (unsigned Byte = 0; Byte != Width; ++Byte) {
+      SDValue Piece =
+          getSHByte(DAG, DL, Load, getSHByteShift(IsLittleEndian, Width, Byte));
+      Result =
+          putSHByte(DAG, DL, Result, Piece,
+                    getSHByteShift(IsLittleEndian, ValidBytes, Offset + Byte));
+    }
+    Offset += Width;
+  }
+  return Result;
+}
+
+static SDValue getSHMemoryChunk(SelectionDAG &DAG, const SDLoc &DL,
+                                SDValue Word, unsigned WordWidth,
+                                unsigned ByteOffset, unsigned Width) {
+  bool IsLittleEndian = DAG.getDataLayout().isLittleEndian();
+  SDValue Result = DAG.getConstant(0, DL, MVT::i32);
+  for (unsigned Byte = 0; Byte != Width; ++Byte) {
+    SDValue Piece =
+        getSHByte(DAG, DL, Word,
+                  getSHByteShift(IsLittleEndian, WordWidth, ByteOffset + Byte));
+    Result = putSHByte(DAG, DL, Result, Piece,
+                       getSHByteShift(IsLittleEndian, Width, Byte));
+  }
+  return Result;
+}
+
+static void storeSHABIWord(SelectionDAG &DAG, const SDLoc &DL, SDValue Chain,
+                           SDValue Base, MachinePointerInfo PointerInfo,
+                           Align Alignment, unsigned ByteOffset,
+                           unsigned ValidBytes, SDValue Word,
+                           SmallVectorImpl<SDValue> &Chains) {
+  unsigned Offset = 0;
+  for (unsigned Width : SH::planMemoryAccesses(
+           ValidBytes, commonAlignment(Alignment, ByteOffset))) {
+    SDValue Address = getSHMemoryAddress(DAG, DL, Base, ByteOffset + Offset);
+    SDValue Chunk = getSHMemoryChunk(DAG, DL, Word, ValidBytes, Offset, Width);
+    Align EffectiveAlignment = commonAlignment(Alignment, ByteOffset + Offset);
+    if (Width == 4)
+      Chains.push_back(DAG.getStore(
+          Chain, DL, Chunk, Address,
+          PointerInfo.getWithOffset(ByteOffset + Offset), EffectiveAlignment));
+    else
+      Chains.push_back(DAG.getTruncStore(
+          Chain, DL, Chunk, Address,
+          PointerInfo.getWithOffset(ByteOffset + Offset),
+          Width == 2 ? MVT::i16 : MVT::i8, EffectiveAlignment));
+    Offset += Width;
+  }
+}
+
+static uint64_t getSHABITypeSize(const DataLayout &DL, Type *Ty) {
+  if (Ty->isIntegerTy(32) ||
+      (Ty->isPointerTy() && Ty->getPointerAddressSpace() == 0))
+    return 4;
+  if (Ty->isIntegerTy(64))
+    return 8;
+  if (isSupportedSHAggregateType(Ty))
+    return getFixedSHTypeAllocSize(DL, Ty);
+  report_fatal_error("SH ABI value type is not supported");
+}
+
+} // namespace
+
 bool SHTargetLowering::CanLowerReturn(
     CallingConv::ID CallConv, MachineFunction &MF, bool IsVarArg,
     const SmallVectorImpl<ISD::OutputArg> &Outs, LLVMContext &Context,
     const Type *RetTy) const {
+  (void)Context;
   if (RetTy->isIntegerTy(1))
     report_fatal_error(
         "SH comparison results may only be used by conditional branches");
-  if (CallConv != CallingConv::C || IsVarArg || Outs.size() > 1)
-    return RetTy->isIntegerTy(64) && CallConv == CallingConv::C && !IsVarArg &&
-           Outs.size() == 2 &&
-           llvm::all_of(Outs, [](const ISD::OutputArg &Out) {
-             return Out.VT == MVT::i32;
-           });
+  if (CallConv != CallingConv::C || IsVarArg)
+    return false;
   if (RetTy->isVoidTy())
     return Outs.empty();
-  return (RetTy->isIntegerTy(32) || RetTy->isPointerTy()) && Outs.size() == 1 &&
-         Outs[0].VT == MVT::i32;
+  if (RetTy->isAggregateType() &&
+      !isDirectSHAggregateReturn(MF.getDataLayout(), const_cast<Type *>(RetTy)))
+    return false;
+  if (!isSupportedSHValueType(const_cast<Type *>(RetTy)))
+    return false;
+  SmallVector<SHValuePart, 4> Parts =
+      getSHValueParts(*this, MF.getDataLayout(), const_cast<Type *>(RetTy));
+  return Outs.size() == Parts.size() &&
+         llvm::all_of(Outs, [](const ISD::OutputArg &Out) {
+           return Out.VT == MVT::i32 && !Out.Flags.isByVal() &&
+                  !Out.Flags.isSRet();
+         });
 }
 
 SDValue SHTargetLowering::LowerFormalArguments(
@@ -469,69 +897,174 @@ SDValue SHTargetLowering::LowerFormalArguments(
   requireSupportedCallingConvention(CallConv);
   MachineFunction &MF = DAG.getMachineFunction();
   const Function &F = MF.getFunction();
+  const DataLayout &DataLayout = DAG.getDataLayout();
   validateSHIR(F);
   if (IsVarArg || F.isVarArg())
     report_fatal_error("SH varargs are not supported");
-  if (F.hasStructRetAttr())
-    report_fatal_error("SH structure returns are not supported");
-  unsigned ExpectedParts = 0;
-  for (const Argument &Arg : F.args())
-    ExpectedParts += Arg.getType()->isIntegerTy(64) ? 2 : 1;
-  if (ExpectedParts != Ins.size())
-    report_fatal_error(
-        "SH failed to split scalar arguments into 32-bit ABI words");
-
-  for (const ISD::InputArg &In : Ins) {
-    if (!isSupportedSHScalarType(In.OrigTy) || In.VT != MVT::i32 ||
-        In.Flags.isByVal() || In.Flags.isSRet() || In.Flags.isByRef() ||
-        In.Flags.isInAlloca() || In.Flags.isPreallocated() ||
-        In.Flags.isNest() || In.Flags.isReturned() || In.Flags.isSwiftSelf() ||
-        In.Flags.isSwiftAsync() || In.Flags.isSwiftError())
-      report_fatal_error(
-          "SH only supports scalar i32, i64, and pointer arguments");
-  }
-
-  SmallVector<CCValAssign, 4> ArgLocs;
-  CCState CCInfo(CallConv, IsVarArg, MF, ArgLocs, *DAG.getContext());
-  CCInfo.AnalyzeFormalArguments(Ins, CC_SH);
-  if (ArgLocs.size() != Ins.size())
-    report_fatal_error("SH failed to assign all formal arguments");
 
   MachineRegisterInfo &MRI = MF.getRegInfo();
   MachineFrameInfo &MFI = MF.getFrameInfo();
-  SmallVector<SDValue, 4> ArgChains;
+  SHMachineFunctionInfo &FuncInfo = *MF.getInfo<SHMachineFunctionInfo>();
+  SHABIState ABIState;
   SmallVector<SDValue, 8> ABIValues(Ins.size());
-  for (unsigned I = 0; I != ArgLocs.size(); ++I) {
-    const CCValAssign &VA = ArgLocs[I];
-    if (VA.getLocVT() != MVT::i32 || VA.getLocInfo() != CCValAssign::Full)
-      report_fatal_error("SH only supports unextended 32-bit ABI words");
-    SDValue Value;
-    if (VA.isRegLoc()) {
-      Register VReg = MRI.createVirtualRegister(&SH::GPRRegClass);
-      MRI.addLiveIn(VA.getLocReg(), VReg);
-      Value = DAG.getCopyFromReg(Chain, DL, VReg, MVT::i32);
-    } else {
-      if (!VA.isMemLoc() || VA.getLocMemOffset() < 0 ||
-          VA.getLocMemOffset() % 4 != 0)
-        report_fatal_error(
-            "SH stack arguments must use four-byte aligned nonnegative "
-            "offsets");
-      int FI =
-          MFI.CreateFixedObject(4, VA.getLocMemOffset(), /*IsImmutable=*/true);
-      SDValue FrameIndex = DAG.getFrameIndex(FI, MVT::i32);
-      Value = DAG.getLoad(MVT::i32, DL, Chain, FrameIndex,
-                          MachinePointerInfo::getFixedStack(MF, FI), Align(4));
-    }
-    ABIValues[I] = Value;
+  SmallVector<SDValue, 8> ArgChains;
+
+  auto copyFromRegister = [&](MCRegister Reg) {
+    Register VReg = MRI.createVirtualRegister(&SH::GPRRegClass);
+    MRI.addLiveIn(Reg, VReg);
+    SDValue Value = DAG.getCopyFromReg(Chain, DL, VReg, MVT::i32);
     ArgChains.push_back(Value.getValue(1));
+    return Value;
+  };
+
+  for (unsigned I = 0; I != Ins.size(); ++I) {
+    if (Ins[I].isOrigArg() || !Ins[I].Flags.isSRet())
+      continue;
+    if (FuncInfo.getSRetReturnReg())
+      report_fatal_error("SH functions may have only one sret parameter");
+    SDValue Pointer = copyFromRegister(SH::R2);
+    ABIValues[I] = Pointer;
+    Register SavedPointer = MRI.createVirtualRegister(&SH::GPRRegClass);
+    Chain = DAG.getCopyToReg(Chain, DL, SavedPointer, Pointer);
+    ArgChains.push_back(Chain);
+    FuncInfo.setSRetReturnReg(SavedPointer);
   }
-  for (SDValue Value : ABIValues) {
-    if (!Value)
-      report_fatal_error("SH failed to assign an incoming ABI word");
-    InVals.push_back(Value);
+
+  for (const Argument &Arg : F.args()) {
+    SmallVector<unsigned, 4> ArgIns;
+    for (unsigned I = 0; I != Ins.size(); ++I)
+      if (Ins[I].isOrigArg() && Ins[I].getOrigArgIndex() == Arg.getArgNo())
+        ArgIns.push_back(I);
+    if (ArgIns.empty())
+      report_fatal_error("SH failed to describe a formal argument");
+    for (unsigned I : ArgIns)
+      if (Ins[I].VT != MVT::i32 || Ins[I].Flags.isByRef() ||
+          Ins[I].Flags.isInAlloca() || Ins[I].Flags.isPreallocated() ||
+          Ins[I].Flags.isNest() || Ins[I].Flags.isReturned() ||
+          Ins[I].Flags.isSwiftSelf() || Ins[I].Flags.isSwiftAsync() ||
+          Ins[I].Flags.isSwiftError())
+        report_fatal_error("SH formal argument has unsupported ABI flags");
+
+    if (Arg.hasStructRetAttr()) {
+      if (ArgIns.size() != 1 || !Ins[ArgIns[0]].Flags.isSRet())
+        report_fatal_error("SH sret arguments must be one 32-bit pointer");
+      if (FuncInfo.getSRetReturnReg())
+        report_fatal_error("SH functions may have only one sret parameter");
+      SDValue Pointer = copyFromRegister(SH::R2);
+      ABIValues[ArgIns[0]] = Pointer;
+      Register SavedPointer = MRI.createVirtualRegister(&SH::GPRRegClass);
+      Chain = DAG.getCopyToReg(Chain, DL, SavedPointer, Pointer);
+      ArgChains.push_back(Chain);
+      FuncInfo.setSRetReturnReg(SavedPointer);
+      continue;
+    }
+
+    Type *ABIType =
+        Arg.hasByValAttr() ? Arg.getParamByValType() : Arg.getType();
+    uint64_t Size = getSHABITypeSize(DataLayout, ABIType);
+    SHABIValue ABIValue = ABIState.allocate(Size);
+
+    if (Arg.hasByValAttr()) {
+      if (ArgIns.size() != 1 || !Ins[ArgIns[0]].Flags.isByVal() ||
+          Ins[ArgIns[0]].Flags.getByValSize() != Size)
+        report_fatal_error("SH byval argument size is inconsistent");
+      Align Alignment = Ins[ArgIns[0]].Flags.getNonZeroByValAlign();
+      requireSupportedSHByValType(DataLayout, ABIType, Alignment);
+
+      unsigned RegisterWords =
+          llvm::count_if(ABIValue.Words, [](const SHABIWord &Word) {
+            return Word.isRegister();
+          });
+      int64_t ObjectOffset;
+      if (RegisterWords != 0) {
+        MCRegister FirstRegister = ABIValue.Words.front().Reg;
+        auto RegisterPosition =
+            llvm::find(ArrayRef(SHArgumentRegisters), FirstRegister);
+        if (RegisterPosition == std::end(SHArgumentRegisters))
+          report_fatal_error("SH byval argument register is invalid");
+        unsigned RegisterIndex =
+            std::distance(std::begin(SHArgumentRegisters), RegisterPosition);
+        ObjectOffset = -static_cast<int64_t>(
+            (std::size(SHArgumentRegisters) - RegisterIndex) * 4);
+      } else {
+        ObjectOffset = ABIValue.Words.front().StackOffset;
+        if (!DataLayout.isLittleEndian() && Size < 4)
+          ObjectOffset += 4 - Size;
+      }
+      int FI = MFI.CreateFixedObject(Size, ObjectOffset, /*IsImmutable=*/false,
+                                     /*IsAliased=*/true);
+      MFI.setObjectAlignment(FI, Alignment);
+      SDValue FrameIndex = DAG.getFrameIndex(FI, MVT::i32);
+      SmallVector<SDValue, 4> StoreChains;
+      for (const SHABIWord &Word : ABIValue.Words) {
+        if (!Word.isRegister())
+          continue;
+        SDValue Value = copyFromRegister(Word.Reg);
+        storeSHABIWord(DAG, DL, Chain, FrameIndex,
+                       MachinePointerInfo::getFixedStack(MF, FI), Alignment,
+                       Word.ByteOffset, Word.ValidBytes, Value, StoreChains);
+      }
+      ArgChains.append(StoreChains);
+      ABIValues[ArgIns[0]] = FrameIndex;
+      continue;
+    }
+
+    if (llvm::any_of(ArgIns, [&](unsigned I) {
+          return Ins[I].Flags.isByVal() || Ins[I].Flags.isSRet();
+        }))
+      report_fatal_error("SH direct argument has indirect ABI flags");
+    SmallVector<SDValue, 4> Words;
+    for (const SHABIWord &Word : ABIValue.Words) {
+      if (Word.isRegister()) {
+        Words.push_back(copyFromRegister(Word.Reg));
+        continue;
+      }
+      int64_t StackOffset = Word.StackOffset;
+      if (!DataLayout.isLittleEndian() && Size < 4 &&
+          ABIValue.Words.size() == 1)
+        StackOffset += 4 - Size;
+      Align Alignment = commonAlignment(Align(4), StackOffset);
+      int FI = MFI.CreateFixedObject(Word.ValidBytes, StackOffset,
+                                     /*IsImmutable=*/true);
+      MFI.setObjectAlignment(FI, Alignment);
+      SDValue FrameIndex = DAG.getFrameIndex(FI, MVT::i32);
+      SDValue LoadBase = FrameIndex;
+      if (Word.ValidBytes != 4) {
+        Register AddressReg = MRI.createVirtualRegister(&SH::GPRRegClass);
+        SDValue AddressCopy =
+            DAG.getCopyToReg(Chain, DL, AddressReg, FrameIndex);
+        ArgChains.push_back(AddressCopy);
+        LoadBase = DAG.getCopyFromReg(AddressCopy, DL, AddressReg, MVT::i32);
+        ArgChains.push_back(LoadBase.getValue(1));
+      }
+      SmallVector<SDValue, 2> LoadChains;
+      Words.push_back(loadSHABIWord(DAG, DL, Chain, LoadBase,
+                                    MachinePointerInfo::getFixedStack(MF, FI),
+                                    Alignment, 0, Word.ValidBytes, LoadChains));
+      ArgChains.append(LoadChains);
+    }
+    SmallVector<SHValuePart, 4> Parts =
+        getSHValueParts(*this, DataLayout, Arg.getType());
+    if (Parts.size() != ArgIns.size())
+      report_fatal_error("SH formal argument part count is inconsistent");
+    SmallVector<SDValue, 4> Values;
+    if (Arg.getType()->isAggregateType())
+      Values = unpackSHABIValue(DAG, DL, ABIValue, Parts, Words);
+    else
+      Values = Words;
+    for (auto [Index, Value] : zip_equal(ArgIns, Values))
+      ABIValues[Index] = Value;
   }
+
+  if (ABIState.getStackSize() > 60)
+    report_fatal_error("SH incoming argument area cannot exceed 60 bytes");
   if (!ArgChains.empty())
     Chain = DAG.getNode(ISD::TokenFactor, DL, MVT::Other, ArgChains);
+  for (SDValue Value : ABIValues) {
+    if (!Value)
+      report_fatal_error("SH failed to assign an incoming ABI value");
+    InVals.push_back(Value);
+  }
   return Chain;
 }
 
@@ -545,31 +1078,61 @@ SHTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
   const Function &F = DAG.getMachineFunction().getFunction();
   if (IsVarArg || F.isVarArg())
     report_fatal_error("SH varargs are not supported");
-  bool IsSupportedVoid = F.getReturnType()->isVoidTy() && Outs.empty();
-  bool IsSupportedScalar = (F.getReturnType()->isIntegerTy(32) ||
-                            F.getReturnType()->isPointerTy()) &&
-                           Outs.size() == 1;
-  IsSupportedScalar |= F.getReturnType()->isIntegerTy(64) && Outs.size() == 2;
-  if ((!IsSupportedVoid && !IsSupportedScalar) || Outs.size() != OutVals.size())
-    report_fatal_error(
-        "SH only supports scalar i32, i64, and pointer return values");
-
-  SmallVector<CCValAssign, 1> RetLocs;
-  CCState CCInfo(CallConv, IsVarArg, DAG.getMachineFunction(), RetLocs,
-                 *DAG.getContext());
-  CCInfo.AnalyzeReturn(Outs, RetCC_SH);
+  if (Outs.size() != OutVals.size())
+    report_fatal_error("SH return value part count is inconsistent");
+  MachineFunction &MF = DAG.getMachineFunction();
+  SHMachineFunctionInfo &FuncInfo = *MF.getInfo<SHMachineFunctionInfo>();
+  bool HasSRet = FuncInfo.getSRetReturnReg().isValid();
+  Type *ReturnTy = F.getReturnType();
+  if (ReturnTy->isAggregateType() &&
+      !isDirectSHAggregateReturn(DAG.getDataLayout(), ReturnTy)) {
+    if (!Outs.empty() || !HasSRet)
+      report_fatal_error("SH indirect aggregate return is missing sret");
+  } else if (ReturnTy->isVoidTy()) {
+    if (!Outs.empty())
+      report_fatal_error("SH void returns cannot have values");
+  } else {
+    SmallVector<SHValuePart, 4> Parts =
+        getSHValueParts(*this, DAG.getDataLayout(), ReturnTy);
+    if (Outs.size() != Parts.size() ||
+        llvm::any_of(Outs, [](const ISD::OutputArg &Out) {
+          return Out.VT != MVT::i32 || Out.Flags.isByVal() ||
+                 Out.Flags.isSRet();
+        }))
+      report_fatal_error("SH direct return ABI parts are inconsistent");
+  }
+  if (HasSRet && !Outs.empty())
+    report_fatal_error("SH cannot combine direct and indirect returns");
 
   SDValue Glue;
   SmallVector<SDValue, 4> RetOps(1, Chain);
-  for (unsigned I = 0; I != RetLocs.size(); ++I) {
-    const CCValAssign &VA = RetLocs[I];
-    MCRegister ExpectedReg = I == 0 ? SH::R0 : SH::R1;
-    if (!VA.isRegLoc() || VA.getLocReg() != ExpectedReg ||
-        VA.getLocVT() != MVT::i32 || VA.getLocInfo() != CCValAssign::Full)
-      report_fatal_error("SH scalar returns must use r0 and optionally r1");
-    Chain = DAG.getCopyToReg(Chain, DL, ExpectedReg, OutVals[I], Glue);
+  if (!Outs.empty()) {
+    SHABIState ReturnState;
+    SHABIValue ABIValue =
+        ReturnState.allocate(getSHABITypeSize(DAG.getDataLayout(), ReturnTy));
+    SmallVector<SHValuePart, 4> Parts =
+        getSHValueParts(*this, DAG.getDataLayout(), ReturnTy);
+    SmallVector<SDValue, 4> Words;
+    if (ReturnTy->isAggregateType())
+      Words = packSHABIValue(DAG, DL, ABIValue, Parts, OutVals);
+    else
+      Words.assign(OutVals.begin(), OutVals.end());
+    if (Words.size() > 2)
+      report_fatal_error("SH direct aggregate return exceeds r0-r1");
+    for (unsigned I = 0; I != Words.size(); ++I) {
+      MCRegister Reg = I == 0 ? SH::R0 : SH::R1;
+      Chain = DAG.getCopyToReg(Chain, DL, Reg, Words[I], Glue);
+      Glue = Chain.getValue(1);
+      RetOps.push_back(DAG.getRegister(Reg, MVT::i32));
+    }
+  } else if (HasSRet) {
+    SDValue Pointer = DAG.getCopyFromReg(Chain, DL, FuncInfo.getSRetReturnReg(),
+                                         MVT::i32, Glue);
+    Chain = Pointer.getValue(1);
+    Glue = Pointer.getValue(2);
+    Chain = DAG.getCopyToReg(Chain, DL, SH::R0, Pointer, Glue);
     Glue = Chain.getValue(1);
-    RetOps.push_back(DAG.getRegister(ExpectedReg, MVT::i32));
+    RetOps.push_back(DAG.getRegister(SH::R0, MVT::i32));
   }
   RetOps[0] = Chain;
   if (Glue)
@@ -594,86 +1157,177 @@ SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
   CLI.IsTailCall = false;
 
   Type *ReturnTy = CLI.OrigRetTy;
-  bool SupportedVoidReturn =
-      ReturnTy && ReturnTy->isVoidTy() && CLI.Ins.empty();
-  bool SupportedScalarReturn =
-      ReturnTy && (ReturnTy->isIntegerTy(32) || ReturnTy->isPointerTy()) &&
-      CLI.Ins.size() == 1 && CLI.Ins[0].VT == MVT::i32;
-  SupportedScalarReturn |=
-      ReturnTy && ReturnTy->isIntegerTy(64) && CLI.Ins.size() == 2 &&
-      llvm::all_of(CLI.Ins,
-                   [](const ISD::InputArg &In) { return In.VT == MVT::i32; });
-  if (!SupportedVoidReturn && !SupportedScalarReturn)
+  if (!ReturnTy)
+    report_fatal_error("SH call is missing its return type");
+  if (ReturnTy->isAggregateType() &&
+      !isDirectSHAggregateReturn(CLI.DAG.getDataLayout(), ReturnTy))
+    report_fatal_error("SH indirect aggregate call result is missing sret");
+  if (!ReturnTy->isVoidTy() && !isSupportedSHValueType(ReturnTy))
     report_fatal_error(
         "SH calls only support void, i32, i64, and pointer return values");
-
-  for (const ArgListEntry &Arg : CLI.Args) {
-    if (!Arg.OrigTy || !isSupportedSHScalarType(Arg.OrigTy) || Arg.IsByVal ||
-        Arg.IsSRet || Arg.IsInAlloca || Arg.IsPreallocated || Arg.IsByRef ||
-        Arg.IsNest || Arg.IsReturned || Arg.IsSwiftSelf || Arg.IsSwiftAsync ||
-        Arg.IsSwiftError)
-      report_fatal_error(
-          "SH calls only support scalar i32, i64, and pointer arguments");
-  }
+  SmallVector<SHValuePart, 4> ReturnParts;
+  if (!ReturnTy->isVoidTy())
+    ReturnParts = getSHValueParts(*this, CLI.DAG.getDataLayout(), ReturnTy);
+  if (ReturnParts.size() != CLI.Ins.size() ||
+      llvm::any_of(CLI.Ins,
+                   [](const ISD::InputArg &In) { return In.VT != MVT::i32; }))
+    report_fatal_error("SH call result ABI parts are inconsistent");
   if (CLI.OutVals.size() != CLI.Outs.size())
-    report_fatal_error(
-        "SH failed to split call arguments into 32-bit ABI words");
-  for (const ISD::OutputArg &Out : CLI.Outs) {
-    if (!isSupportedSHScalarType(Out.OrigTy) || Out.VT != MVT::i32 ||
-        Out.Flags.isByVal() || Out.Flags.isSRet() || Out.Flags.isByRef() ||
-        Out.Flags.isInAlloca() || Out.Flags.isPreallocated() ||
-        Out.Flags.isNest() || Out.Flags.isReturned() ||
-        Out.Flags.isSwiftSelf() || Out.Flags.isSwiftAsync() ||
-        Out.Flags.isSwiftError())
-      report_fatal_error(
-          "SH calls only support unextended 32-bit scalar ABI words");
-  }
+    report_fatal_error("SH call argument part count is inconsistent");
 
   SelectionDAG &DAG = CLI.DAG;
   MachineFunction &MF = DAG.getMachineFunction();
-  SmallVector<CCValAssign, 4> ArgLocs;
-  CCState ArgCCInfo(CLI.CallConv, CLI.IsVarArg, MF, ArgLocs, *DAG.getContext());
-  ArgCCInfo.AnalyzeCallOperands(CLI.Outs, CC_SH);
-  if (ArgLocs.size() != CLI.Outs.size())
-    report_fatal_error("SH failed to assign all call arguments");
-  unsigned StackBytes = ArgCCInfo.getStackSize();
-  if (StackBytes > 60)
-    report_fatal_error("SH outgoing call frame size cannot exceed 60 bytes");
-  if (StackBytes % 4 != 0)
-    report_fatal_error("SH outgoing call frame size must be four-byte aligned");
+  const DataLayout &DataLayout = DAG.getDataLayout();
+  struct SHCallArgument {
+    const ArgListEntry *Arg;
+    SHABIValue ABIValue;
+    SmallVector<unsigned, 4> PartIndices;
+    bool IsSRet;
+  };
+  SmallVector<SHCallArgument, 8> CallArguments;
+  SHABIState ABIState;
+  for (unsigned ArgIndex = 0; ArgIndex != CLI.Args.size(); ++ArgIndex) {
+    const ArgListEntry &Arg = CLI.Args[ArgIndex];
+    if (!Arg.OrigTy || Arg.IsInAlloca || Arg.IsPreallocated || Arg.IsByRef ||
+        Arg.IsNest || Arg.IsReturned || Arg.IsSwiftSelf || Arg.IsSwiftAsync ||
+        Arg.IsSwiftError)
+      report_fatal_error("SH call argument has unsupported ABI flags");
+    SmallVector<unsigned, 4> PartIndices;
+    for (unsigned I = 0; I != CLI.Outs.size(); ++I)
+      if (CLI.Outs[I].OrigArgIndex == ArgIndex)
+        PartIndices.push_back(I);
+    if (PartIndices.empty())
+      report_fatal_error("SH call argument has no ABI parts");
+    for (unsigned I : PartIndices)
+      if (CLI.Outs[I].VT != MVT::i32 || CLI.Outs[I].Flags.isByRef() ||
+          CLI.Outs[I].Flags.isInAlloca() ||
+          CLI.Outs[I].Flags.isPreallocated() || CLI.Outs[I].Flags.isNest() ||
+          CLI.Outs[I].Flags.isReturned() || CLI.Outs[I].Flags.isSwiftSelf() ||
+          CLI.Outs[I].Flags.isSwiftAsync() || CLI.Outs[I].Flags.isSwiftError())
+        report_fatal_error("SH call argument ABI part is not supported");
 
-  SmallVector<CCValAssign, 1> RetLocs;
-  CCState RetCCInfo(CLI.CallConv, CLI.IsVarArg, MF, RetLocs, *DAG.getContext());
-  RetCCInfo.AnalyzeCallResult(CLI.Ins, RetCC_SH);
-  if (RetLocs.size() != CLI.Ins.size())
-    report_fatal_error("SH failed to assign the call return value");
-
-  SDValue Chain = DAG.getCALLSEQ_START(CLI.Chain, StackBytes, 0, CLI.DL);
-  SmallVector<std::pair<MCRegister, SDValue>, 4> RegsToPass;
-  SmallVector<SDValue, 4> StoreChains;
-  SDValue StackPtr;
-  for (unsigned I = 0; I != ArgLocs.size(); ++I) {
-    const CCValAssign &VA = ArgLocs[I];
-    if (VA.getLocVT() != MVT::i32 || VA.getLocInfo() != CCValAssign::Full)
-      report_fatal_error(
-          "SH calls only support unextended 32-bit scalar ABI words");
-    if (VA.isRegLoc()) {
-      RegsToPass.emplace_back(VA.getLocReg(), CLI.OutVals[I]);
+    if (Arg.IsSRet) {
+      if (PartIndices.size() != 1 || !CLI.Outs[PartIndices[0]].Flags.isSRet() ||
+          CLI.Outs[PartIndices[0]].Flags.isByVal())
+        report_fatal_error("SH sret call argument must be one pointer");
+      CallArguments.push_back({&Arg, {0, {}}, std::move(PartIndices), true});
       continue;
     }
-    if (!VA.isMemLoc() || VA.getLocMemOffset() < 0 ||
-        VA.getLocMemOffset() > 56 || VA.getLocMemOffset() % 4 != 0)
-      report_fatal_error(
-          "SH outgoing stack argument offset must be four-byte aligned and "
-          "in [0, 56]");
-    if (!StackPtr)
-      StackPtr = DAG.getRegister(SH::R15, MVT::i32);
-    SDValue Address =
-        DAG.getNode(ISD::ADD, CLI.DL, MVT::i32, StackPtr,
-                    DAG.getIntPtrConstant(VA.getLocMemOffset(), CLI.DL));
-    StoreChains.push_back(DAG.getStore(
-        Chain, CLI.DL, CLI.OutVals[I], Address,
-        MachinePointerInfo::getStack(MF, VA.getLocMemOffset()), Align(4)));
+
+    Type *ABIType = Arg.IsByVal ? Arg.IndirectType : Arg.OrigTy;
+    uint64_t Size = getSHABITypeSize(DataLayout, ABIType);
+    if (Arg.IsByVal) {
+      Align Alignment =
+          Arg.Alignment.value_or(DataLayout.getABITypeAlign(ABIType));
+      requireSupportedSHByValType(DataLayout, ABIType, Alignment);
+      if (PartIndices.size() != 1 ||
+          !CLI.Outs[PartIndices[0]].Flags.isByVal() ||
+          CLI.Outs[PartIndices[0]].Flags.getByValSize() != Size)
+        report_fatal_error("SH byval call argument size is inconsistent");
+    } else {
+      if (llvm::any_of(PartIndices, [&](unsigned I) {
+            return CLI.Outs[I].Flags.isByVal() || CLI.Outs[I].Flags.isSRet();
+          }))
+        report_fatal_error("SH direct call argument has indirect ABI flags");
+      SmallVector<SHValuePart, 4> Parts =
+          getSHValueParts(*this, DataLayout, Arg.OrigTy);
+      if (Parts.size() != PartIndices.size())
+        report_fatal_error("SH call argument ABI parts are inconsistent");
+    }
+    CallArguments.push_back(
+        {&Arg, ABIState.allocate(Size), std::move(PartIndices), false});
+  }
+
+  unsigned StackBytes = ABIState.getStackSize();
+  if (StackBytes > 60 || StackBytes % 4 != 0)
+    report_fatal_error("SH outgoing call frame size cannot exceed 60 bytes");
+  SDValue Chain = DAG.getCALLSEQ_START(CLI.Chain, StackBytes, 0, CLI.DL);
+  bool NeedsNarrowStackAddress =
+      llvm::any_of(CallArguments, [](const SHCallArgument &CallArg) {
+        return llvm::any_of(CallArg.ABIValue.Words, [](const SHABIWord &Word) {
+          return !Word.isRegister() && Word.ValidBytes != 4;
+        });
+      });
+  SDValue StackPtr;
+  if (NeedsNarrowStackAddress) {
+    StackPtr = DAG.getCopyFromReg(Chain, CLI.DL, SH::R15, MVT::i32);
+    Chain = StackPtr.getValue(1);
+  } else {
+    StackPtr = DAG.getRegister(SH::R15, MVT::i32);
+  }
+  SmallVector<std::pair<MCRegister, SDValue>, 4> RegsToPass;
+  SmallVector<SmallVector<SDValue, 4>, 8> ArgumentWords;
+  SmallVector<SDValue, 8> StoreChains;
+  ArgumentWords.reserve(CallArguments.size());
+  for (const SHCallArgument &CallArg : CallArguments) {
+    if (CallArg.IsSRet) {
+      RegsToPass.emplace_back(SH::R2, CLI.OutVals[CallArg.PartIndices.front()]);
+      ArgumentWords.emplace_back();
+      continue;
+    }
+    if (CallArg.Arg->IsByVal) {
+      Align Alignment = CallArg.Arg->Alignment.value_or(
+          DataLayout.getABITypeAlign(CallArg.Arg->IndirectType));
+      SmallVector<SDValue, 4> Words;
+      for (const SHABIWord &Word : CallArg.ABIValue.Words) {
+        SmallVector<SDValue, 2> LoadChains;
+        SDValue Value =
+            loadSHABIWord(DAG, CLI.DL, Chain, CallArg.Arg->Node,
+                          MachinePointerInfo(CallArg.Arg->Val), Alignment,
+                          Word.ByteOffset, Word.ValidBytes, LoadChains);
+        Chain = DAG.getNode(ISD::TokenFactor, CLI.DL, MVT::Other, LoadChains);
+        if (Word.isRegister()) {
+          Words.push_back(Value);
+          continue;
+        }
+        unsigned StackOffset = Word.StackOffset;
+        if (!DataLayout.isLittleEndian() && CallArg.ABIValue.Size < 4 &&
+            CallArg.ABIValue.Words.size() == 1)
+          StackOffset += 4 - CallArg.ABIValue.Size;
+        storeSHABIWord(DAG, CLI.DL, Chain, StackPtr,
+                       MachinePointerInfo::getStack(MF, 0), Align(4),
+                       StackOffset, Word.ValidBytes, Value, StoreChains);
+        Chain = DAG.getNode(ISD::TokenFactor, CLI.DL, MVT::Other, StoreChains);
+        StoreChains.clear();
+        Words.push_back(SDValue());
+      }
+      ArgumentWords.push_back(std::move(Words));
+      continue;
+    }
+    SmallVector<SHValuePart, 4> Parts =
+        getSHValueParts(*this, DataLayout, CallArg.Arg->OrigTy);
+    SmallVector<SDValue, 4> Values;
+    for (unsigned I : CallArg.PartIndices)
+      Values.push_back(CLI.OutVals[I]);
+    if (CallArg.Arg->OrigTy->isAggregateType())
+      ArgumentWords.push_back(
+          packSHABIValue(DAG, CLI.DL, CallArg.ABIValue, Parts, Values));
+    else
+      ArgumentWords.push_back(std::move(Values));
+  }
+
+  for (unsigned ArgIndex = 0; ArgIndex != CallArguments.size(); ++ArgIndex) {
+    const SHCallArgument &CallArg = CallArguments[ArgIndex];
+    if (CallArg.IsSRet)
+      continue;
+    ArrayRef<SDValue> Words = ArgumentWords[ArgIndex];
+    for (unsigned WordIndex = 0; WordIndex != CallArg.ABIValue.Words.size();
+         ++WordIndex) {
+      const SHABIWord &Word = CallArg.ABIValue.Words[WordIndex];
+      if (Word.isRegister()) {
+        RegsToPass.emplace_back(Word.Reg, Words[WordIndex]);
+        continue;
+      }
+      if (CallArg.Arg->IsByVal)
+        continue;
+      unsigned StackOffset = Word.StackOffset;
+      if (!DataLayout.isLittleEndian() && CallArg.ABIValue.Size < 4 &&
+          CallArg.ABIValue.Words.size() == 1)
+        StackOffset += 4 - CallArg.ABIValue.Size;
+      storeSHABIWord(DAG, CLI.DL, Chain, StackPtr,
+                     MachinePointerInfo::getStack(MF, 0), Align(4), StackOffset,
+                     Word.ValidBytes, Words[WordIndex], StoreChains);
+    }
   }
   if (!StoreChains.empty())
     Chain = DAG.getNode(ISD::TokenFactor, CLI.DL, MVT::Other, StoreChains);
@@ -743,24 +1397,26 @@ SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
   Chain = DAG.getCALLSEQ_END(Chain, StackBytes, 0, Glue, CLI.DL);
   Glue = Chain.getValue(1);
 
-  SmallVector<SDValue, 2> ABIResults(CLI.Ins.size());
-  for (unsigned I = 0; I != RetLocs.size(); ++I) {
-    const CCValAssign &VA = RetLocs[I];
-    MCRegister ExpectedReg = I == 0 ? SH::R0 : SH::R1;
-    if (!VA.isRegLoc() || VA.getLocReg() != ExpectedReg ||
-        VA.getLocVT() != MVT::i32 || VA.getLocInfo() != CCValAssign::Full)
-      report_fatal_error(
-          "SH scalar call results must use r0 and optionally r1");
-    SDValue Result =
-        DAG.getCopyFromReg(Chain, CLI.DL, ExpectedReg, MVT::i32, Glue);
-    ABIResults[I] = Result;
-    Chain = Result.getValue(1);
-    Glue = Result.getValue(2);
-  }
-  for (SDValue Result : ABIResults) {
-    if (!Result)
-      report_fatal_error("SH failed to assign a returned ABI word");
-    InVals.push_back(Result);
+  if (!CLI.Ins.empty()) {
+    SHABIState ReturnState;
+    SHABIValue ABIValue =
+        ReturnState.allocate(getSHABITypeSize(DataLayout, ReturnTy));
+    if (ABIValue.Words.size() > 2)
+      report_fatal_error("SH direct call result exceeds r0-r1");
+    SmallVector<SDValue, 2> Words;
+    for (unsigned I = 0; I != ABIValue.Words.size(); ++I) {
+      MCRegister Reg = I == 0 ? SH::R0 : SH::R1;
+      SDValue Result = DAG.getCopyFromReg(Chain, CLI.DL, Reg, MVT::i32, Glue);
+      Words.push_back(Result);
+      Chain = Result.getValue(1);
+      Glue = Result.getValue(2);
+    }
+    SmallVector<SDValue, 4> Results;
+    if (ReturnTy->isAggregateType())
+      Results = unpackSHABIValue(DAG, CLI.DL, ABIValue, ReturnParts, Words);
+    else
+      Results.assign(Words.begin(), Words.end());
+    InVals.append(Results);
   }
 
   return Chain;
@@ -927,6 +1583,78 @@ static SDValue getI64Part(SDValue Value, unsigned Part, const SDLoc &DL,
                      DAG.getConstant(Part, DL, MVT::i32));
 }
 
+static SDValue lowerSHUnalignedIntegerLoad(SDValue Op, SelectionDAG &DAG) {
+  const auto *Load = cast<LoadSDNode>(Op);
+  unsigned Width = Load->getMemoryVT().getStoreSize();
+  if ((Width != 2 && Width != 4) || Load->getAlign() >= Align(Width))
+    report_fatal_error("SH invalid unaligned aggregate load");
+  if (Load->getBasePtr().getValueType() != MVT::i32)
+    report_fatal_error("SH unaligned aggregate load address is not supported");
+
+  SDLoc DL(Op);
+  SDValue Result = DAG.getConstant(0, DL, MVT::i32);
+  SmallVector<SDValue, 4> Chains;
+  SDValue LoadChain = Load->getChain();
+  for (unsigned Byte = 0; Byte != Width; ++Byte) {
+    SDValue Address = DAG.getObjectPtrOffset(DL, Load->getBasePtr(),
+                                             TypeSize::getFixed(Byte));
+    SDValue Loaded = DAG.getExtLoad(
+        ISD::ZEXTLOAD, DL, MVT::i32, LoadChain, Address,
+        Load->getPointerInfo().getWithOffset(Byte), MVT::i8, Align(1),
+        Load->getMemOperand()->getFlags(), Load->getAAInfo());
+    SDValue Piece = Loaded;
+    unsigned Shift =
+        8 * (DAG.getDataLayout().isLittleEndian() ? Byte : Width - 1 - Byte);
+    if (Shift != 0)
+      Piece = DAG.getNode(ISD::SHL, DL, MVT::i32, Piece,
+                          DAG.getConstant(Shift, DL, MVT::i32));
+    Result = DAG.getNode(ISD::OR, DL, MVT::i32, Result, Piece);
+    Chains.push_back(Loaded.getValue(1));
+    if (Load->isVolatile())
+      LoadChain = Loaded.getValue(1);
+  }
+  if (Load->getExtensionType() == ISD::SEXTLOAD)
+    Result = DAG.getNode(ISD::SIGN_EXTEND_INREG, DL, MVT::i32, Result,
+                         DAG.getValueType(Width == 2 ? MVT::i16 : MVT::i32));
+  SDValue ResultChain = Load->isVolatile() ? LoadChain
+                                           : DAG.getNode(ISD::TokenFactor, DL,
+                                                         MVT::Other, Chains);
+  return DAG.getMergeValues({Result, ResultChain}, DL);
+}
+
+static SDValue lowerSHUnalignedIntegerStore(SDValue Op, SelectionDAG &DAG) {
+  const auto *Store = cast<StoreSDNode>(Op);
+  unsigned Width = Store->getMemoryVT().getStoreSize();
+  if ((Width != 2 && Width != 4) || Store->getAlign() >= Align(Width))
+    report_fatal_error("SH invalid unaligned aggregate store");
+  if (Store->getBasePtr().getValueType() != MVT::i32)
+    report_fatal_error("SH unaligned aggregate store address is not supported");
+
+  SDLoc DL(Op);
+  SmallVector<SDValue, 4> Chains;
+  SDValue StoreChain = Store->getChain();
+  for (unsigned Byte = 0; Byte != Width; ++Byte) {
+    unsigned Shift =
+        8 * (DAG.getDataLayout().isLittleEndian() ? Byte : Width - 1 - Byte);
+    SDValue Piece = Store->getValue();
+    if (Shift != 0)
+      Piece = DAG.getNode(ISD::SRL, DL, MVT::i32, Piece,
+                          DAG.getConstant(Shift, DL, MVT::i32));
+    SDValue Address = DAG.getObjectPtrOffset(DL, Store->getBasePtr(),
+                                             TypeSize::getFixed(Byte));
+    SDValue ByteStore = DAG.getTruncStore(
+        StoreChain, DL, Piece, Address,
+        Store->getPointerInfo().getWithOffset(Byte), MVT::i8, Align(1),
+        Store->getMemOperand()->getFlags(), Store->getAAInfo());
+    Chains.push_back(ByteStore);
+    if (Store->isVolatile())
+      StoreChain = ByteStore;
+  }
+  if (Store->isVolatile())
+    return StoreChain;
+  return DAG.getNode(ISD::TokenFactor, DL, MVT::Other, Chains);
+}
+
 static SDValue lowerSHI64Load(SDValue Op, SelectionDAG &DAG) {
   const auto *Load = cast<LoadSDNode>(Op);
   if (Load->getAlign() < Align(4))
@@ -1050,7 +1778,9 @@ SDValue SHTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
                                          : lowerSHI64Store(Op, DAG);
     if (MemoryVT == MVT::i32) {
       if (Mem->getAlign() < Align(4))
-        report_fatal_error("SH requires 4-byte alignment for mov.l");
+        return Op.getOpcode() == ISD::LOAD
+                   ? lowerSHUnalignedIntegerLoad(Op, DAG)
+                   : lowerSHUnalignedIntegerStore(Op, DAG);
       if (!isSupportedSHAddress(Mem->getBasePtr()))
         report_fatal_error(
             "SH memory address must be a register or supported 32-bit constant "
@@ -1061,7 +1791,9 @@ SDValue SHTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
       report_fatal_error(
           "SH only supports 8-, 16-, 32-, and 64-bit memory operations");
     if (MemoryVT == MVT::i16 && Mem->getAlign() < Align(2))
-      report_fatal_error("SH requires 2-byte alignment for mov.w");
+      return Op.getOpcode() == ISD::LOAD
+                 ? lowerSHUnalignedIntegerLoad(Op, DAG)
+                 : lowerSHUnalignedIntegerStore(Op, DAG);
     if (!isSupportedSHNarrowAddress(Mem->getBasePtr()))
       report_fatal_error(
           "SH byte/word memory address must be a register, frame index, or "
@@ -1880,6 +2612,16 @@ bool SHTargetLowering::allowsMisalignedMemoryAccesses(
   if (Fast)
     *Fast = 0;
   return false;
+}
+
+EVT SHTargetLowering::getOptimalMemOpType(
+    LLVMContext &Context, const MemOp &Op,
+    const AttributeList &FuncAttributes) const {
+  if (Op.isAligned(Align(4)))
+    return MVT::i32;
+  if (Op.isAligned(Align(2)))
+    return MVT::i16;
+  return MVT::i8;
 }
 
 const char *SHTargetLowering::getTargetNodeName(unsigned Opcode) const {

@@ -117,9 +117,7 @@ define fastcc i64 @unsupported_cc_i64(i64 %value) {
 }
 
 ;--- large-outgoing.ll
-define internal void @large_i64_callee(i32 %a, i32 %b, i32 %c, i32 %d, i64 %e, i64 %f, i64 %g, i64 %h, i64 %i, i64 %j, i64 %k, i64 %l) {
-	ret void
-}
+declare void @large_i64_callee(i32 %a, i32 %b, i32 %c, i32 %d, i64 %e, i64 %f, i64 %g, i64 %h, i64 %i, i64 %j, i64 %k, i64 %l)
 
 define void @large_i64_outgoing() {
 	call void @large_i64_callee(i32 0, i32 1, i32 2, i32 3, i64 4, i64 5, i64 6, i64 7, i64 8, i64 9, i64 10, i64 11)
