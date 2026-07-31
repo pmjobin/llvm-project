@@ -149,6 +149,15 @@ class SHLongLoadPC<dag Outs, dag Ins, string Asm, list<dag> pattern = []>
   let Inst{7-0} = target;
 }
 
+class SHMOVA<dag Outs, dag Ins, string Asm>
+    : SHInst<Outs, Ins, Asm> {
+  bits<4> dst = 0;
+  bits<8> target;
+
+  let Inst{15-8} = 0xc7;
+  let Inst{7-0} = target;
+}
+
 class SHLongStoreReg<dag Outs, dag Ins, string Asm, list<dag> pattern = []>
     : SHInst<Outs, Ins, Asm> {
   bits<4> src;

@@ -1,5 +1,9 @@
 ; RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -asm-verbose=false < %s | FileCheck %s --check-prefix=ASM
 ; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O2 -verify-machineinstrs -asm-verbose=false < %s | FileCheck %s --check-prefix=ASM
+; RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -relocation-model=pic -O0 -verify-machineinstrs -filetype=obj < %s -o %t.pic.be.o
+; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -relocation-model=pic -O2 -verify-machineinstrs -filetype=obj < %s -o %t.pic.le.o
+; RUN: llvm-readobj --relocations %t.pic.be.o | FileCheck %s --check-prefix=PIC
+; RUN: llvm-readobj --relocations %t.pic.le.o | FileCheck %s --check-prefix=PIC
 
 ; ASM-LABEL: system_acquire:
 ; ASM: sts.l	pr,@-r15
@@ -90,3 +94,9 @@ define i32 @mixed(ptr %ordinary, ptr %atomic) {
   %sum = add i32 %value, %result
   ret i32 %sum
 }
+
+; PIC: R_SH_GOTPC _GLOBAL_OFFSET_TABLE_
+; PIC-DAG: R_SH_PLT32 __sync_synchronize
+; PIC-DAG: R_SH_PLT32 __atomic_load_4
+; PIC-DAG: R_SH_PLT32 __atomic_store_4
+; PIC-NOT: R_SH_DIR32

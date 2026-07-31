@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SHFixupKinds.h"
+#include "SHMCAsmInfo.h"
 #include "SHMCTargetDesc.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/MC/MCAsmBackend.h"
@@ -26,6 +27,11 @@ using namespace llvm;
 namespace {
 
 class SHObjectTargetWriter : public MCELFObjectTargetWriter {
+  static bool isGOTSymbol(const MCValue &Target) {
+    const MCSymbol *Add = Target.getAddSym();
+    return Add && Add->getName() == "_GLOBAL_OFFSET_TABLE_";
+  }
+
 public:
   // R_SH_IND12W is not a partial-in-place relocation.  Its architectural PC
   // bias must therefore be carried in an explicit addend.
@@ -49,6 +55,34 @@ public:
                   "SH unresolved branch relocations are not supported");
       return 0;
     }
+    if (Target.getSpecifier()) {
+      if (Target.getSubSym()) {
+        reportError(Fixup.getLoc(),
+                    "SH GOT and PLT modifiers do not support symbol "
+                    "subtraction");
+        return 0;
+      }
+      if (Fixup.getKind() != FK_Data_4) {
+        reportError(Fixup.getLoc(),
+                    "SH GOT and PLT modifiers require a four-byte value");
+        return 0;
+      }
+      switch (Target.getSpecifier()) {
+      case SH::S_GOT:
+        return ELF::R_SH_GOT32;
+      case SH::S_GOTOFF:
+        return ELF::R_SH_GOTOFF;
+      case SH::S_GOTPC:
+        return ELF::R_SH_GOTPC;
+      case SH::S_PLT:
+        return ELF::R_SH_PLT32;
+      default:
+        reportError(Fixup.getLoc(), "unsupported SH relocation modifier");
+        return 0;
+      }
+    }
+    if (Fixup.getKind() == FK_Data_4 && !IsPCRel && isGOTSymbol(Target))
+      return ELF::R_SH_GOTPC;
     if (Fixup.getKind() == FK_Data_4 && !IsPCRel)
       return ELF::R_SH_DIR32;
     if (Fixup.getKind() == FK_Data_4 && IsPCRel)
@@ -73,7 +107,9 @@ public:
   bool needsRelocateWithSymbol(const MCValue &, unsigned Type) const override {
     // These are partial-in-place relocations.  Keep the original symbol so
     // section-symbol conversion does not move any addend into the RELA record.
-    return Type == ELF::R_SH_DIR32 || Type == ELF::R_SH_REL32;
+    return Type == ELF::R_SH_DIR32 || Type == ELF::R_SH_REL32 ||
+           Type == ELF::R_SH_GOT32 || Type == ELF::R_SH_PLT32 ||
+           Type == ELF::R_SH_GOTOFF || Type == ELF::R_SH_GOTPC;
   }
 };
 
@@ -184,9 +220,22 @@ public:
       return;
     case FK_Data_4:
       if (!IsResolved) {
-        // GNU SH applies DIR32 and REL32 addends from the relocated word even
-        // when the relocation section uses RELA for IND12W.
+        // GNU SH applies 32-bit data-relocation addends from the relocated
+        // word even though LLVM emits RELA sections for this target.
         int64_t InPlaceAddend = Target.getConstant();
+        if (Target.getSpecifier() && Target.getSubSym()) {
+          getContext().reportError(
+              Fixup.getLoc(),
+              "SH GOT and PLT modifiers do not support symbol subtraction");
+          return;
+        }
+        if (Target.getSpecifier() == SH::S_GOT && InPlaceAddend != 0) {
+          getContext().reportError(
+              Fixup.getLoc(),
+              "SH @GOT does not support an addend; add it after loading the "
+              "GOT slot");
+          InPlaceAddend = 0;
+        }
         MCFixup RelocFixup = Fixup;
         if (const MCSymbol *Sub = Target.getSubSym()) {
           if (!Sub->isDefined()) {

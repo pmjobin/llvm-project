@@ -33,3 +33,8 @@ def QBit : Register<"">;
 def GPR : RegisterClass<"SH", [i32], 32,
                         (add (sequence "R%u", 0, 7),
                              (sequence "R%u", 8, 14), R15)>;
+
+// PIC address materialization uses r0 for MOVA, so its result cannot use r0.
+def GPRNoR0 : RegisterClass<"SH", [i32], 32,
+                            (add (sequence "R%u", 1, 7),
+                                 (sequence "R%u", 8, 14), R15)>;

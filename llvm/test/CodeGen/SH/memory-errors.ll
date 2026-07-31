@@ -5,7 +5,6 @@
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/large-frame.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=LARGE-FRAME
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/overaligned.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=OVERALIGNED
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/alloca-escape.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ALLOCA-ESCAPE
-; RUN: not --crash llc -mtriple=sh-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs %t/register-offset.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ADDRESS
 
 ; UNALIGNED-LOAD: LLVM ERROR: SH requires 4-byte alignment for 32- and 64-bit loads
 ; UNALIGNED-STORE: LLVM ERROR: SH requires 4-byte alignment for 32- and 64-bit stores
@@ -13,7 +12,6 @@
 ; LARGE-FRAME: LLVM ERROR: SH stack frame size cannot exceed 60 bytes
 ; OVERALIGNED: LLVM ERROR: SH stack object alignment cannot exceed 4 bytes
 ; ALLOCA-ESCAPE: LLVM ERROR: SH stack object address escape is not supported
-; ADDRESS: LLVM ERROR: SH memory address must be a register or supported 32-bit constant address addition
 
 ;--- unaligned-load.ll
 define i32 @unaligned_load(ptr %p) {
@@ -96,13 +94,6 @@ define i32 @offset_64(ptr %p) {
 ;--- negative-offset.ll
 define i32 @negative_offset(ptr %p) {
 	%address = getelementptr i8, ptr %p, i32 -4
-	%value = load volatile i32, ptr %address, align 4
-	ret i32 %value
-}
-
-;--- register-offset.ll
-define i32 @register_offset(ptr %p, i32 %offset) {
-	%address = getelementptr i8, ptr %p, i32 %offset
 	%value = load volatile i32, ptr %address, align 4
 	ret i32 %value
 }

@@ -26,7 +26,9 @@ class SHTargetObjectFile : public TargetLoweringObjectFileELF {
 public:
   void Initialize(MCContext &Ctx, const TargetMachine &TM) override {
     TargetLoweringObjectFileELF::Initialize(Ctx, TM);
-    FDECFIEncoding = dwarf::DW_EH_PE_absptr;
+    FDECFIEncoding = TM.isPositionIndependent()
+                         ? dwarf::DW_EH_PE_pcrel | dwarf::DW_EH_PE_sdata4
+                         : dwarf::DW_EH_PE_absptr;
   }
 };
 
@@ -36,8 +38,9 @@ static StringRef getSHCPU(StringRef CPU) { return CPU.empty() ? "sh2" : CPU; }
 
 static Reloc::Model getSHRelocModel(std::optional<Reloc::Model> RM) {
   Reloc::Model Model = RM.value_or(Reloc::Static);
-  if (Model != Reloc::Static)
-    reportFatalUsageError("SH only supports static relocation");
+  if (Model != Reloc::Static && Model != Reloc::PIC_)
+    reportFatalUsageError(
+        "SH only supports static and position-independent relocation models");
   return Model;
 }
 

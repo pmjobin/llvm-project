@@ -93,6 +93,10 @@ void SHMCInstLower::lower(const MachineInstr *MI, MCInst &OutMI) const {
       OutMI.addOperand(MCOperand::createExpr(Expr));
       break;
     }
+    case MachineOperand::MO_MCSymbol:
+      OutMI.addOperand(MCOperand::createExpr(
+          MCSymbolRefExpr::create(MO.getMCSymbol(), Ctx)));
+      break;
     case MachineOperand::MO_RegisterMask:
       break;
     default:

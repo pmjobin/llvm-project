@@ -10,6 +10,7 @@
 #define LLVM_LIB_TARGET_SH_MCTARGETDESC_SHMCASMINFO_H
 
 #include "llvm/MC/MCAsmInfoELF.h"
+#include "llvm/MC/MCExpr.h"
 
 namespace llvm {
 
@@ -22,6 +23,18 @@ class SHMCAsmInfo : public MCAsmInfoELF {
 public:
   explicit SHMCAsmInfo(const Triple &TT, const MCTargetOptions &Options);
 };
+
+namespace SH {
+
+enum Specifier : uint16_t {
+  S_None = 0,
+  S_GOT = MCSymbolRefExpr::FirstTargetSpecifier,
+  S_GOTOFF,
+  S_GOTPC,
+  S_PLT
+};
+
+} // namespace SH
 
 } // namespace llvm
 

@@ -440,13 +440,16 @@ ParseStatus SHAsmParser::parseMemory(OperandVector &Operands,
     End = Parser.getTok().getEndLoc();
     Parser.Lex();
     int64_t ByteDisp = cast<MCConstantExpr>(Disp)->getValue();
-    if (Mnemonic == "mov.l" && Base == SH::PC) {
+    if ((Mnemonic == "mov.l" || Mnemonic == "mova") && Base == SH::PC) {
       if (ByteDisp < 0 || ByteDisp > 1020 || ByteDisp % 4 != 0) {
         Error(Start, "SH PC-relative literal displacement must be a multiple "
                      "of 4 in the range [0, 1020]");
         return ParseStatus::Failure;
       }
       Operands.push_back(SHOperand::createPCLiteral(Disp, true, Start, End));
+    } else if (Base == SH::PC) {
+      Error(Start, "pc is only valid for mov.l and mova PC-relative operands");
+      return ParseStatus::Failure;
     } else if (Mnemonic == "mov.b") {
       if (ByteDisp < 0 || ByteDisp > 15) {
         Error(Start, "byte displacement must be in the range [0, 15]");

@@ -6,6 +6,10 @@
 ; RUN: llvm-readelf -h -s -r %t-le.o | FileCheck %s --check-prefixes=ELF,ELF-LE
 ; RUN: llvm-objdump -d %t-be.o | FileCheck %s --check-prefix=DIS-BE
 ; RUN: llvm-objdump -d %t-le.o | FileCheck %s --check-prefix=DIS-LE
+; RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -relocation-model=pic -O0 -verify-machineinstrs -filetype=obj %s -o %t-pic-be.o
+; RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -relocation-model=pic -O0 -verify-machineinstrs -filetype=obj %s -o %t-pic-le.o
+; RUN: llvm-readobj --relocations %t-pic-be.o | FileCheck %s --check-prefix=PIC
+; RUN: llvm-readobj --relocations %t-pic-le.o | FileCheck %s --check-prefix=PIC
 
 %S8 = type { i32, i32 }
 %S12 = type { i32, i32, i32 }
@@ -80,3 +84,10 @@ define void @helper_copy(ptr %dst, ptr %src) {
 
 ; DIS-BE-COUNT-4: jsr	@r0
 ; DIS-LE-COUNT-4: jsr	@r0
+
+; PIC-DAG: R_SH_GOTPC _GLOBAL_OFFSET_TABLE_
+; PIC-DAG: R_SH_PLT32 external_direct
+; PIC-DAG: R_SH_PLT32 external_sret
+; PIC-DAG: R_SH_PLT32 external_byval
+; PIC-DAG: R_SH_PLT32 memcpy
+; PIC-NOT: R_SH_DIR32

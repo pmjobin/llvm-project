@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SHAsmPrinter.h"
+#include "MCTargetDesc/SHMCAsmInfo.h"
 #include "MCTargetDesc/SHMCTargetDesc.h"
 #include "SH.h"
 #include "SHConstantPoolValue.h"
@@ -68,8 +69,9 @@ static void validateGlobalInitializer(const Constant *C) {
 static void validateGlobalObject(const GlobalObject &GO) {
   if (GO.hasComdat())
     report_fatal_error("SH COMDAT is not supported");
-  if (!GO.hasDefaultVisibility() && !GO.hasHiddenVisibility())
-    report_fatal_error("SH protected visibility is not supported");
+  if (!GO.hasDefaultVisibility() && !GO.hasHiddenVisibility() &&
+      !GO.hasProtectedVisibility())
+    report_fatal_error("SH symbol visibility is not supported");
   if (GO.getDLLStorageClass() != GlobalValue::DefaultStorageClass)
     report_fatal_error("SH DLL storage classes are not supported");
   if (!GO.isDeclarationForLinker() && !GO.hasExternalLinkage() &&
@@ -149,18 +151,38 @@ public:
 
   void emitMachineConstantPoolValue(MachineConstantPoolValue *MCPV) override {
     const auto *Value = static_cast<const SHConstantPoolValue *>(MCPV);
-    assert(Value->getModifier() == SHConstantPoolValue::Modifier::None &&
-           "unsupported SH constant-pool modifier");
     MCSymbol *Symbol;
     if (Value->isGlobalValue())
-      Symbol = getSymbol(Value->getGlobalValue());
+      Symbol = Value->getModifier() == SHConstantPoolValue::Modifier::GOTOFF
+                   ? getSymbolPreferLocal(*Value->getGlobalValue())
+                   : getSymbol(Value->getGlobalValue());
     else if (Value->isExternalSymbol())
       Symbol = GetExternalSymbolSymbol(Value->getExternalSymbol());
     else if (Value->isJumpTable())
       Symbol = GetJTISymbol(Value->getJumpTableIndex());
     else
       Symbol = GetBlockAddressSymbol(Value->getBlockAddress());
-    const MCExpr *Expr = MCSymbolRefExpr::create(Symbol, OutContext);
+    unsigned Specifier = SH::S_None;
+    switch (Value->getModifier()) {
+    case SHConstantPoolValue::Modifier::None:
+      break;
+    case SHConstantPoolValue::Modifier::GOT:
+      Specifier = SH::S_GOT;
+      break;
+    case SHConstantPoolValue::Modifier::GOTOFF:
+      Specifier = SH::S_GOTOFF;
+      break;
+    case SHConstantPoolValue::Modifier::GOTPC:
+      Specifier = SH::S_GOTPC;
+      break;
+    case SHConstantPoolValue::Modifier::PLT:
+      Specifier = SH::S_PLT;
+      break;
+    }
+    if (Value->getModifier() == SHConstantPoolValue::Modifier::GOTPC &&
+        Symbol->getName() == "_GLOBAL_OFFSET_TABLE_")
+      Specifier = SH::S_None;
+    const MCExpr *Expr = MCSymbolRefExpr::create(Symbol, Specifier, OutContext);
     if (Value->getAddend() != 0)
       Expr = MCBinaryExpr::createAdd(
           Expr, MCConstantExpr::create(Value->getAddend(), OutContext),
@@ -176,6 +198,10 @@ public:
     if (MI->getOpcode() == SH::SH_JT_DISPATCH)
       report_fatal_error(
           "SH jump-table dispatch reached final emission without expansion");
+    if (MI->getOpcode() == SH::SH_PIC_SETUP ||
+        MI->getOpcode() == SH::SH_PIC_ADDRESS)
+      report_fatal_error(
+          "SH PIC materialization reached final emission without expansion");
     SHMCInstLower Lowering(OutContext, *this);
     MachineBasicBlock::const_instr_iterator I = MI->getIterator();
     MachineBasicBlock::const_instr_iterator E = MI->getParent()->instr_end();

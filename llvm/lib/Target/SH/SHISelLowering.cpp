@@ -1460,6 +1460,11 @@ SHTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
   return DAG.getNode(SHISD::RET_GLUE, DL, MVT::Other, RetOps);
 }
 
+static SDValue lowerSHSymbolAddress(SHConstantPoolValue *CPV, const SDLoc &DL,
+                                    SelectionDAG &DAG);
+static SDValue lowerSHPICPairedAddress(SHConstantPoolValue *CPV,
+                                       const SDLoc &DL, SelectionDAG &DAG);
+
 SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
                                     SmallVectorImpl<SDValue> &InVals) const {
   requireSupportedCallingConvention(CLI.CallConv);
@@ -1681,27 +1686,35 @@ SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
           EffectiveSection(Caller) == EffectiveSection(*CalleeFunction)) ||
          (!Caller.getSection().empty() &&
           Caller.getSection() == CalleeFunction->getSection()));
+    bool IsNonPreemptible = CalleeFunction && CalleeFunction->isDSOLocal() &&
+                            !CalleeFunction->isInterposable();
     bool UseDirectCall =
         getTargetMachine().getCodeModel() == CodeModel::Small &&
         CalleeFunction && Global->getOffset() == 0 &&
-        !CalleeFunction->isDeclarationForLinker() &&
-        !CalleeFunction->isInterposable() && CalleeFunction->isDSOLocal() &&
+        !CalleeFunction->isDeclarationForLinker() && IsNonPreemptible &&
         SameSection;
     if (UseDirectCall)
       Callee = DAG.getTargetGlobalAddress(CalleeFunction, CLI.DL, MVT::i32);
-    else
+    else if (getTargetMachine().isPositionIndependent() && !IsNonPreemptible) {
+      if (!CalleeFunction)
+        report_fatal_error("SH direct call target is not a function");
+      if (Global->getOffset() != 0)
+        report_fatal_error("SH direct call target cannot have an addend");
+      SHConstantPoolValue *CPV = SHConstantPoolValue::create(
+          CalleeFunction, 0, SHConstantPoolValue::Modifier::PLT);
+      Callee = lowerSHPICPairedAddress(CPV, CLI.DL, DAG);
+    } else
       Callee = LowerGlobalAddress(Callee, DAG);
   } else if (isa<ExternalSymbolSDNode>(Callee)) {
     const auto *External = cast<ExternalSymbolSDNode>(Callee);
-    SHConstantPoolValue *CPV = SHConstantPoolValue::create(
-        *DAG.getContext(), External->getSymbol(), 0);
-    MF.setAlignment(std::max(MF.getAlignment(), Align(4)));
-    SDValue CPAddr = DAG.getTargetConstantPool(CPV, MVT::i32, Align(4));
-    Callee = DAG.getLoad(MVT::i32, CLI.DL, DAG.getEntryNode(), CPAddr,
-                         MachinePointerInfo::getConstantPool(MF), Align(4),
-                         MachineMemOperand::MOLoad |
-                             MachineMemOperand::MODereferenceable |
-                             MachineMemOperand::MOInvariant);
+    SHConstantPoolValue *CPV =
+        SHConstantPoolValue::create(*DAG.getContext(), External->getSymbol(), 0,
+                                    getTargetMachine().isPositionIndependent()
+                                        ? SHConstantPoolValue::Modifier::PLT
+                                        : SHConstantPoolValue::Modifier::None);
+    Callee = getTargetMachine().isPositionIndependent()
+                 ? lowerSHPICPairedAddress(CPV, CLI.DL, DAG)
+                 : lowerSHSymbolAddress(CPV, CLI.DL, DAG);
   } else if (Callee.getValueType() != MVT::i32) {
     report_fatal_error("SH indirect call target must be a 32-bit GPR value");
   }
@@ -1814,12 +1827,77 @@ static SDValue lowerSHSymbolAddress(SHConstantPoolValue *CPV, const SDLoc &DL,
                          MachineMemOperand::MOInvariant);
 }
 
+static void requireSHPICBase(SelectionDAG &DAG) {
+  MachineFunction &MF = DAG.getMachineFunction();
+  SHMachineFunctionInfo &FuncInfo = *MF.getInfo<SHMachineFunctionInfo>();
+  if (FuncInfo.usesPICBase())
+    return;
+  SHConstantPoolValue *GOTPC =
+      SHConstantPoolValue::create(*DAG.getContext(), "_GLOBAL_OFFSET_TABLE_", 0,
+                                  SHConstantPoolValue::Modifier::GOTPC);
+  unsigned CPI = MF.getConstantPool()->getConstantPoolIndex(GOTPC, Align(4));
+  FuncInfo.setPICBaseCPI(CPI);
+  MF.setAlignment(std::max(MF.getAlignment(), Align(4)));
+}
+
+static SDValue lowerSHPICOffsetAddress(SHConstantPoolValue *CPV,
+                                       const SDLoc &DL, SelectionDAG &DAG) {
+  requireSHPICBase(DAG);
+  SDValue Offset = lowerSHSymbolAddress(CPV, DL, DAG);
+  SDValue GOTBase = DAG.getRegister(SH::R12, MVT::i32);
+  return DAG.getNode(ISD::ADD, DL, MVT::i32, Offset, GOTBase);
+}
+
+static SDValue lowerSHPICGOTAddress(const GlobalValue *GV, int32_t Addend,
+                                    const SDLoc &DL, SelectionDAG &DAG) {
+  SHConstantPoolValue *CPV =
+      SHConstantPoolValue::create(GV, 0, SHConstantPoolValue::Modifier::GOT);
+  SDValue Slot = lowerSHPICOffsetAddress(CPV, DL, DAG);
+  MachineFunction &MF = DAG.getMachineFunction();
+  SDValue Address = DAG.getLoad(MVT::i32, DL, DAG.getEntryNode(), Slot,
+                                MachinePointerInfo::getGOT(MF), Align(4),
+                                MachineMemOperand::MOLoad |
+                                    MachineMemOperand::MODereferenceable |
+                                    MachineMemOperand::MOInvariant);
+  if (Addend != 0)
+    Address = DAG.getNode(ISD::ADD, DL, MVT::i32, Address,
+                          DAG.getConstant(Addend, DL, MVT::i32));
+  return Address;
+}
+
+static SDValue lowerSHPICPairedAddress(SHConstantPoolValue *CPV,
+                                       const SDLoc &DL, SelectionDAG &DAG) {
+  requireSHPICBase(DAG);
+  MachineFunction &MF = DAG.getMachineFunction();
+  MF.setAlignment(std::max(MF.getAlignment(), Align(4)));
+  SDValue CPAddr = DAG.getTargetConstantPool(CPV, MVT::i32, Align(4));
+  SDValue Ops[] = {DAG.getEntryNode(), CPAddr};
+  MachineMemOperand::Flags Flags = MachineMemOperand::MOLoad |
+                                   MachineMemOperand::MODereferenceable |
+                                   MachineMemOperand::MOInvariant;
+  SDValue Address = DAG.getMemIntrinsicNode(
+      SHISD::PIC_ADDRESS, DL, DAG.getVTList(MVT::i32, MVT::Other), Ops,
+      MVT::i32, MachinePointerInfo::getConstantPool(MF), Align(4), Flags,
+      LocationSize::precise(4));
+  return Address;
+}
+
 SDValue SHTargetLowering::LowerGlobalAddress(SDValue Op,
                                              SelectionDAG &DAG) const {
   const auto *Global = cast<GlobalAddressSDNode>(Op);
   int64_t Addend = Global->getOffset();
   if (!isInt<32>(Addend))
     report_fatal_error("SH global address addend must fit signed 32 bits");
+  if (getTargetMachine().isPositionIndependent()) {
+    const GlobalValue *GV = Global->getGlobal();
+    if (!GV->isDSOLocal() || GV->isInterposable())
+      return lowerSHPICGOTAddress(GV, static_cast<int32_t>(Addend), SDLoc(Op),
+                                  DAG);
+    SHConstantPoolValue *CPV =
+        SHConstantPoolValue::create(GV, static_cast<int32_t>(Addend),
+                                    SHConstantPoolValue::Modifier::GOTOFF);
+    return lowerSHPICOffsetAddress(CPV, SDLoc(Op), DAG);
+  }
   SHConstantPoolValue *CPV = SHConstantPoolValue::create(
       Global->getGlobal(), static_cast<int32_t>(Addend));
   return lowerSHSymbolAddress(CPV, SDLoc(Op), DAG);
@@ -1832,8 +1910,13 @@ SDValue SHTargetLowering::LowerBlockAddress(SDValue Op,
   if (!isInt<32>(Addend))
     report_fatal_error("SH block address addend must fit signed 32 bits");
   SHConstantPoolValue *CPV = SHConstantPoolValue::create(
-      Block->getBlockAddress(), static_cast<int32_t>(Addend));
-  return lowerSHSymbolAddress(CPV, SDLoc(Op), DAG);
+      Block->getBlockAddress(), static_cast<int32_t>(Addend),
+      getTargetMachine().isPositionIndependent()
+          ? SHConstantPoolValue::Modifier::GOTOFF
+          : SHConstantPoolValue::Modifier::None);
+  return getTargetMachine().isPositionIndependent()
+             ? lowerSHPICOffsetAddress(CPV, SDLoc(Op), DAG)
+             : lowerSHSymbolAddress(CPV, SDLoc(Op), DAG);
 }
 
 SDValue SHTargetLowering::LowerJumpTable(SDValue Op, SelectionDAG &DAG) const {
@@ -1841,8 +1924,13 @@ SDValue SHTargetLowering::LowerJumpTable(SDValue Op, SelectionDAG &DAG) const {
   if (Table->getIndex() < 0)
     report_fatal_error("SH jump-table index must be nonnegative");
   SHConstantPoolValue *CPV = SHConstantPoolValue::create(
-      *DAG.getContext(), static_cast<unsigned>(Table->getIndex()), 0);
-  return lowerSHSymbolAddress(CPV, SDLoc(Op), DAG);
+      *DAG.getContext(), static_cast<unsigned>(Table->getIndex()), 0,
+      getTargetMachine().isPositionIndependent()
+          ? SHConstantPoolValue::Modifier::GOTOFF
+          : SHConstantPoolValue::Modifier::None);
+  return getTargetMachine().isPositionIndependent()
+             ? lowerSHPICOffsetAddress(CPV, SDLoc(Op), DAG)
+             : lowerSHSymbolAddress(CPV, SDLoc(Op), DAG);
 }
 
 SDValue SHTargetLowering::LowerBR_JT(SDValue Op, SelectionDAG &DAG) const {
@@ -1860,8 +1948,15 @@ SDValue SHTargetLowering::LowerBR_JT(SDValue Op, SelectionDAG &DAG) const {
   if (!MJTI ||
       static_cast<unsigned>(JT->getIndex()) >= MJTI->getJumpTables().size())
     report_fatal_error("SH jump-table branch has an invalid table index");
-  if (MJTI->getEntryKind() != MachineJumpTableInfo::EK_BlockAddress)
-    report_fatal_error("SH only supports absolute block-address jump tables");
+  MachineJumpTableInfo::JTEntryKind ExpectedKind =
+      getTargetMachine().isPositionIndependent()
+          ? MachineJumpTableInfo::EK_LabelDifference32
+          : MachineJumpTableInfo::EK_BlockAddress;
+  if (MJTI->getEntryKind() != ExpectedKind)
+    report_fatal_error(
+        getTargetMachine().isPositionIndependent()
+            ? "SH PIC requires relative jump-table entries"
+            : "SH static code requires absolute block-address jump tables");
   if (MJTI->getEntrySize(DAG.getDataLayout()) != 4 ||
       MJTI->getEntryAlignment(DAG.getDataLayout()) != 4)
     report_fatal_error("SH jump-table entries must be four-byte words");
@@ -1895,7 +1990,7 @@ static bool isSupportedSHAddress(SDValue Addr) {
            (Base.getOpcode() == ISD::FrameIndex ||
             Base.getOpcode() == ISD::CopyFromReg ||
             Base.getOpcode() == ISD::LOAD ||
-            Base.getOpcode() == ISD::Register ||
+            Base.getOpcode() == ISD::Register || Base.getOpcode() == ISD::ADD ||
             Base.getOpcode() == ISD::GlobalAddress ||
             Base.getOpcode() == ISD::TargetConstantPool);
   };
@@ -2237,11 +2332,17 @@ static MachineBasicBlock *emitJumpTableDispatch(MachineInstr &MI,
   unsigned JTI = MI.getOperand(2).getIndex();
   if (!MJTI || JTI >= MJTI->getJumpTables().size())
     report_fatal_error("SH jump-table dispatch has an invalid table index");
-  if (MJTI->getEntryKind() != MachineJumpTableInfo::EK_BlockAddress ||
+  bool IsPIC = MF.getTarget().isPositionIndependent();
+  MachineJumpTableInfo::JTEntryKind ExpectedKind =
+      IsPIC ? MachineJumpTableInfo::EK_LabelDifference32
+            : MachineJumpTableInfo::EK_BlockAddress;
+  if (MJTI->getEntryKind() != ExpectedKind ||
       MJTI->getEntrySize(MF.getDataLayout()) != 4 ||
       MJTI->getEntryAlignment(MF.getDataLayout()) != 4)
     report_fatal_error(
-        "SH jump-table dispatch requires four-byte absolute block addresses");
+        IsPIC ? "SH PIC jump-table dispatch requires four-byte relative entries"
+              : "SH jump-table dispatch requires four-byte absolute block "
+                "addresses");
 
   if (MI.memoperands().size() != 1)
     report_fatal_error(
@@ -2274,7 +2375,16 @@ static MachineBasicBlock *emitJumpTableDispatch(MachineInstr &MI,
   BuildMI(*MBB, MI, DL, TII.get(SH::MOVL_load_reg), Target)
       .addReg(EntryAddress)
       .addMemOperand(MMO);
-  BuildMI(*MBB, MI, DL, TII.get(SH::JMP)).addReg(Target).addJumpTableIndex(JTI);
+  Register DispatchTarget = Target;
+  if (IsPIC) {
+    DispatchTarget = createGPR(MRI);
+    BuildMI(*MBB, MI, DL, TII.get(SH::ADDrr), DispatchTarget)
+        .addReg(Target)
+        .addReg(Base);
+  }
+  BuildMI(*MBB, MI, DL, TII.get(SH::JMP))
+      .addReg(DispatchTarget)
+      .addJumpTableIndex(JTI);
 
   MI.eraseFromParent();
   return MBB;
@@ -3052,15 +3162,17 @@ const char *SHTargetLowering::getTargetNodeName(unsigned Opcode) const {
     return "SHISD::SETCC64";
   case SHISD::BR_JT:
     return "SHISD::BR_JT";
+  case SHISD::PIC_ADDRESS:
+    return "SHISD::PIC_ADDRESS";
   default:
     return nullptr;
   }
 }
 
 unsigned SHTargetLowering::getJumpTableEncoding() const {
-  if (getTargetMachine().getRelocationModel() != Reloc::Static)
-    report_fatal_error("SH jump tables require static relocation");
-  return MachineJumpTableInfo::EK_BlockAddress;
+  return getTargetMachine().isPositionIndependent()
+             ? MachineJumpTableInfo::EK_LabelDifference32
+             : MachineJumpTableInfo::EK_BlockAddress;
 }
 
 bool SHTargetLowering::isSuitableForJumpTable(const SwitchInst *SI,

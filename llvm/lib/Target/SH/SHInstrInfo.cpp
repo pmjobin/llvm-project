@@ -37,6 +37,9 @@ unsigned SHInstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
     return MI.getOperand(2).getImm();
   if (MI.getOpcode() == SH::MOVL_load_pc_island)
     return 2;
+  if (MI.getOpcode() == SH::SH_PIC_SETUP ||
+      MI.getOpcode() == SH::SH_PIC_ADDRESS)
+    return 6;
 
   unsigned Size = MI.getDesc().getSize();
   if (MI.getDesc().hasDelaySlot() && !MI.isBundledWithSucc())

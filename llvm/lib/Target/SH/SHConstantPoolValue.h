@@ -28,7 +28,7 @@ public:
     JumpTable,
     BlockAddress
   };
-  enum class Modifier { None };
+  enum class Modifier { None, GOT, GOTOFF, GOTPC, PLT };
 
 private:
   SymbolKind Kind;
@@ -39,18 +39,26 @@ private:
   const BlockAddress *BA = nullptr;
   int32_t Addend;
 
-  SHConstantPoolValue(Type *Ty, const GlobalValue *GV, int32_t Addend);
-  SHConstantPoolValue(Type *Ty, StringRef Symbol, int32_t Addend);
-  SHConstantPoolValue(Type *Ty, unsigned JTI, int32_t Addend);
-  SHConstantPoolValue(Type *Ty, const BlockAddress *BA, int32_t Addend);
+  SHConstantPoolValue(Type *Ty, const GlobalValue *GV, int32_t Addend,
+                      Modifier TargetModifier);
+  SHConstantPoolValue(Type *Ty, StringRef Symbol, int32_t Addend,
+                      Modifier TargetModifier);
+  SHConstantPoolValue(Type *Ty, unsigned JTI, int32_t Addend,
+                      Modifier TargetModifier);
+  SHConstantPoolValue(Type *Ty, const BlockAddress *BA, int32_t Addend,
+                      Modifier TargetModifier);
 
 public:
-  static SHConstantPoolValue *create(const GlobalValue *GV, int32_t Addend);
+  static SHConstantPoolValue *create(const GlobalValue *GV, int32_t Addend,
+                                     Modifier TargetModifier = Modifier::None);
   static SHConstantPoolValue *create(LLVMContext &Ctx, StringRef Symbol,
-                                     int32_t Addend);
+                                     int32_t Addend,
+                                     Modifier TargetModifier = Modifier::None);
   static SHConstantPoolValue *create(LLVMContext &Ctx, unsigned JTI,
-                                     int32_t Addend);
-  static SHConstantPoolValue *create(const BlockAddress *BA, int32_t Addend);
+                                     int32_t Addend,
+                                     Modifier TargetModifier = Modifier::None);
+  static SHConstantPoolValue *create(const BlockAddress *BA, int32_t Addend,
+                                     Modifier TargetModifier = Modifier::None);
 
   SymbolKind getKind() const { return Kind; }
   Modifier getModifier() const { return TargetModifier; }

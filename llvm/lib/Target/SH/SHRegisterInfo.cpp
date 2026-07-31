@@ -16,6 +16,7 @@
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Target/TargetMachine.h"
 
 using namespace llvm;
 
@@ -39,6 +40,8 @@ const uint32_t *SHRegisterInfo::getCallPreservedMask(const MachineFunction &MF,
 BitVector SHRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
   Reserved.set(SH::R15);
+  if (MF.getTarget().isPositionIndependent())
+    Reserved.set(SH::R12);
   Reserved.set(SH::PC);
   Reserved.set(SH::PR);
   Reserved.set(SH::GBR);

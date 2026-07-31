@@ -12,6 +12,13 @@
 
 using namespace llvm;
 
+static const MCAsmInfo::AtSpecifier AtSpecifiers[] = {
+    {SH::S_GOT, "GOT"},
+    {SH::S_GOTOFF, "GOTOFF"},
+    {SH::S_GOTPC, "GOTPC"},
+    {SH::S_PLT, "PLT"},
+};
+
 void SHMCAsmInfo::anchor() {}
 
 SHMCAsmInfo::SHMCAsmInfo(const Triple &TT, const MCTargetOptions &Options)
@@ -23,4 +30,5 @@ SHMCAsmInfo::SHMCAsmInfo(const Triple &TT, const MCTargetOptions &Options)
   MinInstAlignment = 2;
   SupportsDebugInformation = true;
   ExceptionsType = ExceptionHandling::DwarfCFI;
+  initializeAtSpecifiers(AtSpecifiers);
 }

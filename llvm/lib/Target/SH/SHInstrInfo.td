@@ -208,6 +208,8 @@ def SDT_SHCallSeqEnd
 def SDT_SHBrJT
     : SDTypeProfile<0, 3, [SDTCisVT<0, i32>, SDTCisVT<1, i32>,
                            SDTCisVT<2, i32>]>;
+def SDT_SHPICAddress : SDTypeProfile<1, 1, [SDTCisVT<0, i32>,
+                                            SDTCisVT<1, i32>]>;
 
 def SHret : SDNode<"SHISD::RET_GLUE", SDTNone,
                    [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
@@ -237,6 +239,9 @@ def SHsraparts : SDNode<"SHISD::SRA_PARTS", SDT_SHShiftParts>;
 def SHsetcc64 : SDNode<"SHISD::SETCC64", SDT_SHSetCC64>;
 def SHbrjt
     : SDNode<"SHISD::BR_JT", SDT_SHBrJT,
+             [SDNPHasChain, SDNPMayLoad, SDNPMemOperand]>;
+def SHpicaddr
+    : SDNode<"SHISD::PIC_ADDRESS", SDT_SHPICAddress,
              [SDNPHasChain, SDNPMayLoad, SDNPMemOperand]>;
 
 def non_simm8 : ImmLeaf<i32, [{ return !isInt<8>(Imm); }]>;
@@ -555,11 +560,27 @@ def MOVL_load_pc
                    "mov.l\t$target,$dst",
                    []>;
 
+def MOVA
+    : SHMOVA<(outs r0reg:$dst), (ins pcliteral:$target),
+             "mova\t$target,$dst">;
+
 let mayLoad = 1 in
 def MOVL_load_pc_island
     : SHPseudo<(outs GPR:$dst),
                (ins pcliteral:$target, island_instance:$island)> {
   let Pattern = [(set GPR:$dst, (load tconstpool:$target))];
+}
+
+let mayLoad = 1, Defs = [R0, R12] in
+def SH_PIC_SETUP
+    : SHPseudo<(outs),
+               (ins pcliteral:$target, island_instance:$island)>;
+
+let mayLoad = 1, Defs = [R0] in
+def SH_PIC_ADDRESS
+    : SHPseudo<(outs GPRNoR0:$dst),
+               (ins pcliteral:$target, island_instance:$island)> {
+  let Pattern = [(set GPRNoR0:$dst, (SHpicaddr tconstpool:$target))];
 }
 
 let hasSideEffects = 0, isNotDuplicable = 1 in

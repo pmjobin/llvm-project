@@ -16,45 +16,55 @@
 using namespace llvm;
 
 SHConstantPoolValue::SHConstantPoolValue(Type *Ty, const GlobalValue *GV,
-                                         int32_t Addend)
+                                         int32_t Addend,
+                                         Modifier TargetModifier)
     : MachineConstantPoolValue(Ty), Kind(SymbolKind::GlobalValue),
-      TargetModifier(Modifier::None), GV(GV), Addend(Addend) {}
+      TargetModifier(TargetModifier), GV(GV), Addend(Addend) {}
 
 SHConstantPoolValue::SHConstantPoolValue(Type *Ty, StringRef Symbol,
-                                         int32_t Addend)
+                                         int32_t Addend,
+                                         Modifier TargetModifier)
     : MachineConstantPoolValue(Ty), Kind(SymbolKind::ExternalSymbol),
-      TargetModifier(Modifier::None), Symbol(Symbol.str()), Addend(Addend) {}
+      TargetModifier(TargetModifier), Symbol(Symbol.str()), Addend(Addend) {}
 
-SHConstantPoolValue::SHConstantPoolValue(Type *Ty, unsigned JTI, int32_t Addend)
+SHConstantPoolValue::SHConstantPoolValue(Type *Ty, unsigned JTI, int32_t Addend,
+                                         Modifier TargetModifier)
     : MachineConstantPoolValue(Ty), Kind(SymbolKind::JumpTable),
-      TargetModifier(Modifier::None), JTI(JTI), Addend(Addend) {}
+      TargetModifier(TargetModifier), JTI(JTI), Addend(Addend) {}
 
 SHConstantPoolValue::SHConstantPoolValue(Type *Ty, const BlockAddress *BA,
-                                         int32_t Addend)
+                                         int32_t Addend,
+                                         Modifier TargetModifier)
     : MachineConstantPoolValue(Ty), Kind(SymbolKind::BlockAddress),
-      TargetModifier(Modifier::None), BA(BA), Addend(Addend) {}
+      TargetModifier(TargetModifier), BA(BA), Addend(Addend) {}
 
 SHConstantPoolValue *SHConstantPoolValue::create(const GlobalValue *GV,
-                                                 int32_t Addend) {
-  return new SHConstantPoolValue(Type::getInt32Ty(GV->getContext()), GV,
-                                 Addend);
+                                                 int32_t Addend,
+                                                 Modifier TargetModifier) {
+  return new SHConstantPoolValue(Type::getInt32Ty(GV->getContext()), GV, Addend,
+                                 TargetModifier);
 }
 
 SHConstantPoolValue *SHConstantPoolValue::create(LLVMContext &Ctx,
                                                  StringRef Symbol,
-                                                 int32_t Addend) {
-  return new SHConstantPoolValue(Type::getInt32Ty(Ctx), Symbol, Addend);
+                                                 int32_t Addend,
+                                                 Modifier TargetModifier) {
+  return new SHConstantPoolValue(Type::getInt32Ty(Ctx), Symbol, Addend,
+                                 TargetModifier);
 }
 
 SHConstantPoolValue *SHConstantPoolValue::create(LLVMContext &Ctx, unsigned JTI,
-                                                 int32_t Addend) {
-  return new SHConstantPoolValue(Type::getInt32Ty(Ctx), JTI, Addend);
+                                                 int32_t Addend,
+                                                 Modifier TargetModifier) {
+  return new SHConstantPoolValue(Type::getInt32Ty(Ctx), JTI, Addend,
+                                 TargetModifier);
 }
 
 SHConstantPoolValue *SHConstantPoolValue::create(const BlockAddress *BA,
-                                                 int32_t Addend) {
-  return new SHConstantPoolValue(Type::getInt32Ty(BA->getContext()), BA,
-                                 Addend);
+                                                 int32_t Addend,
+                                                 Modifier TargetModifier) {
+  return new SHConstantPoolValue(Type::getInt32Ty(BA->getContext()), BA, Addend,
+                                 TargetModifier);
 }
 
 const GlobalValue *SHConstantPoolValue::getGlobalValue() const {
@@ -129,6 +139,22 @@ void SHConstantPoolValue::print(raw_ostream &OS) const {
     OS << "jump-table." << JTI;
   else
     BA->printAsOperand(OS, false);
+  switch (TargetModifier) {
+  case Modifier::None:
+    break;
+  case Modifier::GOT:
+    OS << "@GOT";
+    break;
+  case Modifier::GOTOFF:
+    OS << "@GOTOFF";
+    break;
+  case Modifier::GOTPC:
+    OS << "@GOTPC";
+    break;
+  case Modifier::PLT:
+    OS << "@PLT";
+    break;
+  }
   if (Addend > 0)
     OS << '+' << Addend;
   else if (Addend < 0)

@@ -232,6 +232,8 @@ void SHFrameLowering::determineCalleeSaves(MachineFunction &MF,
   TargetFrameLowering::determineCalleeSaves(MF, SavedRegs, RS);
   if (MF.getFrameInfo().hasCalls())
     SavedRegs.set(SH::PR);
+  if (MF.getInfo<SHMachineFunctionInfo>()->usesPICBase())
+    SavedRegs.set(SH::R12);
 }
 
 bool SHFrameLowering::assignCalleeSavedSpillSlots(

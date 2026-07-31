@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SHInstrInfo.h"
+#include "SHConstantPoolValue.h"
 #include "SHISelLowering.h"
 #include "SHSubtarget.h"
 #include "SHTargetMachine.h"
@@ -600,6 +601,39 @@ TEST_F(SHInstrInfoTest, PCLiteralLoadHasPreciseProperties) {
   EXPECT_TRUE(Desc.implicit_defs().empty());
 }
 
+TEST_F(SHInstrInfoTest, MOVAHasPreciseProperties) {
+  const MCInstrDesc &Desc = TII->get(SH::MOVA);
+  EXPECT_EQ(2u, Desc.getSize());
+  EXPECT_EQ(1u, Desc.getNumDefs());
+  EXPECT_EQ(2u, Desc.getNumOperands());
+  EXPECT_FALSE(Desc.mayLoad());
+  EXPECT_FALSE(Desc.mayStore());
+  EXPECT_FALSE(Desc.isBranch());
+  EXPECT_FALSE(Desc.isCall());
+  EXPECT_FALSE(Desc.hasDelaySlot());
+  EXPECT_TRUE(Desc.implicit_uses().empty());
+  EXPECT_TRUE(Desc.implicit_defs().empty());
+}
+
+TEST_F(SHInstrInfoTest, PICConstantPoolIdentityIncludesModifierAndAddend) {
+  const GlobalValue *GV = M->getFunction("test");
+  std::unique_ptr<SHConstantPoolValue> GOT(
+      SHConstantPoolValue::create(GV, 0, SHConstantPoolValue::Modifier::GOT));
+  std::unique_ptr<SHConstantPoolValue> GOTOFF(SHConstantPoolValue::create(
+      GV, 0, SHConstantPoolValue::Modifier::GOTOFF));
+  std::unique_ptr<SHConstantPoolValue> PLT(
+      SHConstantPoolValue::create(GV, 0, SHConstantPoolValue::Modifier::PLT));
+  std::unique_ptr<SHConstantPoolValue> GOTWithAddend(
+      SHConstantPoolValue::create(GV, 4, SHConstantPoolValue::Modifier::GOT));
+  std::unique_ptr<SHConstantPoolValue> SameGOT(
+      SHConstantPoolValue::create(GV, 0, SHConstantPoolValue::Modifier::GOT));
+
+  EXPECT_TRUE(GOT->equals(*SameGOT));
+  EXPECT_FALSE(GOT->equals(*GOTOFF));
+  EXPECT_FALSE(GOT->equals(*PLT));
+  EXPECT_FALSE(GOT->equals(*GOTWithAddend));
+}
+
 static uint32_t executeConstantShiftPlan(ArrayRef<unsigned> Opcodes,
                                          uint32_t Value) {
   for (unsigned Opcode : Opcodes) {
@@ -774,6 +808,7 @@ TEST_F(SHInstrInfoTest, MultiplyAndDivideInstructionsHavePreciseProperties) {
 TEST_F(SHInstrInfoTest, DivisionStateRegistersAreReservedAndUnallocatable) {
   const SHRegisterInfo &TRI = TII->getRegisterInfo();
   BitVector Reserved = TRI.getReservedRegs(*MF);
+  EXPECT_FALSE(Reserved.test(SH::R12));
   for (MCRegister Reg : {SH::MBit, SH::QBit, SH::TBit}) {
     EXPECT_TRUE(Reserved.test(Reg));
     EXPECT_FALSE(SH::GPRRegClass.contains(Reg));
@@ -1727,6 +1762,95 @@ template <typename T> static void testAtomicRuntimeModel(uint64_t Seed) {
 TEST(SHAtomicRuntimeModelTest, I32AndI64OperationsMatchIndependentModel) {
   testAtomicRuntimeModel<uint32_t>(0x534843150032);
   testAtomicRuntimeModel<uint64_t>(0x534843150064);
+}
+
+enum class PICRelocationKind { GOTPC, GOTOFF, GOT32, PLT32 };
+
+static int64_t evaluatePICRelocation(PICRelocationKind Kind, int64_t Symbol,
+                                     int64_t Addend, int64_t Place, int64_t GOT,
+                                     int64_t GOTEntry, int64_t PLTEntry) {
+  switch (Kind) {
+  case PICRelocationKind::GOTPC:
+    return GOT + Addend - Place;
+  case PICRelocationKind::GOTOFF:
+    return Symbol + Addend - GOT;
+  case PICRelocationKind::GOT32:
+    return GOTEntry + Addend - GOT;
+  case PICRelocationKind::PLT32:
+    return PLTEntry + Addend - Place;
+  }
+  llvm_unreachable("unknown PIC relocation kind");
+}
+
+static uint32_t decodeBigEndian(const uint8_t Bytes[4]) {
+  return uint32_t(Bytes[0]) << 24 | uint32_t(Bytes[1]) << 16 |
+         uint32_t(Bytes[2]) << 8 | uint32_t(Bytes[3]);
+}
+
+static uint32_t decodeLittleEndian(const uint8_t Bytes[4]) {
+  return uint32_t(Bytes[3]) << 24 | uint32_t(Bytes[2]) << 16 |
+         uint32_t(Bytes[1]) << 8 | uint32_t(Bytes[0]);
+}
+
+TEST(SHPICRelocationModelTest,
+     RelocationsMatchIndependentLayoutAndEndianModel) {
+  constexpr PICRelocationKind Kinds[] = {
+      PICRelocationKind::GOTPC, PICRelocationKind::GOTOFF,
+      PICRelocationKind::GOT32, PICRelocationKind::PLT32};
+  std::mt19937_64 Generator(0x534843170000);
+  auto RandomAddress = [&]() {
+    return int64_t(Generator() % UINT64_C(0x70000000)) + 0x10000;
+  };
+  auto RandomAddend = [&]() {
+    return int64_t(Generator() % UINT64_C(0x200001)) - 0x100000;
+  };
+
+  for (PICRelocationKind Kind : Kinds) {
+    for (unsigned Scenario = 0; Scenario != 10000; ++Scenario) {
+      SCOPED_TRACE(Scenario);
+      int64_t Symbol = RandomAddress();
+      int64_t Addend = RandomAddend();
+      int64_t Place = RandomAddress() & ~INT64_C(3);
+      int64_t GOT = RandomAddress() & ~INT64_C(3);
+      int64_t GOTEntry = RandomAddress() & ~INT64_C(3);
+      int64_t PLTEntry = RandomAddress() & ~INT64_C(3);
+      int64_t Value = evaluatePICRelocation(Kind, Symbol, Addend, Place, GOT,
+                                            GOTEntry, PLTEntry);
+
+      switch (Kind) {
+      case PICRelocationKind::GOTPC:
+        EXPECT_EQ(GOT + Addend, Place + Value);
+        break;
+      case PICRelocationKind::GOTOFF:
+        EXPECT_EQ(Symbol + Addend, GOT + Value);
+        break;
+      case PICRelocationKind::GOT32:
+        EXPECT_EQ(GOTEntry + Addend, GOT + Value);
+        break;
+      case PICRelocationKind::PLT32:
+        EXPECT_EQ(PLTEntry + Addend, Place + Value);
+        break;
+      }
+
+      uint32_t Word = static_cast<uint32_t>(Value);
+      uint8_t BigEndian[4] = {uint8_t(Word >> 24), uint8_t(Word >> 16),
+                              uint8_t(Word >> 8), uint8_t(Word)};
+      uint8_t LittleEndian[4] = {uint8_t(Word), uint8_t(Word >> 8),
+                                 uint8_t(Word >> 16), uint8_t(Word >> 24)};
+      EXPECT_EQ(Word, decodeBigEndian(BigEndian));
+      EXPECT_EQ(Word, decodeLittleEndian(LittleEndian));
+
+      if (Kind == PICRelocationKind::GOTPC ||
+          Kind == PICRelocationKind::PLT32) {
+        int64_t ClonePlace = RandomAddress() & ~INT64_C(3);
+        int64_t CloneValue = evaluatePICRelocation(
+            Kind, Symbol, Addend, ClonePlace, GOT, GOTEntry, PLTEntry);
+        EXPECT_EQ(Value + Place - ClonePlace, CloneValue);
+        int64_t Target = Kind == PICRelocationKind::GOTPC ? GOT : PLTEntry;
+        EXPECT_EQ(Target + Addend, ClonePlace + CloneValue);
+      }
+    }
+  }
 }
 
 } // namespace

@@ -18,6 +18,8 @@ class SHMachineFunctionInfo : public MachineFunctionInfo {
   int VarArgsFrameIndex = 0;
   unsigned VarArgsSaveSize = 0;
   bool HasVarArgsSaveArea = false;
+  bool UsesPICBase = false;
+  int PICBaseCPI = -1;
 
 public:
   SHMachineFunctionInfo(const Function &, const TargetSubtargetInfo *) {}
@@ -32,6 +34,13 @@ public:
     VarArgsFrameIndex = FrameIndex;
     VarArgsSaveSize = SaveSize;
     HasVarArgsSaveArea = true;
+  }
+
+  bool usesPICBase() const { return UsesPICBase; }
+  int getPICBaseCPI() const { return PICBaseCPI; }
+  void setPICBaseCPI(unsigned CPI) {
+    PICBaseCPI = CPI;
+    UsesPICBase = true;
   }
 };
 

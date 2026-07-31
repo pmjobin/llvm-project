@@ -7,8 +7,15 @@
 //===----------------------------------------------------------------------===//
 
 #include "SH.h"
+#include "SHConstantPoolValue.h"
 #include "SHISelLowering.h"
+#include "SHInstrInfo.h"
+#include "SHLiteralPool.h"
+#include "SHMachineFunctionInfo.h"
+#include "SHSubtarget.h"
 #include "SHTargetMachine.h"
+#include "llvm/CodeGen/MachineConstantPool.h"
+#include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/SelectionDAGISel.h"
 #include "llvm/IR/IntrinsicsSH.h"
 #include "llvm/Support/Debug.h"
@@ -27,6 +34,7 @@ class SHDAGToDAGISel : public SelectionDAGISel {
     case ISD::CopyFromReg:
     case ISD::LOAD:
     case ISD::Register:
+    case ISD::ADD:
       return Base.getValueType() == MVT::i32;
     default:
       return false;
@@ -54,6 +62,40 @@ class SHDAGToDAGISel : public SelectionDAGISel {
 
 public:
   explicit SHDAGToDAGISel(SHTargetMachine &TM) : SelectionDAGISel(TM) {}
+
+  bool runOnMachineFunction(MachineFunction &MF) override {
+    bool Changed = SelectionDAGISel::runOnMachineFunction(MF);
+    SHMachineFunctionInfo &FuncInfo = *MF.getInfo<SHMachineFunctionInfo>();
+    if (!FuncInfo.usesPICBase())
+      return Changed;
+    int CPI = FuncInfo.getPICBaseCPI();
+    if (CPI < 0 || static_cast<unsigned>(CPI) >=
+                       MF.getConstantPool()->getConstants().size())
+      report_fatal_error("SH PIC base has an invalid constant-pool entry");
+    const MachineConstantPoolEntry &PICBaseEntry =
+        MF.getConstantPool()->getConstants()[CPI];
+    if (!PICBaseEntry.isMachineConstantPoolEntry())
+      report_fatal_error("SH PIC base requires a target GOTPC constant");
+    const auto *PICBase =
+        static_cast<const SHConstantPoolValue *>(PICBaseEntry.Val.MachineCPVal);
+    if (!PICBase->isExternalSymbol() ||
+        PICBase->getExternalSymbol() != "_GLOBAL_OFFSET_TABLE_" ||
+        PICBase->getModifier() != SHConstantPoolValue::Modifier::GOTPC ||
+        PICBase->getAddend() != 0)
+      report_fatal_error("SH PIC base requires a target GOTPC constant");
+    MachineBasicBlock &Entry = MF.front();
+    const SHInstrInfo &TII = *MF.getSubtarget<SHSubtarget>().getInstrInfo();
+    MachineMemOperand *MMO = MF.getMachineMemOperand(
+        MachinePointerInfo::getConstantPool(MF),
+        MachineMemOperand::MOLoad | MachineMemOperand::MODereferenceable |
+            MachineMemOperand::MOInvariant,
+        4, Align(4));
+    BuildMI(Entry, Entry.begin(), DebugLoc(), TII.get(SH::SH_PIC_SETUP))
+        .addConstantPoolIndex(CPI)
+        .addImm(SHUnassignedLiteralIsland)
+        .addMemOperand(MMO);
+    return true;
+  }
 
   bool SelectAddrReg(SDValue Addr, SDValue &Base) {
     if (Addr.getOpcode() == ISD::ADD) {

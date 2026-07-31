@@ -42,6 +42,23 @@ struct ConservativeLayout {
   DenseMap<const MachineInstr *, uint64_t> InstrOffsets;
 };
 
+static bool isPICPair(const MachineInstr &MI) {
+  return MI.getOpcode() == SH::SH_PIC_SETUP ||
+         MI.getOpcode() == SH::SH_PIC_ADDRESS;
+}
+
+static bool isLiteralUse(const MachineInstr &MI) {
+  return MI.getOpcode() == SH::MOVL_load_pc_island || isPICPair(MI);
+}
+
+static unsigned getLiteralCPI(const MachineInstr &MI) {
+  return MI.getOperand(MI.getOpcode() == SH::SH_PIC_SETUP ? 0 : 1).getIndex();
+}
+
+static MachineOperand &getLiteralInstance(MachineInstr &MI) {
+  return MI.getOperand(MI.getOpcode() == SH::SH_PIC_SETUP ? 1 : 2);
+}
+
 static void fail(const MachineFunction &MF, const Twine &Message) {
   report_fatal_error(Twine("SH literal island placement failed: function ") +
                      MF.getName() + ", " + Message);
@@ -58,6 +75,8 @@ static unsigned getConservativeInstSize(const MachineFunction &MF,
                                         const SHInstrInfo &TII,
                                         const MachineInstr &MI) {
   if (MI.getOpcode() == SH::BT || MI.getOpcode() == SH::BF)
+    return 6;
+  if (isPICPair(MI))
     return 6;
   unsigned Size = TII.getInstSizeInBytes(MI);
   if (Size == 0 && !MI.isMetaInstruction())
@@ -178,8 +197,8 @@ static bool insertionInvalidatesAssigned(MachineFunction &MF,
                                          uint64_t InsertOffset,
                                          uint64_t InsertSize) {
   for (MachineInstr *Use : AssignedUses) {
-    unsigned CPI = Use->getOperand(1).getIndex();
-    unsigned Instance = Use->getOperand(2).getImm();
+    unsigned CPI = getLiteralCPI(*Use);
+    unsigned Instance = getLiteralInstance(*Use).getImm();
     MachineInstr *Entry = findEntry(MF, CPI, Instance);
     if (!Entry)
       fail(MF, "assigned literal use has no island entry");
@@ -377,6 +396,47 @@ class IslandPlacement {
     return Instance;
   }
 
+  void expandPICPair(MachineInstr &MI) {
+    if (!isPICPair(MI))
+      return;
+    unsigned CPI = getLiteralCPI(MI);
+    int64_t Instance = getLiteralInstance(MI).getImm();
+    if (Instance < 0 || Instance > UINT32_MAX)
+      fail(MF, "PIC materialization has an invalid island instance");
+    if (MI.memoperands().size() != 1)
+      fail(MF, "PIC materialization requires one literal-load memory operand");
+    MachineMemOperand *MMO = *MI.memoperands_begin();
+    const PseudoSourceValue *PSV = MMO->getPseudoValue();
+    if (!MMO->isLoad() || MMO->isStore() ||
+        MMO->getSize() != LocationSize::precise(4) ||
+        MMO->getAlign() < Align(4) || !MMO->isInvariant() ||
+        !MMO->isDereferenceable() || !PSV || !PSV->isConstantPool())
+      fail(MF, "PIC materialization has an invalid literal-load memory "
+               "operand");
+
+    MCSymbol *Symbol = getSHLiteralIslandSymbol(
+        MF.getContext(), MF.getDataLayout(), MF.getFunctionNumber(), CPI,
+        static_cast<unsigned>(Instance));
+    MachineBasicBlock &MBB = *MI.getParent();
+    MachineBasicBlock::iterator Insert = MI.getIterator();
+    const DebugLoc &DL = MI.getDebugLoc();
+    BuildMI(MBB, Insert, DL, TII.get(SH::MOVA), SH::R0).addSym(Symbol);
+
+    Register Destination = MI.getOpcode() == SH::SH_PIC_SETUP
+                               ? Register(SH::R12)
+                               : MI.getOperand(0).getReg();
+    if (!Destination.isPhysical() || Destination == SH::R0)
+      fail(MF, "PIC address destination must be a physical register other "
+               "than r0");
+    BuildMI(MBB, Insert, DL, TII.get(SH::MOVL_load_pc), Destination)
+        .addSym(Symbol)
+        .addMemOperand(MMO);
+    BuildMI(MBB, Insert, DL, TII.get(SH::ADDrr), Destination)
+        .addReg(Destination)
+        .addReg(SH::R0, RegState::Kill);
+    MI.eraseFromParent();
+  }
+
 public:
   explicit IslandPlacement(MachineFunction &MF)
       : MF(MF), TII(*MF.getSubtarget<SHSubtarget>().getInstrInfo()) {}
@@ -390,14 +450,18 @@ public:
       for (MachineInstr &MI : MBB) {
         if (MI.isInlineAsm())
           HasInlineAsm = true;
-        if (MI.getOpcode() != SH::MOVL_load_pc_island)
+        if (!isLiteralUse(MI))
           continue;
-        if (MI.getNumExplicitOperands() != 3 || !MI.getOperand(1).isCPI() ||
-            !MI.getOperand(2).isImm())
-          fail(MF, "PC-relative literal load has malformed operands");
-        if (MI.getOperand(2).getImm() != SHUnassignedLiteralIsland)
+        unsigned ExpectedOperands = MI.getOpcode() == SH::SH_PIC_SETUP ? 2 : 3;
+        unsigned CPIIndex = MI.getOpcode() == SH::SH_PIC_SETUP ? 0 : 1;
+        unsigned InstanceIndex = MI.getOpcode() == SH::SH_PIC_SETUP ? 1 : 2;
+        if (MI.getNumExplicitOperands() != ExpectedOperands ||
+            !MI.getOperand(CPIIndex).isCPI() ||
+            !MI.getOperand(InstanceIndex).isImm())
+          fail(MF, "literal use has malformed operands");
+        if (getLiteralInstance(MI).getImm() != SHUnassignedLiteralIsland)
           fail(MF, "literal load already has an assigned island instance");
-        unsigned CPI = MI.getOperand(1).getIndex();
+        unsigned CPI = getLiteralCPI(MI);
         if (CPI >= MF.getConstantPool()->getConstants().size())
           fail(MF, "literal load has an invalid constant-pool index");
         const MachineConstantPoolEntry &Entry =
@@ -421,7 +485,7 @@ public:
     for (MachineInstr *Use : llvm::reverse(Uses)) {
       ConservativeLayout Layout = computeConservativeLayout(MF, TII);
       uint64_t UseOffset = Layout.InstrOffsets.lookup(Use);
-      unsigned CPI = Use->getOperand(1).getIndex();
+      unsigned CPI = getLiteralCPI(*Use);
       unsigned Instance;
 
       if (MachineInstr *Entry = findReusableEntry(MF, Layout, CPI, UseOffset)) {
@@ -439,9 +503,13 @@ public:
         Instance = addEntry(*Island, CPI);
       }
 
-      Use->getOperand(2).setImm(Instance);
+      getLiteralInstance(*Use).setImm(Instance);
       AssignedUses.push_back(Use);
     }
+
+    for (MachineInstr *Use : Uses)
+      if (isPICPair(*Use))
+        expandPICPair(*Use);
 
     MF.RenumberBlocks();
     verifyMachineFunction("After SH literal islands", MF);

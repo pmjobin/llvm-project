@@ -7,8 +7,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "SH.h"
+#include "SHConstantPoolValue.h"
 #include "SHInstrInfo.h"
 #include "SHLiteralPool.h"
+#include "SHMachineFunctionInfo.h"
 #include "SHSubtarget.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
@@ -16,9 +18,12 @@
 #include "llvm/CodeGen/MachineConstantPool.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachinePassManager.h"
+#include "llvm/IR/GlobalValue.h"
+#include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Target/TargetMachine.h"
 #include <limits>
 #include <optional>
 
@@ -32,6 +37,11 @@ struct LiteralUse {
   uint64_t Offset;
   unsigned CPI;
   int64_t Instance;
+};
+
+struct SymbolLiteralUse {
+  uint64_t Offset;
+  const MCSymbol *Symbol;
 };
 
 static void fail(const MachineFunction &MF, const Twine &Message) {
@@ -112,6 +122,86 @@ getWaterBefore(const MachineBasicBlock &Island) {
   return nullptr;
 }
 
+static void validateExpandedPICPairs(const MachineFunction &MF) {
+  for (const MachineBasicBlock &MBB : MF) {
+    for (auto I = MBB.begin(), E = MBB.end(); I != E; ++I) {
+      const MachineInstr &MOVA = *I;
+      if (MOVA.getOpcode() != SH::MOVA)
+        continue;
+      if (MOVA.isBundledWithPred() || MOVA.isBundledWithSucc())
+        fail(MF, "expanded PIC MOVA is inside an instruction bundle");
+      if (MOVA.getNumExplicitOperands() != 2 || !MOVA.getOperand(0).isReg() ||
+          MOVA.getOperand(0).getReg() != SH::R0 ||
+          !MOVA.getOperand(1).isMCSymbol())
+        fail(MF, "expanded PIC MOVA has malformed operands");
+
+      auto LoadI = std::next(I);
+      if (LoadI == E || LoadI->getOpcode() != SH::MOVL_load_pc ||
+          LoadI->getNumExplicitOperands() != 2 ||
+          !LoadI->getOperand(0).isReg() ||
+          LoadI->getOperand(0).getReg() == SH::R0 ||
+          !LoadI->getOperand(1).isMCSymbol() ||
+          LoadI->getOperand(1).getMCSymbol() !=
+              MOVA.getOperand(1).getMCSymbol())
+        fail(MF, "expanded PIC MOVA and MOV.L do not share one island entry");
+
+      Register Destination = LoadI->getOperand(0).getReg();
+      auto AddI = std::next(LoadI);
+      if (AddI == E || AddI->getOpcode() != SH::ADDrr ||
+          AddI->getNumExplicitOperands() != 3 || !AddI->getOperand(0).isReg() ||
+          AddI->getOperand(0).getReg() != Destination ||
+          !AddI->getOperand(1).isReg() ||
+          AddI->getOperand(1).getReg() != Destination ||
+          !AddI->getOperand(2).isReg() ||
+          AddI->getOperand(2).getReg() != SH::R0)
+        fail(MF, "expanded PIC literal load has malformed address addition");
+    }
+  }
+}
+
+static void validatePICConstants(const MachineFunction &MF) {
+  if (!MF.getTarget().isPositionIndependent())
+    return;
+  unsigned GOTPCCount = 0;
+  bool HasPICSymbol = false;
+  for (const MachineConstantPoolEntry &Entry :
+       MF.getConstantPool()->getConstants()) {
+    if (!Entry.isMachineConstantPoolEntry())
+      continue;
+    const auto *Value =
+        static_cast<const SHConstantPoolValue *>(Entry.Val.MachineCPVal);
+    SHConstantPoolValue::Modifier Modifier = Value->getModifier();
+    if (Modifier == SHConstantPoolValue::Modifier::None)
+      fail(MF, "an absolute symbolic word remains in PIC executable code");
+    HasPICSymbol = true;
+    if (Modifier == SHConstantPoolValue::Modifier::GOTPC) {
+      ++GOTPCCount;
+      if (!Value->isExternalSymbol() ||
+          Value->getExternalSymbol() != "_GLOBAL_OFFSET_TABLE_" ||
+          Value->getAddend() != 0)
+        fail(MF, "PIC GOT setup has an invalid GOTPC expression");
+    }
+    if (Modifier == SHConstantPoolValue::Modifier::GOT &&
+        Value->getAddend() != 0)
+      fail(MF, "PIC GOT entry has an unsupported symbol addend");
+    if (Value->isGlobalValue()) {
+      const GlobalValue *GV = Value->getGlobalValue();
+      bool IsNonPreemptible = GV->isDSOLocal() && !GV->isInterposable();
+      if (Modifier == SHConstantPoolValue::Modifier::GOTOFF &&
+          !IsNonPreemptible)
+        fail(MF, "a preemptible symbol was lowered with GOTOFF");
+      if (Modifier == SHConstantPoolValue::Modifier::GOT && IsNonPreemptible)
+        fail(MF, "a nonpreemptible symbol was lowered through the GOT");
+      if (Modifier == SHConstantPoolValue::Modifier::PLT && IsNonPreemptible)
+        fail(MF, "a nonpreemptible function was lowered through the PLT");
+    }
+  }
+  if (HasPICSymbol && !MF.getInfo<SHMachineFunctionInfo>()->usesPICBase())
+    fail(MF, "PIC symbol materialization is missing GOT setup");
+  if (HasPICSymbol && GOTPCCount != 1)
+    fail(MF, "PIC function must contain exactly one GOTPC constant");
+}
+
 static int64_t getDistance(const MachineFunction &MF, uint64_t UseOffset,
                            uint64_t EntryOffset) {
   uint64_t Base = (UseOffset & ~UINT64_C(3)) + 4;
@@ -131,20 +221,26 @@ class RangeCheckImpl {
 public:
   void run(MachineFunction &MF) const {
     const auto &Constants = MF.getConstantPool()->getConstants();
+    validatePICConstants(MF);
     bool HasLiteralContent = any_of(MF, [](const MachineBasicBlock &MBB) {
       return any_of(MBB, [](const MachineInstr &MI) {
         return MI.getOpcode() == SH::MOVL_load_pc_island ||
+               MI.getOpcode() == SH::MOVA ||
+               MI.getOpcode() == SH::MOVL_load_pc ||
                MI.getOpcode() == SH::SH_CONSTPOOL_ENTRY;
       });
     });
     if (!HasLiteralContent)
       return;
+    validateExpandedPICPairs(MF);
     if (MF.getAlignment() < Align(SHLiteralIslandAlignment))
       fail(MF, "function alignment is less than four");
 
     const SHInstrInfo &TII = *MF.getSubtarget<SHSubtarget>().getInstrInfo();
     DenseMap<uint64_t, uint64_t> EntryOffsets;
+    DenseMap<const MCSymbol *, uint64_t> SymbolEntryOffsets;
     SmallVector<LiteralUse, 16> Uses;
+    SmallVector<SymbolLiteralUse, 16> SymbolUses;
     uint64_t Offset = 0;
 
     for (const MachineBasicBlock &MBB : MF) {
@@ -192,6 +288,15 @@ public:
           Uses.push_back({Offset, CPI, Instance});
         }
 
+        if (MI.getOpcode() == SH::MOVA || MI.getOpcode() == SH::MOVL_load_pc) {
+          if (MI.getNumExplicitOperands() != 2 || !MI.getOperand(0).isReg() ||
+              !MI.getOperand(1).isMCSymbol())
+            fail(MF, "expanded PIC literal use has malformed operands");
+          if (MI.getOpcode() == SH::MOVA && MI.getOperand(0).getReg() != SH::R0)
+            fail(MF, "MOVA does not define r0");
+          SymbolUses.push_back({Offset, MI.getOperand(1).getMCSymbol()});
+        }
+
         if (MI.getOpcode() == SH::SH_CONSTPOOL_ENTRY) {
           if (!IsIsland || MI.getNumExplicitOperands() != 4 ||
               !MI.getOperand(0).isCPI() || !MI.getOperand(1).isImm() ||
@@ -218,6 +323,11 @@ public:
           if (!EntryOffsets.try_emplace(Key, Offset).second)
             fail(MF, Twine("duplicate island entry label for CPI ") +
                          Twine(CPI) + ", instance " + Twine(Instance));
+          MCSymbol *Symbol = getSHLiteralIslandSymbol(
+              MF.getContext(), MF.getDataLayout(), MF.getFunctionNumber(), CPI,
+              static_cast<unsigned>(Instance));
+          if (!SymbolEntryOffsets.try_emplace(Symbol, Offset).second)
+            fail(MF, "duplicate PIC island entry symbol");
         } else if (IsIsland && !MI.isMetaInstruction()) {
           fail(MF, "island contains an executable instruction");
         }
@@ -242,6 +352,20 @@ public:
                      ", instance " + Twine(Use.Instance) + ", use offset " +
                      Twine(Use.Offset) + ", entry offset " +
                      Twine(EntryOffset) + ", distance " + Twine(Distance) +
+                     ", allowed aligned range 0..1020");
+    }
+    for (const SymbolLiteralUse &Use : SymbolUses) {
+      auto Entry = SymbolEntryOffsets.find(Use.Symbol);
+      if (Entry == SymbolEntryOffsets.end())
+        fail(MF, Twine("expanded PIC literal symbol has no island entry: ") +
+                     Use.Symbol->getName());
+      int64_t Distance = getDistance(MF, Use.Offset, Entry->second);
+      if (Distance < 0 || Distance > SHLiteralLoadMaxDistance ||
+          (Distance & 3) != 0)
+        fail(MF, Twine("expanded PIC literal distance is invalid: symbol ") +
+                     Use.Symbol->getName() + ", use offset " +
+                     Twine(Use.Offset) + ", entry offset " +
+                     Twine(Entry->second) + ", distance " + Twine(Distance) +
                      ", allowed aligned range 0..1020");
     }
   }

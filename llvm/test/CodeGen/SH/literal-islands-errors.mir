@@ -7,6 +7,10 @@
 # RUN: not --crash llc -mtriple=shle-unknown-elf -run-pass=sh-literal-pool-range-check %t/target.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=TARGET
 # RUN: not --crash llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check %t/alignment.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=ALIGNMENT
 # RUN: not --crash llc -mtriple=shle-unknown-elf -run-pass=sh-literal-pool-range-check %t/alignment.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=ALIGNMENT
+# RUN: not --crash llc -mtriple=sh-unknown-elf -run-pass=sh-literal-islands %t/pic-r0.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=PIC-R0
+# RUN: not --crash llc -mtriple=shle-unknown-elf -run-pass=sh-literal-islands %t/pic-r0.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=PIC-R0
+# RUN: not --crash llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check %t/pic-pair.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=PIC-PAIR
+# RUN: not --crash llc -mtriple=shle-unknown-elf -run-pass=sh-literal-pool-range-check %t/pic-pair.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=PIC-PAIR
 
 # WIDTH: LLVM ERROR: SH literal island validation failed: function bad_width
 # WIDTH-SAME: island entry width is not four
@@ -16,6 +20,10 @@
 # TARGET-SAME: a branch or instruction targets an island
 # ALIGNMENT: LLVM ERROR: SH literal island validation failed: function bad_alignment
 # ALIGNMENT-SAME: island alignment is not four
+# PIC-R0: Bad machine code: Illegal physical register for instruction
+# PIC-R0: $r0 is not a GPRNoR0 register
+# PIC-PAIR: LLVM ERROR: SH literal island validation failed: function pic_pair
+# PIC-PAIR-SAME: expanded PIC MOVA and MOV.L do not share one island entry
 
 #--- width.mir
 --- |
@@ -124,4 +132,44 @@ body:             |
     successors:
 
     SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+...
+
+#--- pic-r0.mir
+--- |
+  define i32 @pic_r0() {
+    ret i32 0
+  }
+...
+---
+name:            pic_r0
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 42'
+    alignment:   4
+body:             |
+  bb.0:
+    $r0 = SH_PIC_ADDRESS %const.0, -1, implicit-def $r0 :: (dereferenceable invariant load (s32) from constant-pool)
+    RTS implicit $pr
+...
+
+#--- pic-pair.mir
+--- |
+  define i32 @pic_pair() {
+    ret i32 0
+  }
+...
+---
+name:            pic_pair
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    $r0 = MOVA <mcsymbol .LCPI0_0_0>
+    $r1 = MOVL_load_pc <mcsymbol .LCPI0_1_0>
+    $r1 = ADDrr $r1, killed $r0
+    RTS implicit $pr
 ...

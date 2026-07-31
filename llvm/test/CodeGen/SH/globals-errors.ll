@@ -10,6 +10,10 @@
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=static %t/pointer-compare.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=MATERIALIZED
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=static %t/pointer-ordered.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ORDERED
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=static %t/inttoptr-i64.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INTTOPTR
+; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=pic %t/tls.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=TLS
+; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=pic %t/ifunc.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=IFUNC
+; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=pic %t/comdat.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=COMDAT
+; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=pic %t/weak.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=WEAK
 
 ; TLS: LLVM ERROR: SH thread-local storage is not supported
 ; ALIAS: LLVM ERROR: SH global aliases are not supported
