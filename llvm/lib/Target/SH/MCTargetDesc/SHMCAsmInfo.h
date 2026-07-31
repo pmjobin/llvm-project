@@ -31,7 +31,12 @@ enum Specifier : uint16_t {
   S_GOT = MCSymbolRefExpr::FirstTargetSpecifier,
   S_GOTOFF,
   S_GOTPC,
-  S_PLT
+  S_PLT,
+  S_TLSGD,
+  S_TLSLDM,
+  S_DTPOFF,
+  S_GOTTPOFF,
+  S_TPOFF
 };
 
 } // namespace SH

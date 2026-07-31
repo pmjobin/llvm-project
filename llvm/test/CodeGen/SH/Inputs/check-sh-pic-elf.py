@@ -11,18 +11,44 @@ SECTION_RE = re.compile(
 	r"(\d+)\s+(\d+)\s+\d+\s*$"
 )
 RELOCATION_HEADER_RE = re.compile(r"^Relocation section '([^']+)'")
-RELOCATION_RE = re.compile(r"^([0-9a-fA-F]+)\s+\S+\s+(R_SH_\S+)")
+RELOCATION_RE = re.compile(
+	r"^([0-9a-fA-F]+)\s+\S+\s+(R_SH_\S+)(?:\s+\S+\s+(\S+))?"
+)
+SYMBOL_RE = re.compile(
+	r"^\s*\d+:\s+[0-9a-fA-F]+\s+\d+\s+(\S+)\s+\S+\s+\S+\s+"
+	r"(\S+)\s+(\S*)\s*$"
+)
 INPUT_PIC_RELOCATIONS = {
 	"R_SH_GOT32",
 	"R_SH_PLT32",
 	"R_SH_GOTOFF",
 	"R_SH_GOTPC",
 }
+INPUT_TLS_RELOCATIONS = {
+	"R_SH_TLS_GD_32",
+	"R_SH_TLS_LD_32",
+	"R_SH_TLS_LDO_32",
+	"R_SH_TLS_IE_32",
+	"R_SH_TLS_LE_32",
+}
+DYNAMIC_TLS_RELOCATIONS = {
+	"R_SH_TLS_DTPMOD32",
+	"R_SH_TLS_DTPOFF32",
+	"R_SH_TLS_TPOFF32",
+}
+
+
+def section_containing(sections, address):
+	for section in sections.values():
+		start = section["address"]
+		if start <= address < start + section["size"]:
+			return section
+	return None
 
 
 def inspect(readelf, path):
 	output = subprocess.check_output(
-		[readelf, "-hSWrd", path], stderr=subprocess.STDOUT, text=True
+		[readelf, "-hSWrsd", path], stderr=subprocess.STDOUT, text=True
 	)
 	match = re.search(r"^\s*Type:\s+(\S+)", output, re.MULTILINE)
 	if not match:
@@ -47,6 +73,31 @@ def inspect(readelf, path):
 		}
 
 	errors = []
+	tls_symbols = set()
+	for line in output.splitlines():
+		match = SYMBOL_RE.match(line)
+		if not match:
+			continue
+		symbol_type, section_index, name = match.groups()
+		if symbol_type != "TLS":
+			continue
+		tls_symbols.add(name)
+		if section_index in {"UND", "ABS"}:
+			if section_index == "ABS":
+				errors.append(f"TLS symbol {name} has absolute section index")
+			continue
+		try:
+			section = sections[int(section_index)]
+		except (KeyError, ValueError):
+			errors.append(
+				f"TLS symbol {name} has invalid section index {section_index}"
+			)
+			continue
+		if "T" not in section["flags"]:
+			errors.append(
+				f"TLS symbol {name} is defined in non-TLS section {section['name']}"
+			)
+
 	if re.search(r"\bTEXTREL\b", output):
 		errors.append("DT_TEXTREL is present")
 
@@ -62,6 +113,7 @@ def inspect(readelf, path):
 			continue
 		offset = int(match.group(1), 16)
 		relocation_type = match.group(2)
+		symbol = match.group(3)
 		relocation_count += 1
 
 		target = None
@@ -73,28 +125,50 @@ def inspect(readelf, path):
 			errors.append(
 				f"{relocation_type} targets executable section {target['name']}"
 			)
+		if (
+			target
+			and "X" in target["flags"]
+			and relocation_type == "R_SH_DIR32"
+			and symbol in tls_symbols
+		):
+			errors.append(
+				f"{relocation_type} against TLS symbol {symbol} targets executable "
+				f"section {target['name']}"
+			)
 
-		if elf_type == "DYN":
-			for section in sections.values():
-				start = section["address"]
-				if (
-					"X" in section["flags"]
-					and start <= offset < start + section["size"]
-				):
-					errors.append(
-						f"{relocation_type} at 0x{offset:x} lies in executable "
-						f"section {section['name']}"
-					)
-			if relocation_type in INPUT_PIC_RELOCATIONS:
+		if elf_type in {"DYN", "EXEC"}:
+			dynamic_target = section_containing(sections, offset)
+			if dynamic_target and "X" in dynamic_target["flags"]:
 				errors.append(
-					f"compiler input relocation {relocation_type} survived shared linking"
+					f"{relocation_type} at 0x{offset:x} lies in executable "
+					f"section {dynamic_target['name']}"
 				)
+			if relocation_type in INPUT_PIC_RELOCATIONS | INPUT_TLS_RELOCATIONS:
+				errors.append(
+					f"compiler input relocation {relocation_type} survived final linking"
+				)
+			if relocation_type in DYNAMIC_TLS_RELOCATIONS:
+				if dynamic_target is None:
+					errors.append(
+						f"dynamic TLS relocation {relocation_type} at 0x{offset:x} "
+						"does not target a section"
+					)
+				elif "W" not in dynamic_target["flags"] or "X" in dynamic_target["flags"]:
+					errors.append(
+						f"dynamic TLS relocation {relocation_type} targets invalid "
+						f"section {dynamic_target['name']}"
+					)
+				if symbol and symbol not in tls_symbols:
+					errors.append(
+						f"dynamic TLS relocation {relocation_type} refers to "
+						f"non-TLS symbol {symbol}"
+					)
 
 	if errors:
 		for error in errors:
 			print(f"{path}: {error}", file=sys.stderr)
 		return False
-	print(f"{path}: checked {relocation_count} relocations, no PIC text relocation")
+	print(f"{path}: checked {relocation_count} relocations, no PIC/TLS text relocation")
 	return True
 
 

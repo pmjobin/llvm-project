@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SHTargetMachine.h"
+#include "MCTargetDesc/SHMCAsmInfo.h"
 #include "SH.h"
 #include "SHMachineFunctionInfo.h"
 #include "TargetInfo/SHTargetInfo.h"
@@ -14,6 +15,7 @@
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
+#include "llvm/MC/MCExpr.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -29,6 +31,10 @@ public:
     FDECFIEncoding = TM.isPositionIndependent()
                          ? dwarf::DW_EH_PE_pcrel | dwarf::DW_EH_PE_sdata4
                          : dwarf::DW_EH_PE_absptr;
+  }
+
+  const MCExpr *getDebugThreadLocalSymbol(const MCSymbol *Sym) const override {
+    return MCSymbolRefExpr::create(Sym, SH::S_DTPOFF, getContext());
   }
 };
 
@@ -79,6 +85,10 @@ SHTargetMachine::SHTargetMachine(const Target &T, const Triple &TT,
     reportFatalUsageError("SH JIT code generation is not supported");
   if (!TT.isOSBinFormatELF())
     reportFatalUsageError("SH only supports the ELF object format");
+  if (Options.EmulatedTLS)
+    reportFatalUsageError("SH emulated TLS is not supported");
+  if (Options.EnableTLSDESC)
+    reportFatalUsageError("SH TLSDESC is not supported");
   if (Options.ExceptionModel != ExceptionHandling::None &&
       Options.ExceptionModel != ExceptionHandling::DwarfCFI)
     reportFatalUsageError("SH only supports DWARF CFI exception handling");

@@ -12,6 +12,7 @@
 #include "SHSubtarget.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/LivePhysRegs.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
@@ -48,15 +49,37 @@ static bool isPICPair(const MachineInstr &MI) {
 }
 
 static bool isLiteralUse(const MachineInstr &MI) {
-  return MI.getOpcode() == SH::MOVL_load_pc_island || isPICPair(MI);
+  return MI.getOpcode() == SH::MOVL_load_pc_island || isPICPair(MI) ||
+         MI.getOpcode() == SH::SH_TLS_CALL || MI.getOpcode() == SH::SH_TLS_IE;
 }
 
-static unsigned getLiteralCPI(const MachineInstr &MI) {
-  return MI.getOperand(MI.getOpcode() == SH::SH_PIC_SETUP ? 0 : 1).getIndex();
-}
+struct LiteralUse {
+  MachineInstr *MI;
+  unsigned CPIIndex;
+  unsigned InstanceIndex;
 
-static MachineOperand &getLiteralInstance(MachineInstr &MI) {
-  return MI.getOperand(MI.getOpcode() == SH::SH_PIC_SETUP ? 1 : 2);
+  unsigned getCPI() const { return MI->getOperand(CPIIndex).getIndex(); }
+  MachineOperand &getInstance() const { return MI->getOperand(InstanceIndex); }
+};
+
+static void appendLiteralUses(MachineInstr &MI,
+                              SmallVectorImpl<LiteralUse> &Uses) {
+  switch (MI.getOpcode()) {
+  case SH::SH_PIC_SETUP:
+    Uses.push_back({&MI, 0, 1});
+    return;
+  case SH::MOVL_load_pc_island:
+  case SH::SH_PIC_ADDRESS:
+  case SH::SH_TLS_IE:
+    Uses.push_back({&MI, 1, 2});
+    return;
+  case SH::SH_TLS_CALL:
+    Uses.push_back({&MI, 2, 3});
+    Uses.push_back({&MI, 0, 1});
+    return;
+  default:
+    return;
+  }
 }
 
 static void fail(const MachineFunction &MF, const Twine &Message) {
@@ -78,6 +101,10 @@ static unsigned getConservativeInstSize(const MachineFunction &MF,
     return 6;
   if (isPICPair(MI))
     return 6;
+  if (MI.getOpcode() == SH::SH_TLS_CALL)
+    return 12;
+  if (MI.getOpcode() == SH::SH_TLS_IE)
+    return 8;
   unsigned Size = TII.getInstSizeInBytes(MI);
   if (Size == 0 && !MI.isMetaInstruction())
     fail(MF, "encountered an unexpanded instruction");
@@ -193,16 +220,16 @@ static MachineInstr *findEntry(MachineFunction &MF, unsigned CPI,
 
 static bool insertionInvalidatesAssigned(MachineFunction &MF,
                                          const ConservativeLayout &Layout,
-                                         ArrayRef<MachineInstr *> AssignedUses,
+                                         ArrayRef<LiteralUse> AssignedUses,
                                          uint64_t InsertOffset,
                                          uint64_t InsertSize) {
-  for (MachineInstr *Use : AssignedUses) {
-    unsigned CPI = getLiteralCPI(*Use);
-    unsigned Instance = getLiteralInstance(*Use).getImm();
+  for (const LiteralUse &Use : AssignedUses) {
+    unsigned CPI = Use.getCPI();
+    unsigned Instance = Use.getInstance().getImm();
     MachineInstr *Entry = findEntry(MF, CPI, Instance);
     if (!Entry)
       fail(MF, "assigned literal use has no island entry");
-    uint64_t UseOffset = Layout.InstrOffsets.lookup(Use);
+    uint64_t UseOffset = Layout.InstrOffsets.lookup(Use.MI);
     uint64_t EntryOffset = Layout.InstrOffsets.lookup(Entry);
     if (InsertOffset > UseOffset && InsertOffset <= EntryOffset &&
         !isConservativelyInRange(UseOffset,
@@ -212,13 +239,16 @@ static bool insertionInvalidatesAssigned(MachineFunction &MF,
   return false;
 }
 
-static MachineInstr *findReusableEntry(MachineFunction &MF,
-                                       const ConservativeLayout &Layout,
-                                       unsigned CPI, uint64_t UseOffset) {
+static MachineInstr *
+findReusableEntry(MachineFunction &MF, const ConservativeLayout &Layout,
+                  unsigned CPI, uint64_t UseOffset,
+                  const SmallPtrSetImpl<MachineBasicBlock *> &ExcludedIslands) {
   MachineInstr *Best = nullptr;
   uint64_t BestOffset = 0;
   for (MachineBasicBlock &MBB : MF) {
     if (!isSHLiteralIslandBlock(MBB))
+      continue;
+    if (ExcludedIslands.contains(&MBB))
       continue;
     for (MachineInstr &MI : MBB) {
       if (MI.getOpcode() != SH::SH_CONSTPOOL_ENTRY ||
@@ -235,14 +265,16 @@ static MachineInstr *findReusableEntry(MachineFunction &MF,
   return Best;
 }
 
-static MachineBasicBlock *
-findReusableIsland(MachineFunction &MF, const ConservativeLayout &Layout,
-                   unsigned CPI, uint64_t UseOffset,
-                   ArrayRef<MachineInstr *> AssignedUses) {
+static MachineBasicBlock *findReusableIsland(
+    MachineFunction &MF, const ConservativeLayout &Layout, unsigned CPI,
+    uint64_t UseOffset, ArrayRef<LiteralUse> AssignedUses,
+    const SmallPtrSetImpl<MachineBasicBlock *> &ExcludedIslands) {
   MachineBasicBlock *Best = nullptr;
   uint64_t BestOffset = 0;
   for (MachineBasicBlock &MBB : MF) {
     if (!isSHLiteralIslandBlock(MBB))
+      continue;
+    if (ExcludedIslands.contains(&MBB))
       continue;
     unsigned Payload = getIslandPayload(MF, MBB);
     if (Payload > SHLiteralIslandMaxPayload - SHLiteralIslandEntrySize)
@@ -276,7 +308,7 @@ static MachineBasicBlock *getFollowingIsland(MachineBasicBlock &MBB) {
 static MachineBasicBlock *findWater(MachineFunction &MF,
                                     const ConservativeLayout &Layout,
                                     uint64_t UseOffset,
-                                    ArrayRef<MachineInstr *> AssignedUses) {
+                                    ArrayRef<LiteralUse> AssignedUses) {
   MachineBasicBlock *Best = nullptr;
   uint64_t BestOffset = 0;
   for (MachineBasicBlock &MBB : MF) {
@@ -377,7 +409,9 @@ class IslandPlacement {
   MachineFunction &MF;
   const SHInstrInfo &TII;
   DenseMap<unsigned, unsigned> NextInstance;
-  SmallVector<MachineInstr *, 16> AssignedUses;
+  DenseMap<MachineInstr *, MachineBasicBlock *> AdjacentIslands;
+  SmallPtrSet<MachineBasicBlock *, 8> AtomicIslandBlocks;
+  SmallVector<LiteralUse, 16> AssignedUses;
 
   unsigned addEntry(MachineBasicBlock &Island, unsigned CPI) {
     unsigned Instance = NextInstance[CPI]++;
@@ -396,11 +430,23 @@ class IslandPlacement {
     return Instance;
   }
 
+  unsigned appendEntry(MachineBasicBlock &Island, unsigned CPI) {
+    unsigned Instance = NextInstance[CPI]++;
+    BuildMI(Island, Island.end(), DebugLoc(), TII.get(SH::SH_CONSTPOOL_ENTRY))
+        .addConstantPoolIndex(CPI)
+        .addImm(Instance)
+        .addImm(SHLiteralIslandEntrySize)
+        .addImm(SHLiteralIslandAlignment);
+    return Instance;
+  }
+
   void expandPICPair(MachineInstr &MI) {
     if (!isPICPair(MI))
       return;
-    unsigned CPI = getLiteralCPI(MI);
-    int64_t Instance = getLiteralInstance(MI).getImm();
+    unsigned CPIIndex = MI.getOpcode() == SH::SH_PIC_SETUP ? 0 : 1;
+    unsigned InstanceIndex = MI.getOpcode() == SH::SH_PIC_SETUP ? 1 : 2;
+    unsigned CPI = MI.getOperand(CPIIndex).getIndex();
+    int64_t Instance = MI.getOperand(InstanceIndex).getImm();
     if (Instance < 0 || Instance > UINT32_MAX)
       fail(MF, "PIC materialization has an invalid island instance");
     if (MI.memoperands().size() != 1)
@@ -437,12 +483,125 @@ class IslandPlacement {
     MI.eraseFromParent();
   }
 
+  MachineMemOperand *requireLoadMMO(MachineInstr &MI, unsigned Index,
+                                    bool IsGOT) {
+    if (Index >= MI.memoperands().size())
+      fail(MF, "TLS materialization is missing a memory operand");
+    MachineMemOperand *MMO = *std::next(MI.memoperands_begin(), Index);
+    const PseudoSourceValue *PSV = MMO->getPseudoValue();
+    if (!MMO->isLoad() || MMO->isStore() ||
+        MMO->getSize() != LocationSize::precise(4) ||
+        MMO->getAlign() < Align(4) || !MMO->isInvariant() ||
+        !MMO->isDereferenceable() || !PSV ||
+        (IsGOT ? !PSV->isGOT() : !PSV->isConstantPool()))
+      fail(MF, IsGOT ? "initial-exec TLS has an invalid GOT-load memory "
+                       "operand"
+                     : "TLS materialization has an invalid literal-load "
+                       "memory operand");
+    return MMO;
+  }
+
+  MCSymbol *getAssignedSymbol(MachineInstr &MI, unsigned CPIIndex,
+                              unsigned InstanceIndex) {
+    if (!MI.getOperand(CPIIndex).isCPI() ||
+        !MI.getOperand(InstanceIndex).isImm())
+      fail(MF, "TLS materialization has malformed literal operands");
+    int64_t Instance = MI.getOperand(InstanceIndex).getImm();
+    if (Instance < 0 || Instance > UINT32_MAX)
+      fail(MF, "TLS materialization has an invalid island instance");
+    return getSHLiteralIslandSymbol(
+        MF.getContext(), MF.getDataLayout(), MF.getFunctionNumber(),
+        MI.getOperand(CPIIndex).getIndex(), static_cast<unsigned>(Instance));
+  }
+
+  void expandTLSCall(MachineInstr &MI) {
+    if (MI.getOpcode() != SH::SH_TLS_CALL)
+      return;
+    if (MI.memoperands().size() != 2)
+      fail(MF, "TLS resolver call requires two literal-load memory operands");
+    MachineMemOperand *DescriptorMMO = requireLoadMMO(MI, 0, false);
+    MachineMemOperand *ResolverMMO = requireLoadMMO(MI, 1, false);
+    MCSymbol *Descriptor = getAssignedSymbol(MI, 0, 1);
+    MCSymbol *Resolver = getAssignedSymbol(MI, 2, 3);
+    const MachineOperand *RegMask = nullptr;
+    for (const MachineOperand &MO : MI.operands())
+      if (MO.isRegMask()) {
+        if (RegMask)
+          fail(MF, "TLS resolver call has more than one register mask");
+        RegMask = &MO;
+      }
+    if (!RegMask)
+      fail(MF, "TLS resolver call is missing its register mask");
+
+    MachineBasicBlock &MBB = *MI.getParent();
+    MachineBasicBlock::iterator Insert = MI.getIterator();
+    const DebugLoc &DL = MI.getDebugLoc();
+    BuildMI(MBB, Insert, DL, TII.get(SH::MOVL_load_pc), SH::R4)
+        .addSym(Descriptor)
+        .addMemOperand(DescriptorMMO);
+    BuildMI(MBB, Insert, DL, TII.get(SH::MOVA), SH::R0).addSym(Resolver);
+    BuildMI(MBB, Insert, DL, TII.get(SH::MOVL_load_pc), SH::R1)
+        .addSym(Resolver)
+        .addMemOperand(ResolverMMO);
+    BuildMI(MBB, Insert, DL, TII.get(SH::ADDrr), SH::R1)
+        .addReg(SH::R1)
+        .addReg(SH::R0, RegState::Kill);
+    MachineInstrBuilder Call =
+        BuildMI(MBB, Insert, DL, TII.get(SH::JSR))
+            .addReg(SH::R1, RegState::Kill)
+            .addRegMask(RegMask->getRegMask())
+            .addReg(SH::R4, RegState::Implicit | RegState::Kill)
+            .addReg(SH::R0, RegState::ImplicitDefine);
+    MachineInstrBuilder Slot =
+        BuildMI(MBB, Insert, DL, TII.get(SH::ADDrr), SH::R4)
+            .addReg(SH::R4)
+            .addReg(SH::R12);
+    MIBundleBuilder(MBB, Call->getIterator(), std::next(Slot->getIterator()));
+    MI.eraseFromParent();
+  }
+
+  void expandTLSIE(MachineInstr &MI) {
+    if (MI.getOpcode() != SH::SH_TLS_IE)
+      return;
+    if (MI.memoperands().size() != 2)
+      fail(MF, "initial-exec TLS requires literal and GOT memory operands");
+    MachineMemOperand *LiteralMMO = requireLoadMMO(MI, 0, false);
+    MachineMemOperand *GOTMMO = requireLoadMMO(MI, 1, true);
+    MCSymbol *Literal = getAssignedSymbol(MI, 1, 2);
+    Register Destination = MI.getOperand(0).getReg();
+    if (!Destination.isPhysical() || Destination == SH::R0)
+      fail(MF, "initial-exec TLS destination must be a physical register "
+               "other than r0");
+
+    MachineBasicBlock &MBB = *MI.getParent();
+    MachineBasicBlock::iterator Insert = MI.getIterator();
+    const DebugLoc &DL = MI.getDebugLoc();
+    BuildMI(MBB, Insert, DL, TII.get(SH::MOVL_load_pc), SH::R0)
+        .addSym(Literal)
+        .addMemOperand(LiteralMMO);
+    BuildMI(MBB, Insert, DL, TII.get(SH::STC_GBR), Destination);
+    BuildMI(MBB, Insert, DL, TII.get(SH::MOVL_load_indexed), SH::R0)
+        .addReg(SH::R12)
+        .addMemOperand(GOTMMO);
+    MachineBasicBlock::iterator Branch = std::next(MI.getIterator());
+    if (Branch == MBB.end() || Branch->getOpcode() != SH::BRA ||
+        Branch->isBundled())
+      fail(MF, "initial-exec TLS is not followed by its island branch");
+    MachineInstrBuilder Slot =
+        BuildMI(MBB, std::next(Branch), DL, TII.get(SH::ADDrr), Destination)
+            .addReg(Destination)
+            .addReg(SH::R0, RegState::Kill);
+    MIBundleBuilder(MBB, Branch, std::next(Slot->getIterator()));
+    MI.eraseFromParent();
+  }
+
 public:
   explicit IslandPlacement(MachineFunction &MF)
       : MF(MF), TII(*MF.getSubtarget<SHSubtarget>().getInstrInfo()) {}
 
   bool run() {
-    SmallVector<MachineInstr *, 16> Uses;
+    SmallVector<LiteralUse, 16> Uses;
+    SmallVector<MachineInstr *, 16> Instructions;
     bool HasInlineAsm = false;
     for (MachineBasicBlock &MBB : MF) {
       if (MBB.isBeginSection() && !MBB.isEntryBlock())
@@ -452,25 +611,28 @@ public:
           HasInlineAsm = true;
         if (!isLiteralUse(MI))
           continue;
-        unsigned ExpectedOperands = MI.getOpcode() == SH::SH_PIC_SETUP ? 2 : 3;
-        unsigned CPIIndex = MI.getOpcode() == SH::SH_PIC_SETUP ? 0 : 1;
-        unsigned InstanceIndex = MI.getOpcode() == SH::SH_PIC_SETUP ? 1 : 2;
-        if (MI.getNumExplicitOperands() != ExpectedOperands ||
-            !MI.getOperand(CPIIndex).isCPI() ||
-            !MI.getOperand(InstanceIndex).isImm())
-          fail(MF, "literal use has malformed operands");
-        if (getLiteralInstance(MI).getImm() != SHUnassignedLiteralIsland)
-          fail(MF, "literal load already has an assigned island instance");
-        unsigned CPI = getLiteralCPI(MI);
-        if (CPI >= MF.getConstantPool()->getConstants().size())
-          fail(MF, "literal load has an invalid constant-pool index");
-        const MachineConstantPoolEntry &Entry =
-            MF.getConstantPool()->getConstants()[CPI];
-        if (Entry.getSizeInBytes(MF.getDataLayout()) !=
-                SHLiteralIslandEntrySize ||
-            Entry.getAlign() > Align(SHLiteralIslandAlignment))
-          fail(MF, "only four-byte literal-island entries are supported");
-        Uses.push_back(&MI);
+        Instructions.push_back(&MI);
+        SmallVector<LiteralUse, 2> MIUses;
+        appendLiteralUses(MI, MIUses);
+        if (MIUses.empty())
+          fail(MF, "literal use has no literal operands");
+        for (const LiteralUse &Use : MIUses) {
+          if (!MI.getOperand(Use.CPIIndex).isCPI() ||
+              !Use.getInstance().isImm())
+            fail(MF, "literal use has malformed operands");
+          if (Use.getInstance().getImm() != SHUnassignedLiteralIsland)
+            fail(MF, "literal load already has an assigned island instance");
+          unsigned CPI = Use.getCPI();
+          if (CPI >= MF.getConstantPool()->getConstants().size())
+            fail(MF, "literal load has an invalid constant-pool index");
+          const MachineConstantPoolEntry &Entry =
+              MF.getConstantPool()->getConstants()[CPI];
+          if (Entry.getSizeInBytes(MF.getDataLayout()) !=
+                  SHLiteralIslandEntrySize ||
+              Entry.getAlign() > Align(SHLiteralIslandAlignment))
+            fail(MF, "only four-byte literal-island entries are supported");
+          Uses.push_back(Use);
+        }
       }
     }
     if (Uses.empty())
@@ -482,34 +644,48 @@ public:
     for (MachineBasicBlock &MBB : MF)
       MF.ensureAlignment(MBB.getAlignment());
 
-    for (MachineInstr *Use : llvm::reverse(Uses)) {
+    for (LiteralUse &Use : llvm::reverse(Uses)) {
       ConservativeLayout Layout = computeConservativeLayout(MF, TII);
-      uint64_t UseOffset = Layout.InstrOffsets.lookup(Use);
-      unsigned CPI = getLiteralCPI(*Use);
+      uint64_t UseOffset = Layout.InstrOffsets.lookup(Use.MI);
+      unsigned CPI = Use.getCPI();
       unsigned Instance;
 
-      if (MachineInstr *Entry = findReusableEntry(MF, Layout, CPI, UseOffset)) {
+      bool NeedsAdjacentIsland = Use.MI->getOpcode() == SH::SH_TLS_CALL ||
+                                 Use.MI->getOpcode() == SH::SH_TLS_IE;
+      if (NeedsAdjacentIsland) {
+        MachineBasicBlock *&Island = AdjacentIslands[Use.MI];
+        if (!Island)
+          Island = createWaterAfterUse(MF, TII, *Use.MI);
+        AtomicIslandBlocks.insert(Island);
+        Instance = appendEntry(*Island, CPI);
+      } else if (MachineInstr *Entry = findReusableEntry(
+                     MF, Layout, CPI, UseOffset, AtomicIslandBlocks)) {
         Instance = Entry->getOperand(1).getImm();
       } else {
-        MachineBasicBlock *Island =
-            findReusableIsland(MF, Layout, CPI, UseOffset, AssignedUses);
+        MachineBasicBlock *Island = findReusableIsland(
+            MF, Layout, CPI, UseOffset, AssignedUses, AtomicIslandBlocks);
         if (!Island) {
           if (MachineBasicBlock *Water =
                   findWater(MF, Layout, UseOffset, AssignedUses))
             Island = insertIslandAfter(MF, *Water);
           else
-            Island = createWaterAfterUse(MF, TII, *Use);
+            Island = createWaterAfterUse(MF, TII, *Use.MI);
         }
         Instance = addEntry(*Island, CPI);
       }
 
-      getLiteralInstance(*Use).setImm(Instance);
+      Use.getInstance().setImm(Instance);
       AssignedUses.push_back(Use);
     }
 
-    for (MachineInstr *Use : Uses)
-      if (isPICPair(*Use))
-        expandPICPair(*Use);
+    for (MachineInstr *MI : Instructions) {
+      if (isPICPair(*MI))
+        expandPICPair(*MI);
+      else if (MI->getOpcode() == SH::SH_TLS_CALL)
+        expandTLSCall(*MI);
+      else if (MI->getOpcode() == SH::SH_TLS_IE)
+        expandTLSIE(*MI);
+    }
 
     MF.RenumberBlocks();
     verifyMachineFunction("After SH literal islands", MF);

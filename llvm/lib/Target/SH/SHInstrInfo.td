@@ -129,6 +129,19 @@ def longmemreg : Operand<iPTR> {
   let DecoderMethod = "DecodeGPRRegisterClass";
 }
 
+def IndexedMemAsmOperand : AsmOperandClass {
+  let Name = "IndexedMem";
+  let PredicateMethod = "isIndexedMem";
+  let RenderMethod = "addIndexedMemOperands";
+  let DiagnosticType = "InvalidIndexedMem";
+}
+
+def indexedmem : Operand<iPTR> {
+  let ParserMatchClass = IndexedMemAsmOperand;
+  let PrintMethod = "printIndexedMem";
+  let DecoderMethod = "DecodeGPRRegisterClass";
+}
+
 def tasmemreg : Operand<iPTR> {
   let MIOperandInfo = (ops GPR);
   let ParserMatchClass = TasMemRegAsmOperand;
@@ -242,6 +255,15 @@ def SHbrjt
              [SDNPHasChain, SDNPMayLoad, SDNPMemOperand]>;
 def SHpicaddr
     : SDNode<"SHISD::PIC_ADDRESS", SDT_SHPICAddress,
+             [SDNPHasChain, SDNPMayLoad, SDNPMemOperand]>;
+def SHthreadptr : SDNode<"SHISD::THREAD_POINTER",
+                         SDTypeProfile<1, 0, [SDTCisVT<0, i32>]>>;
+def SHtlscall
+    : SDNode<"SHISD::TLS_CALL", SDT_SHCall,
+             [SDNPHasChain, SDNPOutGlue, SDNPVariadic, SDNPMayLoad,
+              SDNPMemOperand]>;
+def SHtlsie
+    : SDNode<"SHISD::TLS_IE", SDT_SHPICAddress,
              [SDNPHasChain, SDNPMayLoad, SDNPMemOperand]>;
 
 def non_simm8 : ImmLeaf<i32, [{ return !isInt<8>(Imm); }]>;
@@ -461,6 +483,12 @@ let Uses = [MACL] in
 def STS_MACL
     : SHSpecialToReg<0x1a, (outs GPR:$dst), (ins), "sts\tmacl,$dst">;
 
+let Uses = [GBR] in
+def STC_GBR
+    : SHSpecialToReg<0x12, (outs GPR:$dst), (ins), "stc\tgbr,$dst"> {
+  let Pattern = [(set GPR:$dst, (SHthreadptr))];
+}
+
 let Defs = [MBit, QBit, TBit] in
 def DIV0U : SHFixed<0x0019, "div0u">;
 
@@ -554,6 +582,11 @@ def MOVL_load_reg
                     "mov.l\t$addr,$dst",
                     [(set GPR:$dst, (load addr_reg:$addr))]>;
 
+let mayLoad = 1, Uses = [R0] in
+def MOVL_load_indexed
+    : SHLongLoadIndexed<(outs GPR:$dst), (ins indexedmem:$base),
+                        "mov.l\t$base,$dst">;
+
 let mayLoad = 1 in
 def MOVL_load_pc
     : SHLongLoadPC<(outs GPR:$dst), (ins pcliteral:$target),
@@ -582,6 +615,20 @@ def SH_PIC_ADDRESS
                (ins pcliteral:$target, island_instance:$island)> {
   let Pattern = [(set GPRNoR0:$dst, (SHpicaddr tconstpool:$target))];
 }
+
+let isCall = 1, mayLoad = 1, Defs = [R0, R1, R4, PR], Uses = [R12] in
+def SH_TLS_CALL
+    : SHPseudo<(outs),
+               (ins pcliteral:$descriptor,
+                    island_instance:$descriptor_island,
+                    pcliteral:$resolver,
+                    island_instance:$resolver_island,
+                    variable_ops)>;
+
+let mayLoad = 1, Defs = [R0], Uses = [R12, GBR] in
+def SH_TLS_IE
+    : SHPseudo<(outs GPRNoR0:$dst),
+               (ins pcliteral:$target, island_instance:$island)>;
 
 let hasSideEffects = 0, isNotDuplicable = 1 in
 def SH_CONSTPOOL_ENTRY

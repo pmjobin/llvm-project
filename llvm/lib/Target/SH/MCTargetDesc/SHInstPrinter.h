@@ -30,6 +30,7 @@ public:
                       raw_ostream &OS);
   void printSImm8(const MCInst *MI, unsigned OpNo, raw_ostream &OS);
   void printLongMemReg(const MCInst *MI, unsigned OpNo, raw_ostream &OS);
+  void printIndexedMem(const MCInst *MI, unsigned OpNo, raw_ostream &OS);
   void printLongMemDisp(const MCInst *MI, unsigned OpNo, raw_ostream &OS);
   void printNarrowMemDisp(const MCInst *MI, unsigned OpNo, raw_ostream &OS);
   void printPreDecGPR(const MCInst *MI, unsigned OpNo, raw_ostream &OS);

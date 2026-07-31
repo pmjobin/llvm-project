@@ -28,7 +28,18 @@ public:
     JumpTable,
     BlockAddress
   };
-  enum class Modifier { None, GOT, GOTOFF, GOTPC, PLT };
+  enum class Modifier {
+    None,
+    GOT,
+    GOTOFF,
+    GOTPC,
+    PLT,
+    TLSGD,
+    TLSLDM,
+    DTPOFF,
+    GOTTPOFF,
+    TPOFF
+  };
 
 private:
   SymbolKind Kind;

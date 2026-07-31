@@ -1,5 +1,4 @@
 ; RUN: split-file %s %t
-; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=static %t/tls.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=TLS
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=static %t/alias.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ALIAS
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=static %t/ifunc.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=IFUNC
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=static %t/comdat.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=COMDAT
@@ -10,12 +9,10 @@
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=static %t/pointer-compare.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=MATERIALIZED
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=static %t/pointer-ordered.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=ORDERED
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=static %t/inttoptr-i64.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=INTTOPTR
-; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=pic %t/tls.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=TLS
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=pic %t/ifunc.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=IFUNC
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=pic %t/comdat.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=COMDAT
 ; RUN: not --crash llc -mtriple=sh-unknown-elf -relocation-model=pic %t/weak.ll -o /dev/null 2>&1 | FileCheck %s --check-prefix=WEAK
 
-; TLS: LLVM ERROR: SH thread-local storage is not supported
 ; ALIAS: LLVM ERROR: SH global aliases are not supported
 ; IFUNC: LLVM ERROR: SH indirect functions are not supported
 ; COMDAT: LLVM ERROR: SH COMDAT is not supported
@@ -26,12 +23,6 @@
 ; MATERIALIZED: LLVM ERROR: SH comparison results may only be used by conditional branches
 ; ORDERED: LLVM ERROR: SH only supports pointer equality and inequality comparisons
 ; INTTOPTR: LLVM ERROR: SH inttoptr requires an i32 source and an address-space-zero result
-
-;--- tls.ll
-@tls = thread_local global i32 0, align 4
-define ptr @tls_address() {
-	ret ptr @tls
-}
 
 ;--- alias.ll
 @object = global i32 0, align 4

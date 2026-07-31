@@ -35,6 +35,7 @@ class SHDAGToDAGISel : public SelectionDAGISel {
     case ISD::LOAD:
     case ISD::Register:
     case ISD::ADD:
+    case SHISD::TLS_IE:
       return Base.getValueType() == MVT::i32;
     default:
       return false;
@@ -155,6 +156,7 @@ public:
     case ISD::LOAD:
     case ISD::Register:
     case ISD::ADD:
+    case SHISD::TLS_IE:
       Base = Addr;
       return true;
     default:
@@ -183,6 +185,51 @@ public:
                             Condition.getOperand(4), N->getOperand(2),
                             N->getOperand(0)};
       CurDAG->SelectNodeTo(N, SH::BR_CC64_PSEUDO, MVT::Other, Operands);
+      return;
+    }
+    if (N->getOpcode() == SHISD::TLS_CALL) {
+      if (N->getNumOperands() != 4 ||
+          N->getOperand(1).getOpcode() != ISD::TargetConstantPool ||
+          N->getOperand(2).getOpcode() != ISD::TargetConstantPool ||
+          N->getOperand(3).getOpcode() != ISD::RegisterMask)
+        report_fatal_error("SH TLS resolver call has malformed operands");
+      SDLoc DL(N);
+      SDValue Operands[] = {N->getOperand(1),
+                            CurDAG->getSignedTargetConstant(
+                                SHUnassignedLiteralIsland, DL, MVT::i32),
+                            N->getOperand(2),
+                            CurDAG->getSignedTargetConstant(
+                                SHUnassignedLiteralIsland, DL, MVT::i32),
+                            N->getOperand(3),
+                            N->getOperand(0)};
+      MachineMemOperand *MMO = cast<MemIntrinsicSDNode>(N)->getMemOperand();
+      MachineSDNode *Call = cast<MachineSDNode>(CurDAG->SelectNodeTo(
+          N, SH::SH_TLS_CALL, MVT::Other, MVT::Glue, Operands));
+      MachineMemOperand *MMOs[] = {MMO, MMO};
+      CurDAG->setNodeMemRefs(Call, MMOs);
+      return;
+    }
+    if (N->getOpcode() == SHISD::TLS_IE) {
+      if (N->getNumOperands() != 2 ||
+          N->getOperand(1).getOpcode() != ISD::TargetConstantPool)
+        report_fatal_error(
+            "SH initial-exec TLS address has malformed operands");
+      SDLoc DL(N);
+      SDValue Operands[] = {N->getOperand(1),
+                            CurDAG->getSignedTargetConstant(
+                                SHUnassignedLiteralIsland, DL, MVT::i32),
+                            N->getOperand(0)};
+      MachineMemOperand *GOTMMO = cast<MemIntrinsicSDNode>(N)->getMemOperand();
+      MachineSDNode *IE = cast<MachineSDNode>(CurDAG->SelectNodeTo(
+          N, SH::SH_TLS_IE, MVT::i32, MVT::Other, Operands));
+      MachineFunction &MF = CurDAG->getMachineFunction();
+      MachineMemOperand *LiteralMMO = MF.getMachineMemOperand(
+          MachinePointerInfo::getConstantPool(MF),
+          MachineMemOperand::MOLoad | MachineMemOperand::MODereferenceable |
+              MachineMemOperand::MOInvariant,
+          4, Align(4));
+      MachineMemOperand *MMOs[] = {LiteralMMO, GOTMMO};
+      CurDAG->setNodeMemRefs(IE, MMOs);
       return;
     }
     if (N->getOpcode() == ISD::INTRINSIC_W_CHAIN &&

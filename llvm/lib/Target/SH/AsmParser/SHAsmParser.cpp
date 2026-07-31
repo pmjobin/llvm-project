@@ -41,6 +41,7 @@ class SHOperand : public MCParsedAsmOperand {
     Register,
     Immediate,
     LongMemReg,
+    IndexedMem,
     LongMemDisp,
     ByteMemDisp,
     WordMemDisp,
@@ -62,10 +63,12 @@ public:
   bool isReg() const override { return Kind == Register; }
   bool isImm() const override { return Kind == Immediate; }
   bool isMem() const override {
-    return Kind == LongMemReg || Kind == LongMemDisp || Kind == ByteMemDisp ||
-           Kind == WordMemDisp || Kind == PreDecGPR || Kind == PostIncGPR;
+    return Kind == LongMemReg || Kind == IndexedMem || Kind == LongMemDisp ||
+           Kind == ByteMemDisp || Kind == WordMemDisp || Kind == PreDecGPR ||
+           Kind == PostIncGPR;
   }
   bool isLongMemReg() const { return Kind == LongMemReg; }
+  bool isIndexedMem() const { return Kind == IndexedMem; }
   bool isTasMemReg() const {
     return Kind == LongMemReg && Reg >= SH::R0 && Reg <= SH::R15;
   }
@@ -157,6 +160,11 @@ public:
     Inst.addOperand(MCOperand::createReg(Reg));
   }
 
+  void addIndexedMemOperands(MCInst &Inst, unsigned N) const {
+    assert(Kind == IndexedMem && N == 1);
+    Inst.addOperand(MCOperand::createReg(Reg));
+  }
+
   void addLongMemDispOperands(MCInst &Inst, unsigned N) const {
     assert(Kind == LongMemDisp && N == 2);
     Inst.addOperand(MCOperand::createReg(Reg));
@@ -210,6 +218,15 @@ public:
   static std::unique_ptr<SHOperand> createLongMemReg(MCRegister Base,
                                                      SMLoc Start, SMLoc End) {
     auto Op = std::unique_ptr<SHOperand>(new SHOperand(LongMemReg));
+    Op->Reg = Base;
+    Op->StartLoc = Start;
+    Op->EndLoc = End;
+    return Op;
+  }
+
+  static std::unique_ptr<SHOperand> createIndexedMem(MCRegister Base,
+                                                     SMLoc Start, SMLoc End) {
+    auto Op = std::unique_ptr<SHOperand>(new SHOperand(IndexedMem));
     Op->Reg = Base;
     Op->StartLoc = Start;
     Op->EndLoc = End;
@@ -405,6 +422,46 @@ ParseStatus SHAsmParser::parseMemory(OperandVector &Operands,
 
   if (Parser.getTok().is(AsmToken::LParen)) {
     Parser.Lex();
+
+    if (Parser.getTok().is(AsmToken::Identifier)) {
+      SMLoc IndexLoc = Parser.getTok().getLoc();
+      MCRegister Index = MatchRegisterName(Parser.getTok().getIdentifier());
+      if (Index) {
+        Parser.Lex();
+        if (Index != SH::R0) {
+          Error(IndexLoc, "SH indexed memory requires r0 as its index");
+          return ParseStatus::Failure;
+        }
+        if (Parser.getTok().isNot(AsmToken::Comma)) {
+          Error(Parser.getTok().getLoc(),
+                "expected comma in indexed memory operand");
+          return ParseStatus::Failure;
+        }
+        Parser.Lex();
+        MCRegister Base;
+        SMLoc RegStart;
+        SMLoc RegEnd;
+        if (!tryParseRegister(Base, RegStart, RegEnd).isSuccess() ||
+            !isSHGPR(Parser, Base)) {
+          Error(Parser.getTok().getLoc(),
+                "expected GPR base in indexed memory operand");
+          return ParseStatus::Failure;
+        }
+        if (Parser.getTok().isNot(AsmToken::RParen)) {
+          Error(Parser.getTok().getLoc(),
+                "expected ')' in indexed memory operand");
+          return ParseStatus::Failure;
+        }
+        SMLoc End = Parser.getTok().getEndLoc();
+        Parser.Lex();
+        if (Mnemonic != "mov.l") {
+          Error(Start, "indexed memory is only supported for mov.l");
+          return ParseStatus::Failure;
+        }
+        Operands.push_back(SHOperand::createIndexedMem(Base, Start, End));
+        return ParseStatus::Success;
+      }
+    }
 
     const MCExpr *Disp;
     SMLoc End;
@@ -681,6 +738,9 @@ bool SHAsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   case Match_InvalidPCLiteral:
     return Error(Operands[ErrorInfo]->getStartLoc(),
                  "invalid SH PC-relative literal operand");
+  case Match_InvalidIndexedMem:
+    return Error(Operands[ErrorInfo]->getStartLoc(),
+                 "invalid SH indexed memory operand");
   case Match_InvalidR0:
     return Error(Operands[ErrorInfo]->getStartLoc(), "operand must be r0");
   case Match_InvalidTiedOperand:

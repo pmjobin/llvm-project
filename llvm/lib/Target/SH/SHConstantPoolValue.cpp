@@ -154,6 +154,21 @@ void SHConstantPoolValue::print(raw_ostream &OS) const {
   case Modifier::PLT:
     OS << "@PLT";
     break;
+  case Modifier::TLSGD:
+    OS << "@TLSGD";
+    break;
+  case Modifier::TLSLDM:
+    OS << "@TLSLDM";
+    break;
+  case Modifier::DTPOFF:
+    OS << "@DTPOFF";
+    break;
+  case Modifier::GOTTPOFF:
+    OS << "@GOTTPOFF";
+    break;
+  case Modifier::TPOFF:
+    OS << "@TPOFF";
+    break;
   }
   if (Addend > 0)
     OS << '+' << Addend;

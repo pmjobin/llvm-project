@@ -31,6 +31,7 @@
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Target/TargetMachine.h"
 
 using namespace llvm;
 
@@ -38,23 +39,25 @@ using namespace llvm;
 
 namespace {
 
-static bool isSupportedGlobalType(Type *Ty) {
+static bool isSupportedGlobalType(Type *Ty, bool IsTLS) {
   if (Ty->isIntegerTy(8) || Ty->isIntegerTy(16) || Ty->isIntegerTy(32) ||
-      Ty->isIntegerTy(64))
+      Ty->isIntegerTy(64) || (IsTLS && (Ty->isFloatTy() || Ty->isDoubleTy())))
     return true;
   if (const auto *Pointer = dyn_cast<PointerType>(Ty))
     return Pointer->getAddressSpace() == 0;
   if (const auto *Array = dyn_cast<ArrayType>(Ty))
-    return isSupportedGlobalType(Array->getElementType());
+    return isSupportedGlobalType(Array->getElementType(), IsTLS);
   const auto *Struct = dyn_cast<StructType>(Ty);
   if (!Struct || Struct->isOpaque())
     return false;
-  return llvm::all_of(Struct->elements(), isSupportedGlobalType);
+  return llvm::all_of(Struct->elements(), [IsTLS](Type *Element) {
+    return isSupportedGlobalType(Element, IsTLS);
+  });
 }
 
 static void validateGlobalInitializer(const Constant *C) {
   if (const auto *GV = dyn_cast<GlobalVariable>(C); GV && GV->isThreadLocal())
-    report_fatal_error("SH thread-local storage is not supported");
+    report_fatal_error("SH global initializer cannot reference a TLS symbol");
   if (isa<GlobalValue>(C))
     return;
   if (const auto *Expr = dyn_cast<ConstantExpr>(C)) {
@@ -66,14 +69,30 @@ static void validateGlobalInitializer(const Constant *C) {
     validateGlobalInitializer(cast<Constant>(Operand.get()));
 }
 
+static void validateTLSInitializer(const Constant *C) {
+  if (C->getType()->isPointerTy())
+    report_fatal_error("SH pointer-valued TLS initializers are not supported");
+  for (const Use &Operand : C->operands())
+    validateTLSInitializer(cast<Constant>(Operand.get()));
+}
+
 static void validateGlobalObject(const GlobalObject &GO) {
+  const auto *GV = dyn_cast<GlobalVariable>(&GO);
+  bool IsTLS = GV && GV->isThreadLocal();
   if (GO.hasComdat())
-    report_fatal_error("SH COMDAT is not supported");
+    report_fatal_error(IsTLS ? "SH COMDAT TLS is not supported"
+                             : "SH COMDAT is not supported");
   if (!GO.hasDefaultVisibility() && !GO.hasHiddenVisibility() &&
       !GO.hasProtectedVisibility())
     report_fatal_error("SH symbol visibility is not supported");
   if (GO.getDLLStorageClass() != GlobalValue::DefaultStorageClass)
     report_fatal_error("SH DLL storage classes are not supported");
+  if (IsTLS && GO.hasCommonLinkage())
+    report_fatal_error("SH TLS common is not supported");
+  if (IsTLS && (GO.hasWeakAnyLinkage() || GO.hasExternalWeakLinkage()))
+    report_fatal_error("SH weak TLS is not supported");
+  if (IsTLS && GO.hasLinkOnceLinkage())
+    report_fatal_error("SH linkonce TLS is not supported");
   if (!GO.isDeclarationForLinker() && !GO.hasExternalLinkage() &&
       !GO.hasInternalLinkage() && !GO.hasPrivateLinkage())
     report_fatal_error(
@@ -82,7 +101,7 @@ static void validateGlobalObject(const GlobalObject &GO) {
     report_fatal_error("SH weak and linkonce declarations are not supported");
 }
 
-static void validateSHModule(const Module &M) {
+static void validateSHModule(const Module &M, const TargetMachine &TM) {
   if (!M.aliases().empty())
     report_fatal_error("SH global aliases are not supported");
   if (!M.ifuncs().empty())
@@ -92,22 +111,35 @@ static void validateSHModule(const Module &M) {
     if (!F.isIntrinsic())
       validateGlobalObject(F);
   }
+  bool HasTLS = false;
   for (const GlobalVariable &GV : M.globals()) {
     validateGlobalObject(GV);
     if (GV.getAddressSpace() != 0)
       report_fatal_error("SH nonzero address spaces are not supported");
-    if (GV.isThreadLocal())
-      report_fatal_error("SH thread-local storage is not supported");
+    HasTLS |= GV.isThreadLocal();
     if (GV.isExternallyInitialized())
       report_fatal_error("SH externally initialized globals are not supported");
+    if (GV.isThreadLocal() && !isSupportedGlobalType(GV.getValueType(), true))
+      report_fatal_error(
+          "SH TLS globals only support i8, i16, i32, i64, float, double, "
+          "pointers, fixed arrays, and fixed structures");
     if (GV.isDeclaration())
       continue;
-    if (!isSupportedGlobalType(GV.getValueType()))
+    if (!GV.isThreadLocal() && !isSupportedGlobalType(GV.getValueType(), false))
       report_fatal_error(
           "SH globals only support i8, i16, i32, i64, pointers, fixed arrays, "
           "and fixed structures");
+    if (GV.isThreadLocal())
+      validateTLSInitializer(GV.getInitializer());
     validateGlobalInitializer(GV.getInitializer());
   }
+  const Triple &TT = TM.getTargetTriple();
+  bool IsGenericELF = TT.getOS() == Triple::UnknownOS &&
+                      TT.getEnvironment() == Triple::UnknownEnvironment;
+  bool IsGNULinux = TT.isOSLinux() && TT.isGNUEnvironment();
+  if (HasTLS && !IsGenericELF && !IsGNULinux)
+    report_fatal_error(
+        "SH native ELF TLS supports only unknown-elf and linux-gnu triples");
 }
 
 class SHAsmPrinter : public AsmPrinter {
@@ -131,8 +163,12 @@ public:
   StringRef getPassName() const override { return "SH Assembly Printer"; }
 
   bool doInitialization(Module &M) override {
-    validateSHModule(M);
-    return AsmPrinter::doInitialization(M);
+    validateSHModule(M, TM);
+    bool Changed = AsmPrinter::doInitialization(M);
+    for (const GlobalVariable &GV : M.globals())
+      if (GV.isThreadLocal() && GV.isDeclaration())
+        OutStreamer->emitSymbolAttribute(getSymbol(&GV), MCSA_ELF_TypeTLS);
+    return Changed;
   }
 
   void emitFunctionEntryLabel() override {
@@ -178,6 +214,21 @@ public:
     case SHConstantPoolValue::Modifier::PLT:
       Specifier = SH::S_PLT;
       break;
+    case SHConstantPoolValue::Modifier::TLSGD:
+      Specifier = SH::S_TLSGD;
+      break;
+    case SHConstantPoolValue::Modifier::TLSLDM:
+      Specifier = SH::S_TLSLDM;
+      break;
+    case SHConstantPoolValue::Modifier::DTPOFF:
+      Specifier = SH::S_DTPOFF;
+      break;
+    case SHConstantPoolValue::Modifier::GOTTPOFF:
+      Specifier = SH::S_GOTTPOFF;
+      break;
+    case SHConstantPoolValue::Modifier::TPOFF:
+      Specifier = SH::S_TPOFF;
+      break;
     }
     if (Value->getModifier() == SHConstantPoolValue::Modifier::GOTPC &&
         Symbol->getName() == "_GLOBAL_OFFSET_TABLE_")
@@ -202,6 +253,9 @@ public:
         MI->getOpcode() == SH::SH_PIC_ADDRESS)
       report_fatal_error(
           "SH PIC materialization reached final emission without expansion");
+    if (MI->getOpcode() == SH::SH_TLS_CALL || MI->getOpcode() == SH::SH_TLS_IE)
+      report_fatal_error(
+          "SH TLS materialization reached final emission without expansion");
     SHMCInstLower Lowering(OutContext, *this);
     MachineBasicBlock::const_instr_iterator I = MI->getIterator();
     MachineBasicBlock::const_instr_iterator E = MI->getParent()->instr_end();

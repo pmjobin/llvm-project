@@ -16,6 +16,7 @@
 #include "llvm/MC/MCELFObjectWriter.h"
 #include "llvm/MC/MCObjectWriter.h"
 #include "llvm/MC/MCSubtargetInfo.h"
+#include "llvm/MC/MCSymbolELF.h"
 #include "llvm/MC/MCValue.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/MathExtras.h"
@@ -25,6 +26,12 @@
 using namespace llvm;
 
 namespace {
+
+static bool isTLSModifier(unsigned Specifier) {
+  return Specifier == SH::S_TLSGD || Specifier == SH::S_TLSLDM ||
+         Specifier == SH::S_DTPOFF || Specifier == SH::S_GOTTPOFF ||
+         Specifier == SH::S_TPOFF;
+}
 
 class SHObjectTargetWriter : public MCELFObjectTargetWriter {
   static bool isGOTSymbol(const MCValue &Target) {
@@ -57,15 +64,28 @@ public:
     }
     if (Target.getSpecifier()) {
       if (Target.getSubSym()) {
-        reportError(Fixup.getLoc(),
-                    "SH GOT and PLT modifiers do not support symbol "
-                    "subtraction");
+        reportError(
+            Fixup.getLoc(),
+            isTLSModifier(Target.getSpecifier())
+                ? "SH TLS modifiers do not support symbol subtraction"
+                : "SH GOT and PLT modifiers do not support symbol subtraction");
         return 0;
       }
       if (Fixup.getKind() != FK_Data_4) {
         reportError(Fixup.getLoc(),
-                    "SH GOT and PLT modifiers require a four-byte value");
+                    isTLSModifier(Target.getSpecifier())
+                        ? "SH TLS modifiers require a four-byte value"
+                        : "SH GOT and PLT modifiers require a four-byte value");
         return 0;
+      }
+      if (isTLSModifier(Target.getSpecifier()) && Target.getAddSym()) {
+        unsigned Type =
+            static_cast<const MCSymbolELF *>(Target.getAddSym())->getType();
+        if (Type != ELF::STT_NOTYPE && Type != ELF::STT_TLS) {
+          reportError(Fixup.getLoc(),
+                      "SH TLS modifier requires an STT_TLS symbol");
+          return 0;
+        }
       }
       switch (Target.getSpecifier()) {
       case SH::S_GOT:
@@ -76,6 +96,16 @@ public:
         return ELF::R_SH_GOTPC;
       case SH::S_PLT:
         return ELF::R_SH_PLT32;
+      case SH::S_TLSGD:
+        return ELF::R_SH_TLS_GD_32;
+      case SH::S_TLSLDM:
+        return ELF::R_SH_TLS_LD_32;
+      case SH::S_DTPOFF:
+        return ELF::R_SH_TLS_LDO_32;
+      case SH::S_GOTTPOFF:
+        return ELF::R_SH_TLS_IE_32;
+      case SH::S_TPOFF:
+        return ELF::R_SH_TLS_LE_32;
       default:
         reportError(Fixup.getLoc(), "unsupported SH relocation modifier");
         return 0;
@@ -109,7 +139,10 @@ public:
     // section-symbol conversion does not move any addend into the RELA record.
     return Type == ELF::R_SH_DIR32 || Type == ELF::R_SH_REL32 ||
            Type == ELF::R_SH_GOT32 || Type == ELF::R_SH_PLT32 ||
-           Type == ELF::R_SH_GOTOFF || Type == ELF::R_SH_GOTPC;
+           Type == ELF::R_SH_GOTOFF || Type == ELF::R_SH_GOTPC ||
+           Type == ELF::R_SH_TLS_GD_32 || Type == ELF::R_SH_TLS_LD_32 ||
+           Type == ELF::R_SH_TLS_LDO_32 || Type == ELF::R_SH_TLS_IE_32 ||
+           Type == ELF::R_SH_TLS_LE_32;
   }
 };
 
@@ -226,7 +259,10 @@ public:
         if (Target.getSpecifier() && Target.getSubSym()) {
           getContext().reportError(
               Fixup.getLoc(),
-              "SH GOT and PLT modifiers do not support symbol subtraction");
+              isTLSModifier(Target.getSpecifier())
+                  ? "SH TLS modifiers do not support symbol subtraction"
+                  : "SH GOT and PLT modifiers do not support symbol "
+                    "subtraction");
           return;
         }
         if (Target.getSpecifier() == SH::S_GOT && InPlaceAddend != 0) {
@@ -234,6 +270,15 @@ public:
               Fixup.getLoc(),
               "SH @GOT does not support an addend; add it after loading the "
               "GOT slot");
+          InPlaceAddend = 0;
+        }
+        if ((Target.getSpecifier() == SH::S_TLSGD ||
+             Target.getSpecifier() == SH::S_TLSLDM ||
+             Target.getSpecifier() == SH::S_GOTTPOFF) &&
+            InPlaceAddend != 0) {
+          getContext().reportError(
+              Fixup.getLoc(),
+              "SH @TLSGD, @TLSLDM, and @GOTTPOFF do not support addends");
           InPlaceAddend = 0;
         }
         MCFixup RelocFixup = Fixup;

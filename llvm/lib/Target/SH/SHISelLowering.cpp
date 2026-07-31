@@ -108,7 +108,9 @@ SDValue SHTargetLowering::PerformDAGCombine(SDNode *N,
     std::swap(Address, Addend);
   const auto *Global = dyn_cast<GlobalAddressSDNode>(Address);
   const auto *Constant = dyn_cast<ConstantSDNode>(Addend);
-  if (!Global || !Constant || Address.getOpcode() != ISD::GlobalAddress)
+  if (!Global || !Constant ||
+      (Address.getOpcode() != ISD::GlobalAddress &&
+       Address.getOpcode() != ISD::GlobalTLSAddress))
     return SDValue();
 
   auto [Offset, Overflow] =
@@ -117,6 +119,9 @@ SDValue SHTargetLowering::PerformDAGCombine(SDNode *N,
     return SDValue();
 
   SelectionDAG &DAG = DCI.DAG;
+  if (Address.getOpcode() == ISD::GlobalTLSAddress)
+    return DAG.getGlobalAddress(Global->getGlobal(), SDLoc(N),
+                                N->getValueType(0), Offset);
   return DAG.getGlobalAddress(Global->getGlobal(), SDLoc(N), N->getValueType(0),
                               Offset);
 }
@@ -1464,6 +1469,7 @@ static SDValue lowerSHSymbolAddress(SHConstantPoolValue *CPV, const SDLoc &DL,
                                     SelectionDAG &DAG);
 static SDValue lowerSHPICPairedAddress(SHConstantPoolValue *CPV,
                                        const SDLoc &DL, SelectionDAG &DAG);
+static void requireSHPICBase(SelectionDAG &DAG);
 
 SDValue SHTargetLowering::LowerCall(CallLoweringInfo &CLI,
                                     SmallVectorImpl<SDValue> &InVals) const {
@@ -1903,6 +1909,108 @@ SDValue SHTargetLowering::LowerGlobalAddress(SDValue Op,
   return lowerSHSymbolAddress(CPV, SDLoc(Op), DAG);
 }
 
+static SDValue addSHTLSAddressOffset(SDValue Address, int64_t Offset,
+                                     const SDLoc &DL, SelectionDAG &DAG) {
+  if (Offset == 0)
+    return Address;
+  if (!isInt<32>(Offset))
+    report_fatal_error("SH TLS address addend must fit signed 32 bits");
+  return DAG.getNode(ISD::ADD, DL, MVT::i32, Address,
+                     DAG.getSignedConstant(Offset, DL, MVT::i32));
+}
+
+static SDValue lowerSHTLSResolverCall(const GlobalValue *GV,
+                                      SHConstantPoolValue::Modifier Modifier,
+                                      const SDLoc &DL, SelectionDAG &DAG) {
+  requireSHPICBase(DAG);
+  MachineFunction &MF = DAG.getMachineFunction();
+  MF.setAlignment(std::max(MF.getAlignment(), Align(4)));
+  SHConstantPoolValue *Descriptor =
+      SHConstantPoolValue::create(GV, 0, Modifier);
+  SHConstantPoolValue *Resolver =
+      SHConstantPoolValue::create(*DAG.getContext(), "__tls_get_addr", 0,
+                                  SHConstantPoolValue::Modifier::PLT);
+  SDValue DescriptorCP =
+      DAG.getTargetConstantPool(Descriptor, MVT::i32, Align(4));
+  SDValue ResolverCP = DAG.getTargetConstantPool(Resolver, MVT::i32, Align(4));
+
+  SDValue Chain = DAG.getCALLSEQ_START(DAG.getEntryNode(), 0, 0, DL);
+  const uint32_t *Mask =
+      MF.getSubtarget<SHSubtarget>().getRegisterInfo()->getCallPreservedMask(
+          MF, CallingConv::C);
+  if (!Mask)
+    report_fatal_error("SH TLS resolver has no call-preserved mask");
+  SDValue Ops[] = {Chain, DescriptorCP, ResolverCP, DAG.getRegisterMask(Mask)};
+  MachineMemOperand::Flags Flags = MachineMemOperand::MOLoad |
+                                   MachineMemOperand::MODereferenceable |
+                                   MachineMemOperand::MOInvariant;
+  Chain = DAG.getMemIntrinsicNode(
+      SHISD::TLS_CALL, DL, DAG.getVTList(MVT::Other, MVT::Glue), Ops, MVT::i32,
+      MachinePointerInfo::getConstantPool(MF), Align(4), Flags,
+      LocationSize::precise(4));
+  SDValue Glue = Chain.getValue(1);
+  Chain = DAG.getCALLSEQ_END(Chain, 0, 0, Glue, DL);
+  Glue = Chain.getValue(1);
+  return DAG.getCopyFromReg(Chain, DL, SH::R0, MVT::i32, Glue);
+}
+
+SDValue SHTargetLowering::LowerGlobalTLSAddress(SDValue Op,
+                                                SelectionDAG &DAG) const {
+  const auto *Global = cast<GlobalAddressSDNode>(Op);
+  const GlobalValue *GV = Global->getGlobal();
+  const SDLoc DL(Op);
+  if (GV->getAddressSpace() != 0)
+    report_fatal_error("SH TLS only supports address space zero");
+  if (getTargetMachine().useEmulatedTLS())
+    report_fatal_error("SH emulated TLS is not supported");
+  if (getTargetMachine().useTLSDESC())
+    report_fatal_error("SH TLSDESC is not supported");
+
+  int64_t Addend = Global->getOffset();
+  if (!isInt<32>(Addend))
+    report_fatal_error("SH TLS address addend must fit signed 32 bits");
+  switch (getTargetMachine().getTLSModel(GV)) {
+  case TLSModel::GeneralDynamic: {
+    SDValue Address = lowerSHTLSResolverCall(
+        GV, SHConstantPoolValue::Modifier::TLSGD, DL, DAG);
+    return addSHTLSAddressOffset(Address, Addend, DL, DAG);
+  }
+  case TLSModel::LocalDynamic: {
+    SDValue Base = lowerSHTLSResolverCall(
+        GV, SHConstantPoolValue::Modifier::TLSLDM, DL, DAG);
+    SHConstantPoolValue *Offset =
+        SHConstantPoolValue::create(GV, static_cast<int32_t>(Addend),
+                                    SHConstantPoolValue::Modifier::DTPOFF);
+    return DAG.getNode(ISD::ADD, DL, MVT::i32, Base,
+                       lowerSHSymbolAddress(Offset, DL, DAG));
+  }
+  case TLSModel::InitialExec: {
+    requireSHPICBase(DAG);
+    MachineFunction &MF = DAG.getMachineFunction();
+    SHConstantPoolValue *Offset = SHConstantPoolValue::create(
+        GV, 0, SHConstantPoolValue::Modifier::GOTTPOFF);
+    SDValue CPAddr = DAG.getTargetConstantPool(Offset, MVT::i32, Align(4));
+    SDValue Ops[] = {DAG.getEntryNode(), CPAddr};
+    MachineMemOperand::Flags Flags = MachineMemOperand::MOLoad |
+                                     MachineMemOperand::MODereferenceable |
+                                     MachineMemOperand::MOInvariant;
+    SDValue Address = DAG.getMemIntrinsicNode(
+        SHISD::TLS_IE, DL, DAG.getVTList(MVT::i32, MVT::Other), Ops, MVT::i32,
+        MachinePointerInfo::getGOT(MF), Align(4), Flags,
+        LocationSize::precise(4));
+    return addSHTLSAddressOffset(Address, Addend, DL, DAG);
+  }
+  case TLSModel::LocalExec: {
+    SDValue ThreadPointer = DAG.getNode(SHISD::THREAD_POINTER, DL, MVT::i32);
+    SHConstantPoolValue *Offset = SHConstantPoolValue::create(
+        GV, static_cast<int32_t>(Addend), SHConstantPoolValue::Modifier::TPOFF);
+    return DAG.getNode(ISD::ADD, DL, MVT::i32, ThreadPointer,
+                       lowerSHSymbolAddress(Offset, DL, DAG));
+  }
+  }
+  llvm_unreachable("unexpected SH TLS model");
+}
+
 SDValue SHTargetLowering::LowerBlockAddress(SDValue Op,
                                             SelectionDAG &DAG) const {
   const auto *Block = cast<BlockAddressSDNode>(Op);
@@ -1992,6 +2100,8 @@ static bool isSupportedSHAddress(SDValue Addr) {
             Base.getOpcode() == ISD::LOAD ||
             Base.getOpcode() == ISD::Register || Base.getOpcode() == ISD::ADD ||
             Base.getOpcode() == ISD::GlobalAddress ||
+            Base.getOpcode() == ISD::GlobalTLSAddress ||
+            Base.getOpcode() == SHISD::TLS_IE ||
             Base.getOpcode() == ISD::TargetConstantPool);
   };
 
@@ -2013,7 +2123,9 @@ static bool isSupportedSHNarrowAddress(SDValue Addr) {
             Base.getOpcode() == ISD::CopyFromReg ||
             Base.getOpcode() == ISD::LOAD ||
             Base.getOpcode() == ISD::Register ||
-            Base.getOpcode() == ISD::GlobalAddress);
+            Base.getOpcode() == ISD::GlobalAddress ||
+            Base.getOpcode() == ISD::GlobalTLSAddress ||
+            Base.getOpcode() == SHISD::TLS_IE);
   };
 
   if (IsBase(Addr))
@@ -2288,7 +2400,7 @@ SDValue SHTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   if (Op.getOpcode() == ISD::ConstantPool)
     return LowerConstantPool(Op, DAG);
   if (Op.getOpcode() == ISD::GlobalTLSAddress)
-    report_fatal_error("SH thread-local storage is not supported");
+    return LowerGlobalTLSAddress(Op, DAG);
   if (Op.getOpcode() == ISD::BlockAddress)
     return LowerBlockAddress(Op, DAG);
   if (Op.getOpcode() == ISD::JumpTable)
@@ -3164,6 +3276,12 @@ const char *SHTargetLowering::getTargetNodeName(unsigned Opcode) const {
     return "SHISD::BR_JT";
   case SHISD::PIC_ADDRESS:
     return "SHISD::PIC_ADDRESS";
+  case SHISD::THREAD_POINTER:
+    return "SHISD::THREAD_POINTER";
+  case SHISD::TLS_CALL:
+    return "SHISD::TLS_CALL";
+  case SHISD::TLS_IE:
+    return "SHISD::TLS_IE";
   default:
     return nullptr;
   }

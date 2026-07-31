@@ -160,10 +160,8 @@ static void validateExpandedPICPairs(const MachineFunction &MF) {
 }
 
 static void validatePICConstants(const MachineFunction &MF) {
-  if (!MF.getTarget().isPositionIndependent())
-    return;
   unsigned GOTPCCount = 0;
-  bool HasPICSymbol = false;
+  bool RequiresPICBase = false;
   for (const MachineConstantPoolEntry &Entry :
        MF.getConstantPool()->getConstants()) {
     if (!Entry.isMachineConstantPoolEntry())
@@ -171,9 +169,17 @@ static void validatePICConstants(const MachineFunction &MF) {
     const auto *Value =
         static_cast<const SHConstantPoolValue *>(Entry.Val.MachineCPVal);
     SHConstantPoolValue::Modifier Modifier = Value->getModifier();
-    if (Modifier == SHConstantPoolValue::Modifier::None)
+    if (MF.getTarget().isPositionIndependent() &&
+        Modifier == SHConstantPoolValue::Modifier::None)
       fail(MF, "an absolute symbolic word remains in PIC executable code");
-    HasPICSymbol = true;
+    if (Modifier == SHConstantPoolValue::Modifier::GOT ||
+        Modifier == SHConstantPoolValue::Modifier::GOTOFF ||
+        Modifier == SHConstantPoolValue::Modifier::GOTPC ||
+        Modifier == SHConstantPoolValue::Modifier::PLT ||
+        Modifier == SHConstantPoolValue::Modifier::TLSGD ||
+        Modifier == SHConstantPoolValue::Modifier::TLSLDM ||
+        Modifier == SHConstantPoolValue::Modifier::GOTTPOFF)
+      RequiresPICBase = true;
     if (Modifier == SHConstantPoolValue::Modifier::GOTPC) {
       ++GOTPCCount;
       if (!Value->isExternalSymbol() ||
@@ -186,6 +192,16 @@ static void validatePICConstants(const MachineFunction &MF) {
       fail(MF, "PIC GOT entry has an unsupported symbol addend");
     if (Value->isGlobalValue()) {
       const GlobalValue *GV = Value->getGlobalValue();
+      bool IsTLS = GV->isThreadLocal();
+      bool IsTLSModifier =
+          Modifier == SHConstantPoolValue::Modifier::TLSGD ||
+          Modifier == SHConstantPoolValue::Modifier::TLSLDM ||
+          Modifier == SHConstantPoolValue::Modifier::DTPOFF ||
+          Modifier == SHConstantPoolValue::Modifier::GOTTPOFF ||
+          Modifier == SHConstantPoolValue::Modifier::TPOFF;
+      if (IsTLS != IsTLSModifier)
+        fail(MF, IsTLS ? "a TLS symbol was lowered as an ordinary global"
+                       : "a TLS modifier refers to a non-TLS symbol");
       bool IsNonPreemptible = GV->isDSOLocal() && !GV->isInterposable();
       if (Modifier == SHConstantPoolValue::Modifier::GOTOFF &&
           !IsNonPreemptible)
@@ -196,10 +212,12 @@ static void validatePICConstants(const MachineFunction &MF) {
         fail(MF, "a nonpreemptible function was lowered through the PLT");
     }
   }
-  if (HasPICSymbol && !MF.getInfo<SHMachineFunctionInfo>()->usesPICBase())
+  if (RequiresPICBase && !MF.getInfo<SHMachineFunctionInfo>()->usesPICBase())
     fail(MF, "PIC symbol materialization is missing GOT setup");
-  if (HasPICSymbol && GOTPCCount != 1)
+  if (RequiresPICBase && GOTPCCount != 1)
     fail(MF, "PIC function must contain exactly one GOTPC constant");
+  if (!RequiresPICBase && GOTPCCount != 0)
+    fail(MF, "function has an unused GOTPC constant");
 }
 
 static int64_t getDistance(const MachineFunction &MF, uint64_t UseOffset,

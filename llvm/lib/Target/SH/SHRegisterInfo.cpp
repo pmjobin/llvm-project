@@ -10,6 +10,7 @@
 #include "MCTargetDesc/SHMCTargetDesc.h"
 #include "SHFrameLowering.h"
 #include "SHInstrInfo.h"
+#include "SHMachineFunctionInfo.h"
 #include "SHSubtarget.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/CodeGen/CFIInstBuilder.h"
@@ -40,7 +41,8 @@ const uint32_t *SHRegisterInfo::getCallPreservedMask(const MachineFunction &MF,
 BitVector SHRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
   Reserved.set(SH::R15);
-  if (MF.getTarget().isPositionIndependent())
+  if (MF.getTarget().isPositionIndependent() ||
+      MF.getInfo<SHMachineFunctionInfo>()->usesPICBase())
     Reserved.set(SH::R12);
   Reserved.set(SH::PC);
   Reserved.set(SH::PR);

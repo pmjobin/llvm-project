@@ -615,6 +615,35 @@ TEST_F(SHInstrInfoTest, MOVAHasPreciseProperties) {
   EXPECT_TRUE(Desc.implicit_defs().empty());
 }
 
+TEST_F(SHInstrInfoTest, TLSInstructionsHavePreciseProperties) {
+  const MCInstrDesc &ThreadPointer = TII->get(SH::STC_GBR);
+  EXPECT_EQ(2u, ThreadPointer.getSize());
+  EXPECT_EQ(1u, ThreadPointer.getNumDefs());
+  EXPECT_EQ(1u, ThreadPointer.getNumOperands());
+  EXPECT_FALSE(ThreadPointer.mayLoad());
+  EXPECT_FALSE(ThreadPointer.mayStore());
+  EXPECT_FALSE(ThreadPointer.isBranch());
+  EXPECT_FALSE(ThreadPointer.isCall());
+  EXPECT_FALSE(ThreadPointer.hasDelaySlot());
+  EXPECT_TRUE(is_contained(ThreadPointer.implicit_uses(), SH::GBR));
+  EXPECT_TRUE(ThreadPointer.implicit_defs().empty());
+  for (MCRegister Reg :
+       {SH::PR, SH::TBit, SH::MBit, SH::QBit, SH::MACH, SH::MACL})
+    EXPECT_FALSE(ThreadPointer.hasImplicitDefOfPhysReg(Reg));
+
+  const MCInstrDesc &IndexedLoad = TII->get(SH::MOVL_load_indexed);
+  EXPECT_EQ(2u, IndexedLoad.getSize());
+  EXPECT_EQ(1u, IndexedLoad.getNumDefs());
+  EXPECT_EQ(2u, IndexedLoad.getNumOperands());
+  EXPECT_TRUE(IndexedLoad.mayLoad());
+  EXPECT_FALSE(IndexedLoad.mayStore());
+  EXPECT_FALSE(IndexedLoad.isBranch());
+  EXPECT_FALSE(IndexedLoad.isCall());
+  EXPECT_FALSE(IndexedLoad.hasDelaySlot());
+  EXPECT_TRUE(is_contained(IndexedLoad.implicit_uses(), SH::R0));
+  EXPECT_TRUE(IndexedLoad.implicit_defs().empty());
+}
+
 TEST_F(SHInstrInfoTest, PICConstantPoolIdentityIncludesModifierAndAddend) {
   const GlobalValue *GV = M->getFunction("test");
   std::unique_ptr<SHConstantPoolValue> GOT(
@@ -632,6 +661,29 @@ TEST_F(SHInstrInfoTest, PICConstantPoolIdentityIncludesModifierAndAddend) {
   EXPECT_FALSE(GOT->equals(*GOTOFF));
   EXPECT_FALSE(GOT->equals(*PLT));
   EXPECT_FALSE(GOT->equals(*GOTWithAddend));
+
+  std::unique_ptr<SHConstantPoolValue> TLSValues[] = {
+      std::unique_ptr<SHConstantPoolValue>(SHConstantPoolValue::create(
+          GV, 0, SHConstantPoolValue::Modifier::TLSGD)),
+      std::unique_ptr<SHConstantPoolValue>(SHConstantPoolValue::create(
+          GV, 0, SHConstantPoolValue::Modifier::TLSLDM)),
+      std::unique_ptr<SHConstantPoolValue>(SHConstantPoolValue::create(
+          GV, 0, SHConstantPoolValue::Modifier::DTPOFF)),
+      std::unique_ptr<SHConstantPoolValue>(SHConstantPoolValue::create(
+          GV, 0, SHConstantPoolValue::Modifier::GOTTPOFF)),
+      std::unique_ptr<SHConstantPoolValue>(SHConstantPoolValue::create(
+          GV, 0, SHConstantPoolValue::Modifier::TPOFF))};
+  for (unsigned LHS = 0; LHS != std::size(TLSValues); ++LHS)
+    for (unsigned RHS = 0; RHS != std::size(TLSValues); ++RHS)
+      EXPECT_EQ(LHS == RHS, TLSValues[LHS]->equals(*TLSValues[RHS]));
+
+  std::unique_ptr<SHConstantPoolValue> SameTLSGD(
+      SHConstantPoolValue::create(GV, 0, SHConstantPoolValue::Modifier::TLSGD));
+  std::unique_ptr<SHConstantPoolValue> DTPOFFWithAddend(
+      SHConstantPoolValue::create(GV, 4,
+                                  SHConstantPoolValue::Modifier::DTPOFF));
+  EXPECT_TRUE(TLSValues[0]->equals(*SameTLSGD));
+  EXPECT_FALSE(TLSValues[2]->equals(*DTPOFFWithAddend));
 }
 
 static uint32_t executeConstantShiftPlan(ArrayRef<unsigned> Opcodes,
@@ -1849,6 +1901,116 @@ TEST(SHPICRelocationModelTest,
         int64_t Target = Kind == PICRelocationKind::GOTPC ? GOT : PLTEntry;
         EXPECT_EQ(Target + Addend, ClonePlace + CloneValue);
       }
+    }
+  }
+}
+
+enum class TLSRelocationKind {
+  GeneralDynamic,
+  LocalDynamic,
+  LocalOffset,
+  InitialExec,
+  LocalExec
+};
+
+static int64_t evaluateTLSRelocation(TLSRelocationKind Kind, int64_t Symbol,
+                                     int64_t Addend, int64_t GOT,
+                                     int64_t GDEntry, int64_t LDEntry,
+                                     int64_t IEEntry, int64_t TLSBase,
+                                     int64_t TCBSize) {
+  switch (Kind) {
+  case TLSRelocationKind::GeneralDynamic:
+    return GDEntry - GOT;
+  case TLSRelocationKind::LocalDynamic:
+    return LDEntry - GOT;
+  case TLSRelocationKind::LocalOffset:
+    return Symbol + Addend - TLSBase;
+  case TLSRelocationKind::InitialExec:
+    return IEEntry - GOT;
+  case TLSRelocationKind::LocalExec:
+    return Symbol + Addend - TLSBase + TCBSize;
+  }
+  llvm_unreachable("unknown TLS relocation kind");
+}
+
+TEST(SHTLSRelocationModelTest,
+     RelocationsMatchIndependentLayoutAddendAndEndianModel) {
+  constexpr TLSRelocationKind Kinds[] = {
+      TLSRelocationKind::GeneralDynamic, TLSRelocationKind::LocalDynamic,
+      TLSRelocationKind::LocalOffset, TLSRelocationKind::InitialExec,
+      TLSRelocationKind::LocalExec};
+  std::mt19937_64 Generator(0x534843180000);
+  auto RandomAddress = [&]() {
+    return int64_t(Generator() % UINT64_C(0x70000000)) + 0x10000;
+  };
+  auto RandomAddend = [&]() {
+    return int64_t(Generator() % UINT64_C(0x200001)) - 0x100000;
+  };
+
+  for (TLSRelocationKind Kind : Kinds) {
+    for (unsigned Scenario = 0; Scenario != 10000; ++Scenario) {
+      SCOPED_TRACE(Scenario);
+      bool IsDynamic = Generator() & 1;
+      int64_t Symbol = RandomAddress();
+      int64_t Addend = Kind == TLSRelocationKind::LocalOffset ||
+                               Kind == TLSRelocationKind::LocalExec
+                           ? RandomAddend()
+                           : 0;
+      int64_t GOT = RandomAddress() & ~INT64_C(3);
+      int64_t GDEntry = RandomAddress() & ~INT64_C(3);
+      int64_t LDEntry = RandomAddress() & ~INT64_C(3);
+      int64_t IEEntry = RandomAddress() & ~INT64_C(3);
+      int64_t TLSBase = RandomAddress() & ~INT64_C(7);
+      int64_t TCBSize = alignTo(INT64_C(8), INT64_C(1) << (Generator() % 5));
+      int64_t Place = RandomAddress() & ~INT64_C(3);
+      int64_t Value = evaluateTLSRelocation(Kind, Symbol, Addend, GOT, GDEntry,
+                                            LDEntry, IEEntry, TLSBase, TCBSize);
+
+      switch (Kind) {
+      case TLSRelocationKind::GeneralDynamic:
+        EXPECT_EQ(GDEntry, GOT + Value);
+        break;
+      case TLSRelocationKind::LocalDynamic:
+        EXPECT_EQ(LDEntry, GOT + Value);
+        break;
+      case TLSRelocationKind::LocalOffset:
+        EXPECT_EQ(Symbol + Addend, TLSBase + Value);
+        break;
+      case TLSRelocationKind::InitialExec:
+        EXPECT_EQ(IEEntry, GOT + Value);
+        break;
+      case TLSRelocationKind::LocalExec:
+        EXPECT_EQ(Symbol + Addend + TCBSize, TLSBase + Value);
+        break;
+      }
+
+      uint32_t Word = static_cast<uint32_t>(Value);
+      uint8_t BigEndian[4] = {uint8_t(Word >> 24), uint8_t(Word >> 16),
+                              uint8_t(Word >> 8), uint8_t(Word)};
+      uint8_t LittleEndian[4] = {uint8_t(Word), uint8_t(Word >> 8),
+                                 uint8_t(Word >> 16), uint8_t(Word >> 24)};
+      EXPECT_EQ(Word, decodeBigEndian(BigEndian));
+      EXPECT_EQ(Word, decodeLittleEndian(LittleEndian));
+
+      int64_t ClonePlace = RandomAddress() & ~INT64_C(3);
+      if (ClonePlace == Place)
+        ClonePlace += 4;
+      EXPECT_EQ(Value,
+                evaluateTLSRelocation(Kind, Symbol, Addend, GOT, GDEntry,
+                                      LDEntry, IEEntry, TLSBase, TCBSize));
+      EXPECT_NE(Place, ClonePlace);
+      int64_t MovedGOT = GOT + (IsDynamic ? 0x4000 : -0x4000);
+      int64_t MovedGDEntry = GDEntry + (IsDynamic ? 0x8000 : -0x8000);
+      int64_t MovedLDEntry = LDEntry + (IsDynamic ? 0xc000 : -0xc000);
+      int64_t MovedIEEntry = IEEntry + (IsDynamic ? 0x10000 : -0x10000);
+      int64_t Moved =
+          evaluateTLSRelocation(Kind, Symbol, Addend, MovedGOT, MovedGDEntry,
+                                MovedLDEntry, MovedIEEntry, TLSBase, TCBSize);
+      if (Kind == TLSRelocationKind::LocalOffset ||
+          Kind == TLSRelocationKind::LocalExec)
+        EXPECT_EQ(Value, Moved);
+      else
+        EXPECT_NE(Value, Moved);
     }
   }
 }

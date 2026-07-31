@@ -40,6 +40,10 @@ unsigned SHInstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
   if (MI.getOpcode() == SH::SH_PIC_SETUP ||
       MI.getOpcode() == SH::SH_PIC_ADDRESS)
     return 6;
+  if (MI.getOpcode() == SH::SH_TLS_CALL)
+    return 12;
+  if (MI.getOpcode() == SH::SH_TLS_IE)
+    return 8;
 
   unsigned Size = MI.getDesc().getSize();
   if (MI.getDesc().hasDelaySlot() && !MI.isBundledWithSucc())

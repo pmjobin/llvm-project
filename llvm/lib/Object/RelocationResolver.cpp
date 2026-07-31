@@ -442,12 +442,13 @@ static uint64_t resolveHexagon(uint64_t Type, uint64_t Offset, uint64_t S,
 }
 
 static bool supportsSH(uint64_t Type) {
-  return Type == ELF::R_SH_DIR32 || Type == ELF::R_SH_REL32;
+  return Type == ELF::R_SH_DIR32 || Type == ELF::R_SH_REL32 ||
+         Type == ELF::R_SH_TLS_LDO_32;
 }
 
 static uint64_t resolveSH(uint64_t Type, uint64_t Offset, uint64_t S,
                           uint64_t LocData, int64_t /*Addend*/) {
-  if (Type == ELF::R_SH_DIR32)
+  if (Type == ELF::R_SH_DIR32 || Type == ELF::R_SH_TLS_LDO_32)
     return (S + LocData) & 0xFFFFFFFF;
   if (Type == ELF::R_SH_REL32)
     return (S + LocData - Offset) & 0xFFFFFFFF;

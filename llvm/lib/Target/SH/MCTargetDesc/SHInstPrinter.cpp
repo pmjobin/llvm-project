@@ -71,6 +71,13 @@ void SHInstPrinter::printLongMemReg(const MCInst *MI, unsigned OpNo,
   printRegName(OS, MI->getOperand(OpNo).getReg());
 }
 
+void SHInstPrinter::printIndexedMem(const MCInst *MI, unsigned OpNo,
+                                    raw_ostream &OS) {
+  OS << "@(r0,";
+  printRegName(OS, MI->getOperand(OpNo).getReg());
+  OS << ')';
+}
+
 void SHInstPrinter::printLongMemDisp(const MCInst *MI, unsigned OpNo,
                                      raw_ostream &OS) {
   OS << "@(" << MI->getOperand(OpNo + 1).getImm() << ',';

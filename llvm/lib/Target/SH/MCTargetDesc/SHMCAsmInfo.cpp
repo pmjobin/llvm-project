@@ -13,10 +13,11 @@
 using namespace llvm;
 
 static const MCAsmInfo::AtSpecifier AtSpecifiers[] = {
-    {SH::S_GOT, "GOT"},
-    {SH::S_GOTOFF, "GOTOFF"},
-    {SH::S_GOTPC, "GOTPC"},
-    {SH::S_PLT, "PLT"},
+    {SH::S_GOT, "GOT"},       {SH::S_GOTOFF, "GOTOFF"},
+    {SH::S_GOTPC, "GOTPC"},   {SH::S_PLT, "PLT"},
+    {SH::S_TLSGD, "TLSGD"},   {SH::S_TLSLDM, "TLSLDM"},
+    {SH::S_DTPOFF, "DTPOFF"}, {SH::S_GOTTPOFF, "GOTTPOFF"},
+    {SH::S_TPOFF, "TPOFF"},
 };
 
 void SHMCAsmInfo::anchor() {}
