@@ -1,0 +1,67 @@
+# RUN: split-file %s %t
+# RUN: not llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %t/unsupported.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=BAD-FI
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %t/offset-128.mir -o - | FileCheck %s --check-prefix=OFFSET-128
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %t/offset-69636.mir -o - | FileCheck %s --check-prefix=OFFSET
+
+# BAD-FI: LLVM ERROR: SH frame index used by an unsupported instruction
+# OFFSET-128-LABEL: name: offset_128
+# OFFSET-128: $r0 = MOVrr $r15
+# OFFSET-128-NEXT: $r0 = ADDri $r0, 68
+# OFFSET-128-NEXT: $r0 = MOVL_load_disp $r0, 60
+# OFFSET-LABEL: name:            offset_69636
+# OFFSET: $r0 = MOVri 1
+# OFFSET-NEXT: $r0 = SHLL8 $r0
+# OFFSET-NEXT: $r0 = ADDri $r0, 16
+# OFFSET-NEXT: $r0 = SHLL8 $r0
+# OFFSET-NEXT: $r0 = ADDri $r0, 4
+# OFFSET-NEXT: $r0 = MOVL_load_indexed $r15, implicit killed $r0
+
+#--- unsupported.mir
+--- |
+  define void @unsupported() { ret void }
+...
+---
+name: unsupported
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 4, alignment: 4 }
+body: |
+  bb.0:
+    $r0 = MOVrr %stack.0
+    RTS implicit $pr
+...
+
+#--- offset-128.mir
+--- |
+  define i32 @offset_128() { ret i32 0 }
+...
+---
+name: offset_128
+tracksRegLiveness: true
+noVRegs: true
+fixedStack:
+  - { id: 0, type: default, offset: 128, size: 4, alignment: 4, isImmutable: true }
+body: |
+  bb.0:
+    $r0 = MOVL_load_disp %fixed-stack.0, 0 :: (load (s32) from %fixed-stack.0)
+    RTS implicit $pr, implicit $r0
+...
+
+#--- offset-69636.mir
+--- |
+  define i32 @offset_69636() { ret i32 0 }
+...
+---
+name: offset_69636
+tracksRegLiveness: true
+noVRegs: true
+fixedStack:
+  - { id: 0, type: default, offset: 4100, size: 4, alignment: 4, isImmutable: true }
+stack:
+  - { id: 0, type: default, size: 65536, alignment: 4 }
+body: |
+  bb.0:
+    $r0 = MOVL_load_disp %fixed-stack.0, 0 :: (load (s32) from %fixed-stack.0)
+    RTS implicit $pr, implicit $r0
+...

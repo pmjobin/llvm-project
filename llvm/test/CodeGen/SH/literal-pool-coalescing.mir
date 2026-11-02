@@ -1,0 +1,215 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -run-pass=sh-literal-pool-range-check -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh3 -run-pass=sh-literal-pool-range-check -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -run-pass=sh-literal-pool-range-check -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh4 -start-before=sh-literal-pool-range-check -verify-machineinstrs -filetype=obj %s -o %t.be.o
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -start-before=sh-literal-pool-range-check -verify-machineinstrs -filetype=obj %s -o %t.le.o
+# RUN: %python %S/Inputs/generate-literal-pool-coalescing.py > %t.range.mir
+# RUN: llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check -verify-machineinstrs %t.range.mir -o - | FileCheck %s --check-prefix=RANGE
+# RUN: llc -mtriple=shle-unknown-elf -start-before=sh-literal-pool-range-check -verify-machineinstrs -filetype=obj %t.range.mir -o %t.range.o
+
+# The later entry starts at offset 1024 or 1028. Only the former is in range
+# of the initial load, whose aligned PC base is four.
+# RANGE-LABEL: name: at_limit
+# RANGE: $r0 = MOVL_load_pc_island %const.0, 1
+# RANGE-NOT: SH_CONSTPOOL_ENTRY %const.0, 0
+# RANGE: SH_CONSTPOOL_ENTRY %const.0, 1, 4, 4
+# RANGE-LABEL: name: past_limit
+# RANGE: $r0 = MOVL_load_pc_island %const.0, 0
+# RANGE: SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+# RANGE: SH_CONSTPOOL_ENTRY %const.0, 1, 4, 4
+
+# The first island becomes empty. Its alignment and all instructions stay in
+# place. The later instance supplies both loads, including a use before a
+# branch. A separate two-byte literal survives unchanged.
+# CHECK-LABEL: name: share_long
+# CHECK: $r0 = MOVL_load_pc_island %const.0, 1
+# CHECK: BRA %bb.2 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+# CHECK: bb.1 (align 4):
+# CHECK-NOT: SH_CONSTPOOL_ENTRY
+# CHECK: bb.2:
+# CHECK: $r0 = MOVL_load_pc_island %const.0, 1
+# CHECK: $r1 = MOVW_load_pc_island %const.1, 0
+# CHECK: SH_CONSTPOOL_ENTRY %const.0, 1, 4, 4
+# CHECK-NEXT: SH_CONSTPOOL_ENTRY %const.1, 0, 2, 2
+
+# CHECK-LABEL: name: keep_words
+# CHECK: $r0 = MOVW_load_pc_island %const.0, 0
+# CHECK: SH_CONSTPOOL_ENTRY %const.0, 0, 2, 2
+# CHECK: $r0 = MOVW_load_pc_island %const.0, 1
+# CHECK: SH_CONSTPOOL_ENTRY %const.0, 1, 2, 2
+
+# CHECK-LABEL: name: keep_alignment
+# CHECK: $r0 = MOVL_load_pc_island %const.0, 0
+# CHECK: SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+# CHECK: $r0 = MOVL_load_pc_island %const.0, 1
+# CHECK: SH_CONSTPOOL_ENTRY %const.0, 1, 4, 4
+
+# CHECK-LABEL: name: keep_speed
+# CHECK: $r0 = MOVL_load_pc_island %const.0, 0
+# CHECK: SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+# CHECK: $r0 = MOVL_load_pc_island %const.0, 1
+# CHECK: SH_CONSTPOOL_ENTRY %const.0, 1, 4, 4
+
+# A symbolic PC load still owns the first label. Replacing the direct CPI use
+# must not leave that address-bearing reference without its original entry.
+# CHECK-LABEL: name: keep_symbol
+# CHECK: $r0 = MOVL_load_pc_island %const.0, 0
+# CHECK: $r1 = MOVL_load_pc <mcsymbol .LCPI4_0_0>
+# CHECK: SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+# CHECK: SH_CONSTPOOL_ENTRY %const.0, 1, 4, 4
+
+--- |
+  define i32 @share_long() optsize { ret i32 0 }
+  define i32 @keep_words() optsize { ret i32 0 }
+  define i32 @keep_alignment() optsize { ret i32 0 }
+  define i32 @keep_speed() { ret i32 0 }
+  define i32 @keep_symbol() optsize { ret i32 0 }
+...
+---
+name: share_long
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+constants:
+  - id: 0
+    value: 'i32 305419896'
+    alignment: 4
+  - id: 1
+    value: 'i16 300'
+    alignment: 2
+body: |
+  bb.0:
+    successors: %bb.2
+    $r0 = MOVL_load_pc_island %const.0, 0
+    BRA %bb.2 {
+      NOP
+    }
+  bb.1 (align 4):
+    successors:
+    SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+  bb.2:
+    $r0 = MOVL_load_pc_island %const.0, 1
+    $r1 = MOVW_load_pc_island %const.1, 0
+    RTS implicit $pr, implicit $r0 {
+      NOP
+    }
+  bb.3 (align 4):
+    successors:
+    SH_CONSTPOOL_ENTRY %const.0, 1, 4, 4
+    SH_CONSTPOOL_ENTRY %const.1, 0, 2, 2
+...
+---
+name: keep_words
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+constants:
+  - id: 0
+    value: 'i16 300'
+    alignment: 2
+body: |
+  bb.0:
+    successors: %bb.2
+    $r0 = MOVW_load_pc_island %const.0, 0
+    BRA %bb.2 {
+      NOP
+    }
+  bb.1 (align 2):
+    successors:
+    SH_CONSTPOOL_ENTRY %const.0, 0, 2, 2
+  bb.2:
+    $r0 = MOVW_load_pc_island %const.0, 1
+    RTS implicit $pr, implicit $r0 {
+      NOP
+    }
+  bb.3 (align 2):
+    successors:
+    SH_CONSTPOOL_ENTRY %const.0, 1, 2, 2
+...
+---
+name: keep_alignment
+alignment: 8
+tracksRegLiveness: true
+noVRegs: true
+constants:
+  - id: 0
+    value: 'i32 305419896'
+    alignment: 4
+body: |
+  bb.0:
+    successors: %bb.2
+    $r0 = MOVL_load_pc_island %const.0, 0
+    BRA %bb.2 {
+      NOP
+    }
+  bb.1 (align 4):
+    successors:
+    SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+  bb.2 (align 8):
+    $r0 = MOVL_load_pc_island %const.0, 1
+    RTS implicit $pr, implicit $r0 {
+      NOP
+    }
+  bb.3 (align 4):
+    successors:
+    SH_CONSTPOOL_ENTRY %const.0, 1, 4, 4
+...
+---
+name: keep_speed
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+constants:
+  - id: 0
+    value: 'i32 305419896'
+    alignment: 4
+body: |
+  bb.0:
+    successors: %bb.2
+    $r0 = MOVL_load_pc_island %const.0, 0
+    BRA %bb.2 {
+      NOP
+    }
+  bb.1 (align 4):
+    successors:
+    SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+  bb.2:
+    $r0 = MOVL_load_pc_island %const.0, 1
+    RTS implicit $pr, implicit $r0 {
+      NOP
+    }
+  bb.3 (align 4):
+    successors:
+    SH_CONSTPOOL_ENTRY %const.0, 1, 4, 4
+...
+---
+name: keep_symbol
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+constants:
+  - id: 0
+    value: 'i32 305419896'
+    alignment: 4
+body: |
+  bb.0:
+    successors: %bb.2
+    $r0 = MOVL_load_pc_island %const.0, 0
+    $r1 = MOVL_load_pc <mcsymbol .LCPI4_0_0>
+    BRA %bb.2 {
+      NOP
+    }
+  bb.1 (align 4):
+    successors:
+    SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+  bb.2:
+    $r0 = MOVL_load_pc_island %const.0, 1
+    RTS implicit $pr, implicit $r0 {
+      NOP
+    }
+  bb.3 (align 4):
+    successors:
+    SH_CONSTPOOL_ENTRY %const.0, 1, 4, 4
+...

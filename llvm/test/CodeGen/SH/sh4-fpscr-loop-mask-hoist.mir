@@ -1,0 +1,58 @@
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -run-pass=sh-fpu-state -verify-machineinstrs %s -o - | FileCheck %s
+
+# Repeated precision transitions inside a loop share one preheader mask.  The
+# register remains live only across the loop, and each transition needs only
+# the FPSCR read, XOR, and write after register allocation.
+
+# CHECK-LABEL: name: reuse_loop_fpscr_mask
+# CHECK: bb.0:
+# CHECK: %[[MASK:[0-9]+]]:gprnor0 = MATERIALIZE_FPSCR_MASK 8
+# CHECK-COUNT-3: TRANSITION_FPSCR_MODE_REG {{[13]}}, %[[MASK]]
+# CHECK-NOT: MATERIALIZE_FPSCR_MASK
+
+--- |
+  define void @reuse_loop_fpscr_mask() { ret void }
+...
+---
+name: reuse_loop_fpscr_mask
+tracksRegLiveness: true
+noVRegs: false
+body: |
+  bb.0:
+    liveins: $fr0, $fr1, $dr0, $dr2, $tbit, $pr
+    successors: %bb.1
+
+    BRA %bb.1
+
+  bb.1:
+    liveins: $fr0, $fr1, $dr0, $dr2, $tbit, $pr
+    successors: %bb.2
+
+    $fr0 = FADD_FR $fr0, $fr1, implicit-def $fpscr, implicit $fpscr
+    BRA %bb.2
+
+  bb.2:
+    liveins: $fr0, $fr1, $dr0, $dr2, $tbit, $pr
+    successors: %bb.3
+
+    $dr0 = FADD_DR $dr0, $dr2, implicit-def $fpscr, implicit $fpscr
+    BRA %bb.3
+
+  bb.3:
+    liveins: $fr0, $fr1, $dr0, $dr2, $tbit, $pr
+    successors: %bb.4
+
+    $fr0 = FSUB_FR $fr0, $fr1, implicit-def $fpscr, implicit $fpscr
+    BRA %bb.4
+
+  bb.4:
+    liveins: $fr0, $fr1, $dr0, $dr2, $tbit, $pr
+    successors: %bb.1, %bb.5
+
+    $dr0 = FMUL_DR $dr0, $dr2, implicit-def $fpscr, implicit $fpscr
+    BF %bb.1, implicit $tbit
+
+  bb.5:
+    liveins: $pr
+    RTS implicit $pr
+...

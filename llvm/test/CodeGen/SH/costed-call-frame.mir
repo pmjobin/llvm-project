@@ -1,0 +1,93 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh3 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s
+
+# A 64-byte outgoing area would push all local accesses beyond the longword
+# displacement range. Keeping the call adjustment is cheaper. The local must
+# still refer to the same object while SP is adjusted for outgoing arguments.
+# Conversely, repeated calls can amortize the cost of displaced local accesses.
+
+--- |
+  define i32 @keep_compact_local() optsize { ret i32 0 }
+  define i32 @reserve_for_repeated_calls() optsize { ret i32 0 }
+...
+---
+name: keep_compact_local
+tracksRegLiveness: true
+noVRegs: true
+frameInfo:
+  adjustsStack: true
+stack:
+  - { id: 0, type: default, size: 4, alignment: 4 }
+body: |
+  bb.0:
+    liveins: $r0
+    MOVL_store_disp $r0, %stack.0, 0 :: (volatile store (s32) into %stack.0)
+    MOVL_store_disp $r0, %stack.0, 0 :: (volatile store (s32) into %stack.0)
+    MOVL_store_disp $r0, %stack.0, 0 :: (volatile store (s32) into %stack.0)
+    MOVL_store_disp $r0, %stack.0, 0 :: (volatile store (s32) into %stack.0)
+    ADJCALLSTACKDOWN 64, 0, implicit-def dead $r15, implicit $r15
+    $r0 = MOVL_load_disp %stack.0, 0 :: (volatile load (s32) from %stack.0)
+    MOVL_store_disp $r0, $r15, 60
+    ADJCALLSTACKUP 64, 0, implicit-def dead $r15, implicit $r15
+    $r0 = MOVL_load_disp %stack.0, 0 :: (volatile load (s32) from %stack.0)
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            keep_compact_local
+# CHECK: stackSize:       8
+# CHECK: maxCallFrameSize: 64
+# CHECK-LABEL: body:
+# CHECK: $r15 = frame-setup ADDri $r15, -8
+# CHECK: MOVL_store_disp $r0, $r15, 4
+# CHECK-NEXT: MOVL_store_disp $r0, $r15, 4
+# CHECK-NEXT: MOVL_store_disp $r0, $r15, 4
+# CHECK-NEXT: MOVL_store_disp $r0, $r15, 4
+# CHECK-NEXT: $r15 = ADDri $r15, -64
+# CHECK-NEXT: CFI_INSTRUCTION adjust_cfa_offset 64
+# CHECK-NEXT: $r0 = MOVri 68
+# CHECK-NEXT: $r0 = MOVL_load_indexed $r15, implicit killed $r0
+# CHECK-NEXT: MOVL_store_disp $r0, $r15, 60
+# CHECK-NEXT: $r15 = ADDri $r15, 64
+# CHECK-NEXT: CFI_INSTRUCTION adjust_cfa_offset -64
+# CHECK-NEXT: $r0 = MOVL_load_disp $r15, 4
+# CHECK-NEXT: $r15 = frame-destroy ADDri $r15, 8
+
+---
+name: reserve_for_repeated_calls
+tracksRegLiveness: true
+noVRegs: true
+frameInfo:
+  adjustsStack: true
+stack:
+  - { id: 0, type: default, size: 4, alignment: 4 }
+body: |
+  bb.0:
+    liveins: $r0
+    MOVL_store_disp $r0, %stack.0, 0 :: (volatile store (s32) into %stack.0)
+    ADJCALLSTACKDOWN 64, 0, implicit-def dead $r15, implicit $r15
+    MOVL_store_disp $r0, $r15, 60
+    ADJCALLSTACKUP 64, 0, implicit-def dead $r15, implicit $r15
+    ADJCALLSTACKDOWN 64, 0, implicit-def dead $r15, implicit $r15
+    MOVL_store_disp $r0, $r15, 60
+    ADJCALLSTACKUP 64, 0, implicit-def dead $r15, implicit $r15
+    ADJCALLSTACKDOWN 64, 0, implicit-def dead $r15, implicit $r15
+    MOVL_store_disp $r0, $r15, 60
+    ADJCALLSTACKUP 64, 0, implicit-def dead $r15, implicit $r15
+    $r0 = MOVL_load_disp %stack.0, 0 :: (volatile load (s32) from %stack.0)
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            reserve_for_repeated_calls
+# CHECK: stackSize:       72
+# CHECK: maxCallFrameSize: 64
+# CHECK-LABEL: body:
+# CHECK: $r15 = frame-setup ADDri $r15, -72
+# CHECK: MOVL_store_reg $r0, killed ${{r[0-9]+}}
+# CHECK-NEXT: MOVL_store_disp $r0, $r15, 60
+# CHECK-NEXT: MOVL_store_disp $r0, $r15, 60
+# CHECK-NEXT: MOVL_store_disp $r0, $r15, 60
+# CHECK-NEXT: $r0 = MOVri 68
+# CHECK-NEXT: $r0 = MOVL_load_indexed $r15, implicit killed $r0
+# CHECK-NEXT: $r15 = frame-destroy ADDri $r15, 72

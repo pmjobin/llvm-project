@@ -1,0 +1,188 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=branch-relaxation %s -o %t-be.mir
+# RUN: FileCheck %s --check-prefix=MIR < %t-be.mir
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -start-after=branch-relaxation %t-be.mir -o - | FileCheck %s --check-prefix=ASM
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -start-after=branch-relaxation -filetype=obj %t-be.mir -o %t-be.o
+# RUN: llvm-readobj -r %t-be.o | FileCheck %s --check-prefix=RELOC
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=branch-relaxation %s -o %t-le.mir
+# RUN: FileCheck %s --check-prefix=MIR < %t-le.mir
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -start-after=branch-relaxation %t-le.mir -o - | FileCheck %s --check-prefix=ASM
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -start-after=branch-relaxation -filetype=obj %t-le.mir -o %t-le.o
+# RUN: llvm-readobj -r %t-le.o | FileCheck %s --check-prefix=RELOC
+
+# MIR-LABEL: name:            far_forward
+# MIR: BF %bb.1, implicit $tbit
+# MIR: CFI_INSTRUCTION remember_state
+# MIR: MOVL_store_reg killed $r0, $r15
+# MIR: dead $r0 = SH_REL16_BRANCH %bb.{{[0-9]+}}, 1
+# MIR: $r0 = MOVL_load_reg $r15
+# MIR-LABEL: name:            far_backward
+# MIR: $r0 = MOVL_load_reg $r15
+# MIR: BF %bb.{{[0-9]+}}, implicit $tbit
+# MIR: SH_REL16_BRANCH %bb.{{[0-9]+}}, 0
+# MIR: CFI_INSTRUCTION remember_state
+# MIR: MOVL_store_reg killed $r0, $r15
+# MIR: SH_REL16_BRANCH %bb.{{[0-9]+}}, 1
+# MIR-LABEL: name:            far_false_forward
+# MIR: BT %bb.1, implicit $tbit
+# MIR: SH_REL16_BRANCH %bb.{{[0-9]+}}, 0
+# MIR-LABEL: name:            far_forward_fp
+# MIR: BF %bb.1, implicit $tbit
+# MIR-NOT: CFI_INSTRUCTION
+# MIR: MOVL_store_reg killed $r0, $r15
+# MIR: dead $r0 = SH_REL16_BRANCH %bb.{{[0-9]+}}, 0
+# MIR: $r0 = MOVL_load_reg $r15
+# MIR-LABEL: name:            growth_convergence
+# MIR: SH_REL16_BRANCH
+# MIR: BF %bb.{{[0-9]+}}, implicit $tbit
+# MIR-NEXT: BRA %bb.{{[0-9]+}}
+
+# ASM-LABEL: far_forward:
+# ASM: bf	.LBB0_2
+# ASM: mov.w	[[LITERAL:.Lsh_relative_branch[0-9]+]],r0
+# ASM-NEXT: braf	r0
+# ASM-NEXT: nop
+# ASM: [[LITERAL]]:
+# ASM-NEXT: .short	.LBB0_3-[[LITERAL]]
+# ASM: mov.l	@r15,r0
+# ASM-LABEL: far_backward:
+# ASM-COUNT-2: braf	r0
+# ASM: .short	.LBB1_1-.Lsh_relative_branch{{[0-9]+}}
+# ASM-LABEL: far_false_forward:
+# ASM: bt	.LBB2_2
+# ASM: braf	r0
+# ASM-LABEL: growth_convergence:
+# ASM: braf	r0
+
+# RELOC-NOT: .rela.text
+# RELOC: .rela.eh_frame
+# RELOC-NOT: .rela.text
+
+--- |
+  define void @far_forward() { ret void }
+  define void @far_backward() { ret void }
+  define void @far_false_forward() { ret void }
+  define void @far_forward_fp() #0 { ret void }
+  define void @growth_convergence() { ret void }
+  attributes #0 = { "frame-pointer"="all" }
+...
+---
+name:            far_forward
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $r0, $r1, $r2, $r3, $r4, $r5, $r6, $r7, $r8, $r9, $r10, $r11, $r12, $r13, $r14
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.2, implicit $tbit
+
+  bb.1:
+    successors: %bb.2
+    liveins: $r0, $r1, $r2, $r3, $r4, $r5, $r6, $r7, $r8, $r9, $r10, $r11, $r12, $r13, $r14
+
+    INLINEASM &".space 5000", sideeffect attdialect
+    BRA %bb.2
+
+  bb.2:
+    liveins: $r0, $r1, $r2, $r3, $r4, $r5, $r6, $r7, $r8, $r9, $r10, $r11, $r12, $r13, $r14
+
+    RTS implicit $pr
+...
+---
+name:            far_backward
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1
+
+    BRA %bb.1
+
+  bb.1:
+    successors: %bb.2, %bb.3
+    liveins: $r0, $r1, $r2, $r3, $r4, $r5, $r6, $r7, $r8, $r9, $r10, $r11, $r12, $r13, $r14
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.3, implicit $tbit
+
+  bb.2:
+    successors: %bb.1
+    liveins: $r0, $r1, $r2, $r3, $r4, $r5, $r6, $r7, $r8, $r9, $r10, $r11, $r12, $r13, $r14
+
+    INLINEASM &".space 5000", sideeffect attdialect
+    BRA %bb.1
+
+  bb.3:
+    RTS implicit $pr
+...
+---
+name:            far_false_forward
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $r0
+
+    TST $r0, $r0, implicit-def $tbit
+    BF %bb.2, implicit $tbit
+
+  bb.1:
+    successors: %bb.2
+
+    INLINEASM &".space 5000", sideeffect attdialect
+    BRA %bb.2
+
+  bb.2:
+    RTS implicit $pr
+...
+---
+name:            far_forward_fp
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $r0, $r1, $r2, $r3, $r4, $r5, $r6, $r7, $r8, $r9, $r10, $r11, $r12, $r13, $r14
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.2, implicit $tbit
+
+  bb.1:
+    successors: %bb.2
+    liveins: $r0, $r1, $r2, $r3, $r4, $r5, $r6, $r7, $r8, $r9, $r10, $r11, $r12, $r13, $r14
+
+    INLINEASM &".space 5000", sideeffect attdialect
+    BRA %bb.2
+
+  bb.2:
+    liveins: $r0, $r1, $r2, $r3, $r4, $r5, $r6, $r7, $r8, $r9, $r10, $r11, $r12, $r13, $r14
+
+    RTS implicit $pr
+...
+---
+name:            growth_convergence
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.3
+
+    BRA %bb.3
+
+  bb.1:
+    successors: %bb.2, %bb.3
+    liveins: $r0
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.3, implicit $tbit
+
+  bb.2:
+    successors: %bb.3
+
+    INLINEASM &".space 4092", sideeffect attdialect
+
+  bb.3:
+    RTS implicit $pr
+...

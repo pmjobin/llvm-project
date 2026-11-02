@@ -1,0 +1,65 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh3 -verify-machineinstrs -run-pass=prolog-epilog %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=prolog-epilog %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o %t.mir
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -start-after=prolog-epilog -filetype=obj %t.mir -o /dev/null
+
+--- |
+  define void @far_long_store() optsize { ret void }
+  define void @far_byte_store() optsize { ret void }
+  define void @far_word_store() optsize { ret void }
+...
+---
+name:            far_long_store
+tracksRegLiveness: true
+noVRegs:         true
+fixedStack:
+  - { id: 0, type: default, offset: 1000, size: 4, alignment: 4 }
+body:             |
+  bb.0:
+    liveins: $r1
+
+    MOVL_store_disp $r1, %fixed-stack.0, 0 :: (store (s32) into %fixed-stack.0)
+    RTS implicit $pr
+...
+---
+name:            far_byte_store
+tracksRegLiveness: true
+noVRegs:         true
+fixedStack:
+  - { id: 0, type: default, offset: 1001, size: 1, alignment: 1 }
+body:             |
+  bb.0:
+    liveins: $r2
+
+    MOVB_store_frame $r2, %fixed-stack.0, 0, implicit-def dead early-clobber $r0 :: (store (s8) into %fixed-stack.0)
+    RTS implicit $pr
+...
+---
+name:            far_word_store
+tracksRegLiveness: true
+noVRegs:         true
+fixedStack:
+  - { id: 0, type: default, offset: 1002, size: 2, alignment: 2 }
+body:             |
+  bb.0:
+    liveins: $r3
+
+    MOVW_store_frame $r3, %fixed-stack.0, 0, implicit-def dead early-clobber $r0 :: (store (s16) into %fixed-stack.0)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            far_long_store
+# CHECK-LABEL: body:
+# CHECK: $r0 = MOVW_load_pc_island %const.{{[0-9]+}}, -1
+# CHECK-NEXT: MOVL_store_indexed $r1, $r15, implicit killed $r0
+
+# CHECK-LABEL: name:            far_byte_store
+# CHECK-LABEL: body:
+# CHECK: $r0 = MOVW_load_pc_island %const.{{[0-9]+}}, -1
+# CHECK-NEXT: MOVB_store_indexed $r2, $r15, implicit killed $r0
+
+# CHECK-LABEL: name:            far_word_store
+# CHECK-LABEL: body:
+# CHECK: $r0 = MOVW_load_pc_island %const.{{[0-9]+}}, -1
+# CHECK-NEXT: MOVW_store_indexed $r3, $r15, implicit killed $r0

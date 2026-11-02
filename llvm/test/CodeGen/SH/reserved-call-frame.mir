@@ -1,0 +1,74 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh3 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s
+
+# Reserving 32 outgoing bytes below a four-byte local needs a 36-byte frame.
+# The incoming argument stays at CFA+0 and the local at CFA-4, including inside
+# the smaller call sequence. Counting the outgoing area twice in the scavenger
+# estimate would unnecessarily allocate another slot at the 60-byte boundary.
+
+--- |
+  define i32 @reserved_calls() optsize { ret i32 0 }
+  define i32 @unreserved_speed() { ret i32 0 }
+...
+---
+name: reserved_calls
+tracksRegLiveness: true
+noVRegs: true
+frameInfo:
+  adjustsStack: true
+fixedStack:
+  - { id: 0, type: default, offset: 0, size: 4, alignment: 4, isImmutable: true }
+stack:
+  - { id: 0, type: default, size: 4, alignment: 4 }
+body: |
+  bb.0:
+    $r0 = MOVL_load_disp %fixed-stack.0, 0 :: (load (s32) from %fixed-stack.0)
+    MOVL_store_disp $r0, %stack.0, 0 :: (store (s32) into %stack.0)
+    ADJCALLSTACKDOWN 4, 0, implicit-def dead $r15, implicit $r15
+    $r0 = MOVL_load_disp %fixed-stack.0, 0 :: (load (s32) from %fixed-stack.0)
+    MOVL_store_disp $r0, $r15, 0
+    ADJCALLSTACKUP 4, 0, implicit-def dead $r15, implicit $r15
+    ADJCALLSTACKDOWN 32, 0, implicit-def dead $r15, implicit $r15
+    $r0 = MOVL_load_disp %stack.0, 0 :: (load (s32) from %stack.0)
+    MOVL_store_disp $r0, $r15, 28
+    ADJCALLSTACKUP 32, 0, implicit-def dead $r15, implicit $r15
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            reserved_calls
+# CHECK: stackSize:       36
+# CHECK: maxCallFrameSize: 32
+# CHECK-LABEL: body:
+# CHECK: $r15 = frame-setup ADDri $r15, -36
+# CHECK: $r0 = MOVL_load_disp $r15, 36
+# CHECK-NEXT: MOVL_store_disp $r0, $r15, 32
+# CHECK-NEXT: $r0 = MOVL_load_disp $r15, 36
+# CHECK-NEXT: MOVL_store_disp $r0, $r15, 0
+# CHECK-NEXT: $r0 = MOVL_load_disp $r15, 32
+# CHECK-NEXT: MOVL_store_disp $r0, $r15, 28
+# CHECK-NEXT: $r15 = frame-destroy ADDri $r15, 36
+
+---
+name: unreserved_speed
+tracksRegLiveness: true
+noVRegs: true
+frameInfo:
+  adjustsStack: true
+fixedStack:
+  - { id: 0, type: default, offset: 0, size: 4, alignment: 4, isImmutable: true }
+body: |
+  bb.0:
+    ADJCALLSTACKDOWN 8, 0, implicit-def dead $r15, implicit $r15
+    $r0 = MOVL_load_disp %fixed-stack.0, 0 :: (load (s32) from %fixed-stack.0)
+    ADJCALLSTACKUP 8, 0, implicit-def dead $r15, implicit $r15
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            unreserved_speed
+# CHECK: stackSize:       0
+# CHECK-LABEL: body:
+# CHECK: $r15 = ADDri $r15, -8
+# CHECK: $r0 = MOVL_load_disp $r15, 8
+# CHECK: $r15 = ADDri $r15, 8

@@ -1,0 +1,129 @@
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=machine-cp -mcp-use-is-copy-instr %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=machine-cp -mcp-use-is-copy-instr %s -o - | FileCheck %s
+
+# Native copy propagation uses SH's explicit renaming and encoding contracts.
+# Keep real output uses so elimination is justified by propagation, not by an
+# unobserved destination in a synthetic block.
+--- |
+  define i32 @volatile_load_result(ptr %p) { ret i32 0 }
+  define i32 @extension_input() { ret i32 0 }
+  define i32 @fixed_destination() { ret i32 0 }
+  define i32 @preserve_sp() { ret i32 0 }
+  define i32 @call_clobber() { ret i32 0 }
+  define i32 @implicit_effect() { ret i32 0 }
+  define void @narrow_roundtrip(ptr %p) { ret void }
+...
+---
+name: volatile_load_result
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r4, $pr
+    renamable $r1 = MOVL_load_reg $r4 :: (volatile load (s32) from %ir.p)
+    $r0 = MOVrr killed renamable $r1
+    RTS implicit $pr, implicit $r0
+...
+# CHECK-LABEL: name: volatile_load_result
+# CHECK: $r0 = MOVL_load_reg $r4 :: (volatile load (s32) from %ir.p)
+# CHECK-NEXT: RTS implicit $pr, implicit $r0
+
+---
+name: extension_input
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r4, $pr
+    renamable $r1 = MOVrr $r4
+    $r0 = EXTUB killed renamable $r1
+    RTS implicit $pr, implicit $r0
+...
+# CHECK-LABEL: name: extension_input
+# CHECK-NOT: MOVrr
+# CHECK: $r0 = EXTUB $r4
+# CHECK-NEXT: RTS implicit $pr, implicit $r0
+
+---
+name: fixed_destination
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r4, $pr
+    $r1 = MOVL_load_reg $r4
+    $r0 = MOVrr killed $r1
+    RTS implicit $pr, implicit $r0
+...
+# CHECK-LABEL: name: fixed_destination
+# CHECK: $r1 = MOVL_load_reg $r4
+# CHECK-NEXT: $r0 = MOVrr killed $r1
+# CHECK-NEXT: RTS implicit $pr, implicit $r0
+
+---
+name: preserve_sp
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r15, $pr
+    renamable $r1 = MOVrr $r15
+    $r0 = EXTUW killed renamable $r1
+    RTS implicit $pr, implicit $r0
+...
+# CHECK-LABEL: name: preserve_sp
+# CHECK: renamable $r1 = MOVrr $r15
+# CHECK-NEXT: $r0 = EXTUW killed renamable $r1
+# CHECK-NEXT: RTS implicit $pr, implicit $r0
+
+---
+name: call_clobber
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+    renamable $r8 = MOVrr $r0
+    JSR $r4, csr_sh, implicit-def $pr, implicit-def $r15
+    $r0 = EXTUB killed renamable $r8
+    RTS implicit $pr, implicit $r0
+...
+# CHECK-LABEL: name: call_clobber
+# CHECK: renamable $r8 = MOVrr $r0
+# CHECK-NEXT: JSR $r4, csr_sh
+# CHECK-NEXT: $r0 = EXTUB killed renamable $r8
+# CHECK-NEXT: RTS implicit $pr, implicit $r0
+
+---
+name: implicit_effect
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r4, $tbit, $pr
+    renamable $r1 = MOVrr $r4, implicit $tbit
+    $r0 = EXTUB killed renamable $r1
+    RTS implicit $pr, implicit $r0
+...
+# CHECK-LABEL: name: implicit_effect
+# CHECK: renamable $r1 = MOVrr $r4, implicit $tbit
+# CHECK-NEXT: $r0 = EXTUB killed renamable $r1
+# CHECK-NEXT: RTS implicit $pr, implicit $r0
+
+---
+name: narrow_roundtrip
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r4, $pr
+    $r0 = MOVB_load_disp $r4, 0 :: (volatile load (s8) from %ir.p)
+    renamable $r1 = MOVrr killed $r0
+    $r0 = MOVrr killed renamable $r1
+    MOVB_store_disp killed $r0, $r4, 2 :: (volatile store (s8) into %ir.p)
+    RTS implicit $pr
+...
+# CHECK-LABEL: name: narrow_roundtrip
+# CHECK: $r0 = MOVB_load_disp $r4, 0 :: (volatile load (s8) from %ir.p)
+# CHECK-NEXT: MOVB_store_disp killed $r0, $r4, 2 :: (volatile store (s8) into %ir.p)
+# CHECK-NEXT: RTS implicit $pr

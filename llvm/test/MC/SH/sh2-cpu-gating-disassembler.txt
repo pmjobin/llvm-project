@@ -1,0 +1,12 @@
+# RUN: split-file %s %t
+# RUN: llvm-mc -triple=sh-unknown-elf -mcpu=sh2 -disassemble %t/be.txt 2>&1 | FileCheck %s
+# RUN: llvm-mc -triple=shle-unknown-elf -mcpu=sh2 -disassemble %t/le.txt 2>&1 | FileCheck %s
+
+# CHECK-COUNT-5: warning: invalid instruction encoding
+
+#--- be.txt
+# SH2E fadd, SH3 ldc SSR, SH4/SH2A pref, DSP ldc MOD, SH2A ldc TBR.
+0xf2 0x10 0x41 0x3e 0x01 0x83 0x41 0x5e 0x41 0x4a
+
+#--- le.txt
+0x10 0xf2 0x3e 0x41 0x83 0x01 0x5e 0x41 0x4a 0x41

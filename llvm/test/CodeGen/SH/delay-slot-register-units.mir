@@ -1,0 +1,91 @@
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -O2 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh4 -O2 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s
+
+# A rejected FR0 definition must not hide the other half of a subsequently
+# recorded DR0 definition. Reverting only SH's LiveRegUnits integration moves
+# the first FR1 definition across the DR0 definition into the call's slot.
+# This exercises the production filler, independently of its helper unit test.
+# It is an isolated physical-dependency test, not a claim of frontend-generated
+# mixed-mode reachability: ordinary lowering scalarizes the double copy.
+
+--- |
+  define void @partial_before_whole() { ret void }
+  define void @whole_before_partial() { ret void }
+  define void @independent_pair() { ret void }
+...
+---
+name: partial_before_whole
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $dr2, $fr4, $fpscr
+
+    $fr1 = FLDI0 implicit $fpscr
+    $dr0 = FMOV_DR_DR $dr2, implicit $fpscr
+    $fr0 = FMOV_FR $fr4, implicit $fpscr
+    FLDS $fr0, implicit-def $fpul, implicit $fpscr
+    $r4 = STS_FPUL implicit $fpul
+    JSR $r4, csr_sh, implicit-def dead $pr, implicit-def $r15
+...
+
+# CHECK-LABEL: name: partial_before_whole
+# CHECK: $fr1 = FLDI0 implicit $fpscr
+# CHECK-NEXT: $dr0 = FMOV_DR_DR $dr2, implicit $fpscr
+# CHECK-NEXT: $fr0 = FMOV_FR $fr4, implicit $fpscr
+# CHECK-NEXT: FLDS $fr0, implicit-def $fpul, implicit $fpscr
+# CHECK-NEXT: $r4 = STS_FPUL implicit $fpul
+# CHECK-NEXT: JSR $r4, csr_sh, implicit-def dead $pr, implicit-def $r15 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name: whole_before_partial
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $dr2, $fr4, $fpscr
+
+    $fr1 = FLDI0 implicit $fpscr
+    $fr0 = FMOV_FR $fr4, implicit $fpscr
+    $dr0 = FMOV_DR_DR $dr2, implicit $fpscr
+    FLDS $fr0, implicit-def $fpul, implicit $fpscr
+    $r4 = STS_FPUL implicit $fpul
+    JSR $r4, csr_sh, implicit-def dead $pr, implicit-def $r15
+...
+
+# CHECK-LABEL: name: whole_before_partial
+# CHECK: $fr1 = FLDI0 implicit $fpscr
+# CHECK-NEXT: $fr0 = FMOV_FR $fr4, implicit $fpscr
+# CHECK-NEXT: $dr0 = FMOV_DR_DR $dr2, implicit $fpscr
+# CHECK-NEXT: FLDS $fr0, implicit-def $fpul, implicit $fpscr
+# CHECK-NEXT: $r4 = STS_FPUL implicit $fpul
+# CHECK-NEXT: JSR $r4, csr_sh, implicit-def dead $pr, implicit-def $r15 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name: independent_pair
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $dr2, $fr4, $fpscr
+
+    $fr5 = FLDI0 implicit $fpscr
+    $dr0 = FMOV_DR_DR $dr2, implicit $fpscr
+    $fr0 = FMOV_FR $fr4, implicit $fpscr
+    FLDS $fr0, implicit-def $fpul, implicit $fpscr
+    $r4 = STS_FPUL implicit $fpul
+    JSR $r4, csr_sh, implicit-def dead $pr, implicit-def $r15
+...
+
+# CHECK-LABEL: name: independent_pair
+# CHECK: $dr0 = FMOV_DR_DR $dr2, implicit $fpscr
+# CHECK-NEXT: $fr0 = FMOV_FR $fr4, implicit $fpscr
+# CHECK-NEXT: FLDS $fr0, implicit-def $fpul, implicit $fpscr
+# CHECK-NEXT: $r4 = STS_FPUL implicit $fpul
+# CHECK-NEXT: JSR $r4, csr_sh, implicit-def dead $pr, implicit-def $r15 {
+# CHECK-NEXT: $fr5 = FLDI0 implicit $fpscr
+# CHECK-NEXT: }

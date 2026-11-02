@@ -1485,6 +1485,88 @@ TEST(TripleTest, ParsedIDs) {
   EXPECT_EQ(Triple::ChipStar, T.getOS());
 }
 
+TEST(TripleTest, SuperH) {
+  Triple Big("sh-unknown-elf");
+  EXPECT_EQ(Triple::sh, Big.getArch());
+  EXPECT_EQ("sh", Big.getArchName());
+  EXPECT_EQ("sh", Triple::getArchTypeName(Big.getArch()));
+  EXPECT_EQ(Triple::sh, Triple::getArchTypeForLLVMName("sh"));
+  EXPECT_EQ("sh", Triple::getArchTypePrefix(Big.getArch()));
+  EXPECT_TRUE(Big.isArch32Bit());
+  EXPECT_FALSE(Big.isArch64Bit());
+  EXPECT_EQ(32U, Big.getArchPointerBitWidth());
+  EXPECT_FALSE(Big.isLittleEndian());
+  EXPECT_EQ(Triple::ELF, Big.getObjectFormat());
+
+  Triple Little("shle-unknown-elf");
+  EXPECT_EQ(Triple::shle, Little.getArch());
+  EXPECT_EQ("shle", Little.getArchName());
+  EXPECT_EQ("shle", Triple::getArchTypeName(Little.getArch()));
+  EXPECT_EQ(Triple::shle, Triple::getArchTypeForLLVMName("shle"));
+  EXPECT_EQ("sh", Triple::getArchTypePrefix(Little.getArch()));
+  EXPECT_TRUE(Little.isArch32Bit());
+  EXPECT_FALSE(Little.isArch64Bit());
+  EXPECT_EQ(32U, Little.getArchPointerBitWidth());
+  EXPECT_TRUE(Little.isLittleEndian());
+  EXPECT_EQ(Triple::ELF, Little.getObjectFormat());
+
+  EXPECT_EQ(Triple::sh, Big.get32BitArchVariant().getArch());
+  EXPECT_EQ(Triple::UnknownArch, Big.get64BitArchVariant().getArch());
+  EXPECT_EQ(Triple::shle, Little.get32BitArchVariant().getArch());
+  EXPECT_EQ(Triple::UnknownArch, Little.get64BitArchVariant().getArch());
+
+  EXPECT_EQ(Triple::sh, Big.getBigEndianArchVariant().getArch());
+  EXPECT_EQ(Triple::shle, Big.getLittleEndianArchVariant().getArch());
+  EXPECT_EQ(Triple::sh, Little.getBigEndianArchVariant().getArch());
+  EXPECT_EQ(Triple::shle, Little.getLittleEndianArchVariant().getArch());
+
+  EXPECT_EQ(Triple::sh, Triple("shbe-unknown-elf").getArch());
+  EXPECT_EQ(Triple::sh, Triple("sheb-unknown-elf").getArch());
+  EXPECT_EQ(Triple::shle, Triple("shl-unknown-elf").getArch());
+  EXPECT_EQ("sh-unknown-unknown-elf", Triple::normalize("sh-unknown-elf"));
+  EXPECT_EQ("shle-unknown-unknown-elf", Triple::normalize("shle-unknown-elf"));
+  EXPECT_EQ("shbe-unknown-unknown-elf", Triple::normalize("shbe-unknown-elf"));
+  EXPECT_EQ("sheb-unknown-unknown-elf", Triple::normalize("sheb-unknown-elf"));
+  EXPECT_EQ("shl-unknown-unknown-elf", Triple::normalize("shl-unknown-elf"));
+
+  Triple FDPICLittle(Triple::normalize("sh2-linux-muslfdpic"));
+  EXPECT_EQ(Triple::shle, FDPICLittle.getArch());
+  EXPECT_EQ("sh2", FDPICLittle.getArchName());
+  EXPECT_EQ(Triple::Linux, FDPICLittle.getOS());
+  EXPECT_EQ(Triple::MuslFDPIC, FDPICLittle.getEnvironment());
+  EXPECT_TRUE(FDPICLittle.isMuslFDPIC());
+  EXPECT_EQ("sh2-unknown-linux-muslfdpic", FDPICLittle.str());
+
+  Triple FDPICBig(Triple::normalize("sh2eb-linux-muslfdpic"));
+  EXPECT_EQ(Triple::sh, FDPICBig.getArch());
+  EXPECT_EQ("sh2eb", FDPICBig.getArchName());
+  EXPECT_EQ(Triple::Linux, FDPICBig.getOS());
+  EXPECT_EQ(Triple::MuslFDPIC, FDPICBig.getEnvironment());
+  EXPECT_TRUE(FDPICBig.isMuslFDPIC());
+  EXPECT_EQ("sh2eb-unknown-linux-muslfdpic", FDPICBig.str());
+
+  Triple CanonicalFDPICLittle(Triple::shle, Triple::NoSubArch,
+                              Triple::UnknownVendor, Triple::Linux,
+                              Triple::MuslFDPIC);
+  EXPECT_EQ("shle-unknown-linux-muslfdpic", CanonicalFDPICLittle.str());
+  Triple ReconstructedFDPICLittle(CanonicalFDPICLittle.str());
+  EXPECT_EQ(Triple::shle, ReconstructedFDPICLittle.getArch());
+  EXPECT_TRUE(ReconstructedFDPICLittle.isMuslFDPIC());
+
+  Triple CanonicalFDPICBig(Triple::sh, Triple::NoSubArch, Triple::UnknownVendor,
+                           Triple::Linux, Triple::MuslFDPIC);
+  EXPECT_EQ("sh-unknown-linux-muslfdpic", CanonicalFDPICBig.str());
+  Triple ReconstructedFDPICBig(CanonicalFDPICBig.str());
+  EXPECT_EQ(Triple::sh, ReconstructedFDPICBig.getArch());
+  EXPECT_TRUE(ReconstructedFDPICBig.isMuslFDPIC());
+
+  EXPECT_EQ(Triple::UnknownArch, Triple("shel-unknown-elf").getArch());
+  EXPECT_EQ("E-m:e-p:32:32-i64:32:32-f64:32:32-a:0:32-n32-S32",
+            Big.computeDataLayout(""));
+  EXPECT_EQ("e-m:e-p:32:32-i64:32:32-f64:32:32-a:0:32-n32-S32",
+            Little.computeDataLayout(""));
+}
+
 TEST(TripleTest, EnumConstructor) {
   {
     Triple T(Triple::amdgpu, Triple::NoSubArch, Triple::AMD, Triple::AMDHSA);
@@ -1676,6 +1758,8 @@ TEST(TripleTest, DefaultFloatABI) {
             Triple("csky-unknown-linux-gnu").getDefaultFloatABI());
   EXPECT_EQ(FloatABI::Soft,
             Triple("msp430-unknown-unknown").getDefaultFloatABI());
+  EXPECT_EQ(FloatABI::Soft,
+            Triple("shle-unknown-linux-gnu").getDefaultFloatABI());
 
   // Targets without a special case default to hard float.
   EXPECT_EQ(FloatABI::Hard,

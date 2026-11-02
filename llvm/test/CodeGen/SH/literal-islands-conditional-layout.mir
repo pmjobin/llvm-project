@@ -1,0 +1,274 @@
+# RUN: llc -mtriple=sh-unknown-elf -run-pass=sh-literal-islands -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -run-pass=sh-literal-islands -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -run-pass=sh-literal-islands,branch-relaxation,sh-delay-slot-filler,sh-literal-pool-range-check -verify-machineinstrs %s -o /dev/null
+# RUN: llc -mtriple=shle-unknown-elf -run-pass=sh-literal-islands,branch-relaxation,sh-delay-slot-filler,sh-literal-pool-range-check -verify-machineinstrs %s -o /dev/null
+
+# Each conditional target is nearby and remains in its signed eight-bit range.
+# Count those branches at their encoded size so both loads can share one entry.
+# The second function similarly uses exact padding between aligned blocks; its
+# 16-byte blocks require no repeated worst-case padding after the first one.
+
+# CHECK-LABEL: name: conditional_layout
+# CHECK-COUNT-2: MOVL_load_pc_island %const.0, 0
+# CHECK-COUNT-1: SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+
+# CHECK-LABEL: name: aligned_layout
+# CHECK-COUNT-2: MOVL_load_pc_island %const.0, 0
+# CHECK-COUNT-1: SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+
+--- |
+  define i32 @conditional_layout() {
+    ret i32 0
+  }
+
+  define i32 @aligned_layout() {
+    ret i32 0
+  }
+...
+---
+name: conditional_layout
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+constants:
+  - id: 0
+    value: 'i32 42'
+    alignment: 4
+body: |
+  bb.0:
+    successors: %bb.1
+    liveins: $pr
+
+    $r0 = MOVL_load_pc_island %const.0, -1 :: (dereferenceable invariant load (s32) from constant-pool)
+    INLINEASM &".space 860", sideeffect attdialect
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.1, implicit $tbit
+
+  bb.1:
+    successors: %bb.2
+    liveins: $r0, $pr
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.2, implicit $tbit
+
+  bb.2:
+    successors: %bb.3
+    liveins: $r0, $pr
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.3, implicit $tbit
+
+  bb.3:
+    successors: %bb.4
+    liveins: $r0, $pr
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.4, implicit $tbit
+
+  bb.4:
+    successors: %bb.5
+    liveins: $r0, $pr
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.5, implicit $tbit
+
+  bb.5:
+    successors: %bb.6
+    liveins: $r0, $pr
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.6, implicit $tbit
+
+  bb.6:
+    successors: %bb.7
+    liveins: $r0, $pr
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.7, implicit $tbit
+
+  bb.7:
+    successors: %bb.8
+    liveins: $r0, $pr
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.8, implicit $tbit
+
+  bb.8:
+    successors: %bb.9
+    liveins: $r0, $pr
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.9, implicit $tbit
+
+  bb.9:
+    successors: %bb.10
+    liveins: $r0, $pr
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.10, implicit $tbit
+
+  bb.10:
+    successors: %bb.11
+    liveins: $r0, $pr
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.11, implicit $tbit
+
+  bb.11:
+    successors: %bb.12
+    liveins: $r0, $pr
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.12, implicit $tbit
+
+  bb.12:
+    successors: %bb.13
+    liveins: $r0, $pr
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.13, implicit $tbit
+
+  bb.13:
+    successors: %bb.14
+    liveins: $r0, $pr
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.14, implicit $tbit
+
+  bb.14:
+    successors: %bb.15
+    liveins: $r0, $pr
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.15, implicit $tbit
+
+  bb.15:
+    successors: %bb.16
+    liveins: $r0, $pr
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.16, implicit $tbit
+
+  bb.16:
+    successors: %bb.17
+    liveins: $r0, $pr
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.17, implicit $tbit
+
+  bb.17:
+    successors: %bb.18
+    liveins: $r0, $pr
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.18, implicit $tbit
+
+  bb.18:
+    successors: %bb.19
+    liveins: $r0, $pr
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.19, implicit $tbit
+
+  bb.19:
+    successors: %bb.20
+    liveins: $r0, $pr
+
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.20, implicit $tbit
+
+  bb.20:
+    liveins: $r0, $pr
+
+    $r1 = MOVL_load_pc_island %const.0, -1 :: (dereferenceable invariant load (s32) from constant-pool)
+    RTS implicit $pr, implicit $r0, implicit $r1
+...
+---
+name: aligned_layout
+alignment: 16
+tracksRegLiveness: true
+noVRegs: true
+constants:
+  - id: 0
+    value: 'i32 42'
+    alignment: 4
+body: |
+  bb.0:
+    successors: %bb.1
+    liveins: $pr
+
+    $r0 = MOVL_load_pc_island %const.0, -1 :: (dereferenceable invariant load (s32) from constant-pool)
+    INLINEASM &".space 800", sideeffect attdialect
+    BRA %bb.1 {
+      NOP
+    }
+
+  bb.1 (align 16):
+    successors: %bb.2
+    liveins: $r0, $pr
+
+    INLINEASM &".space 12", sideeffect attdialect
+    BRA %bb.2 {
+      NOP
+    }
+
+  bb.2 (align 16):
+    successors: %bb.3
+    liveins: $r0, $pr
+
+    INLINEASM &".space 12", sideeffect attdialect
+    BRA %bb.3 {
+      NOP
+    }
+
+  bb.3 (align 16):
+    successors: %bb.4
+    liveins: $r0, $pr
+
+    INLINEASM &".space 12", sideeffect attdialect
+    BRA %bb.4 {
+      NOP
+    }
+
+  bb.4 (align 16):
+    successors: %bb.5
+    liveins: $r0, $pr
+
+    INLINEASM &".space 12", sideeffect attdialect
+    BRA %bb.5 {
+      NOP
+    }
+
+  bb.5 (align 16):
+    successors: %bb.6
+    liveins: $r0, $pr
+
+    INLINEASM &".space 12", sideeffect attdialect
+    BRA %bb.6 {
+      NOP
+    }
+
+  bb.6 (align 16):
+    successors: %bb.7
+    liveins: $r0, $pr
+
+    INLINEASM &".space 12", sideeffect attdialect
+    BRA %bb.7 {
+      NOP
+    }
+
+  bb.7 (align 16):
+    successors: %bb.8
+    liveins: $r0, $pr
+
+    INLINEASM &".space 12", sideeffect attdialect
+    BRA %bb.8 {
+      NOP
+    }
+
+  bb.8 (align 16):
+    liveins: $r0, $pr
+
+    $r1 = MOVL_load_pc_island %const.0, -1 :: (dereferenceable invariant load (s32) from constant-pool)
+    RTS implicit $pr, implicit $r0, implicit $r1
+...

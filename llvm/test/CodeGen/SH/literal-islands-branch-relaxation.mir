@@ -1,0 +1,50 @@
+# RUN: llc -mtriple=sh-unknown-linux-gnu -mcpu=sh2 -verify-machineinstrs -run-pass=sh-literal-islands,branch-relaxation,sh-delay-slot-filler,sh-literal-pool-range-check %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-linux-gnu -mcpu=sh2 -verify-machineinstrs -run-pass=sh-literal-islands,branch-relaxation,sh-delay-slot-filler,sh-literal-pool-range-check %s -o /dev/null
+
+# Branch relaxation can grow a branch between a literal use and the island by
+# replacing it with an indirect sequence, potentially including saved
+# registers and a 32-bit target. The island placement layout must reserve that
+# growth or the final literal load can exceed 1020 bytes.
+
+# CHECK-LABEL: name:            literal_branch_growth
+# CHECK: $r0 = MOVL_load_pc_island %const.0, 0
+# CHECK: SH_REL16_BRANCH
+# CHECK: SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+
+--- |
+  @global = external global i32
+
+  define i32 @literal_branch_growth() {
+    ret i32 0
+  }
+...
+---
+name:            literal_branch_growth
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 ptrtoint (ptr @global to i32)'
+    alignment:   4
+body:             |
+  bb.0:
+    successors: %bb.3
+    liveins: $pr
+
+    $r0 = MOVL_load_pc_island %const.0, -1 :: (dereferenceable invariant load (s32) from constant-pool)
+    BRA %bb.3
+
+  bb.1:
+    INLINEASM &".space 1000", sideeffect attdialect
+    RTS implicit $pr
+
+  bb.2:
+    INLINEASM &".space 5000", sideeffect attdialect
+    RTS implicit $pr
+
+  bb.3:
+    liveins: $r0, $pr
+
+    RTS implicit $pr, implicit $r0
+...

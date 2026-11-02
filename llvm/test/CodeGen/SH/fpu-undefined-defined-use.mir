@@ -1,0 +1,19 @@
+# RUN: not --crash llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -run-pass=machineverifier %s -o /dev/null 2>&1 | FileCheck %s
+
+# A required defined input is still a verifier error. No imaginary FPU live-in
+# or blanket undef rule is introduced by transport expansion.
+# CHECK: Bad machine code: Using an undefined physical register
+# CHECK: instruction: FLDS $fr0
+
+---
+name: uninitialized_defined_input
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr
+
+    FLDS $fr0, implicit-def $fpul, implicit $fpscr
+    $r0 = STS_FPUL implicit $fpul
+    RTS implicit $pr, implicit $r0
+...

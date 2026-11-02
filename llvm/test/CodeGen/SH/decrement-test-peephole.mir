@@ -1,0 +1,88 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -run-pass=peephole-opt -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh1 -run-pass=peephole-opt -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=SH1
+
+--- |
+  define i32 @decrement_test(i32 %value) {
+    ret i32 %value
+  }
+
+  define i32 @t_clobber(i32 %value) {
+    ret i32 %value
+  }
+
+  define i32 @different_decrement(i32 %value) {
+    ret i32 %value
+  }
+...
+---
+name:            decrement_test
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    successors: %bb.0(0x40000000), %bb.1(0x40000000)
+    liveins: $r4
+
+    %0:gpr = COPY $r4
+    %1:gpr = ADDri %0, -1
+    TST %1, %1, implicit-def $tbit
+    BF %bb.0, implicit $tbit
+
+  bb.1:
+    $r0 = COPY %1
+    RTS implicit $pr, implicit $r0
+...
+---
+name:            t_clobber
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    successors: %bb.0(0x40000000), %bb.1(0x40000000)
+    liveins: $r4
+
+    %0:gpr = COPY $r4
+    %1:gpr = ADDri %0, -1
+    CMP_EQ %0, %0, implicit-def $tbit
+    TST %1, %1, implicit-def $tbit
+    BF %bb.0, implicit $tbit
+
+  bb.1:
+    $r0 = COPY %1
+    RTS implicit $pr, implicit $r0
+...
+---
+name:            different_decrement
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    successors: %bb.0(0x40000000), %bb.1(0x40000000)
+    liveins: $r4
+
+    %0:gpr = COPY $r4
+    %1:gpr = ADDri %0, -2
+    TST %1, %1, implicit-def $tbit
+    BF %bb.0, implicit $tbit
+
+  bb.1:
+    $r0 = COPY %1
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            decrement_test
+# CHECK: %1:gpr = DT %0, implicit-def $tbit
+# CHECK-NEXT: BF %bb.0, implicit $tbit
+# CHECK-NOT: TST
+
+# CHECK-LABEL: name:            t_clobber
+# CHECK: %1:gpr = ADDri %0, -1
+# CHECK-NEXT: CMP_EQ %0, %0, implicit-def $tbit
+# CHECK-NEXT: TST %1, %1, implicit-def $tbit
+
+# CHECK-LABEL: name:            different_decrement
+# CHECK: %1:gpr = ADDri %0, -2
+# CHECK-NEXT: TST %1, %1, implicit-def $tbit
+
+# SH1-LABEL: name:            decrement_test
+# SH1: %1:gpr = ADDri %0, -1
+# SH1-NEXT: TST %1, %1, implicit-def $tbit
+# SH1-NEXT: BF %bb.0, implicit $tbit
+# SH1-NOT: DT

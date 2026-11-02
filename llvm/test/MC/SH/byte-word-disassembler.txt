@@ -1,0 +1,28 @@
+# RUN: llvm-mc -triple=sh-unknown-elf -disassemble %s | FileCheck %s
+
+[0x24,0x50,0x24,0x51,0x64,0x50,0x64,0x51]
+[0x80,0x43,0x81,0x43,0x84,0x43,0x85,0x43]
+[0x80,0x40,0x80,0x4f,0x81,0x40,0x81,0x4f]
+[0x84,0x40,0x84,0x4f,0x85,0x40,0x85,0x4f]
+[0x64,0x5c,0x64,0x5d,0x64,0x5e,0x64,0x5f]
+
+# CHECK: mov.b	r5,@r4
+# CHECK-NEXT: mov.w	r5,@r4
+# CHECK-NEXT: mov.b	@r5,r4
+# CHECK-NEXT: mov.w	@r5,r4
+# CHECK-NEXT: mov.b	r0,@(3,r4)
+# CHECK-NEXT: mov.w	r0,@(6,r4)
+# CHECK-NEXT: mov.b	@(3,r4),r0
+# CHECK-NEXT: mov.w	@(6,r4),r0
+# CHECK-NEXT: mov.b	r0,@(0,r4)
+# CHECK-NEXT: mov.b	r0,@(15,r4)
+# CHECK-NEXT: mov.w	r0,@(0,r4)
+# CHECK-NEXT: mov.w	r0,@(30,r4)
+# CHECK-NEXT: mov.b	@(0,r4),r0
+# CHECK-NEXT: mov.b	@(15,r4),r0
+# CHECK-NEXT: mov.w	@(0,r4),r0
+# CHECK-NEXT: mov.w	@(30,r4),r0
+# CHECK-NEXT: extu.b	r5,r4
+# CHECK-NEXT: extu.w	r5,r4
+# CHECK-NEXT: exts.b	r5,r4
+# CHECK-NEXT: exts.w	r5,r4

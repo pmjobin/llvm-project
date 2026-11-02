@@ -1,0 +1,109 @@
+# RUN: split-file %s %t
+# RUN: not llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check %t/missing-mova.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=MISSING-MOVA
+# RUN: not llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check %t/mismatched-base.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=MISMATCHED-BASE
+# RUN: not llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check %t/out-of-range.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=OUT-OF-RANGE
+
+# MISSING-MOVA: LLVM ERROR: SH literal island validation failed: function missing_mova, inline jump-table dispatch has no matching MOVA
+# MISMATCHED-BASE: LLVM ERROR: SH literal island validation failed: function mismatched_base, inline jump-table BRAF has no matching table
+# OUT-OF-RANGE: LLVM ERROR: SH literal island validation failed: function out_of_range, 16-bit inline jump-table entry is out of range
+
+#--- missing-mova.mir
+--- |
+  define void @missing_mova() { ret void }
+...
+---
+name:            missing_mova
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+jumpTable:
+  kind:            inline
+  entries:
+    - id:              0
+      blocks:          [ '%bb.2' ]
+body:             |
+  bb.0:
+    successors: %bb.2
+    liveins: $r0, $r4
+
+    $r4 = SHLL killed $r4, implicit-def dead $tbit
+    $r1 = MOVW_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s16) from jump-table, align 4)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lmissing_mova_base>
+
+  bb.1 (align 4):
+    successors:
+
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lmissing_mova_table>, <mcsymbol .Lmissing_mova_base>, 2
+
+  bb.2:
+    RTS implicit $pr
+...
+
+#--- mismatched-base.mir
+--- |
+  define void @mismatched_base() { ret void }
+...
+---
+name:            mismatched_base
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+jumpTable:
+  kind:            inline
+  entries:
+    - id:              0
+      blocks:          [ '%bb.2' ]
+body:             |
+  bb.0:
+    successors: %bb.2
+    liveins: $r4
+
+    $r0 = MOVA <mcsymbol .Lmismatched_base_table>
+    $r4 = SHLL killed $r4, implicit-def dead $tbit
+    $r1 = MOVW_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s16) from jump-table, align 4)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lwrong_base>
+
+  bb.1 (align 4):
+    successors:
+
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lmismatched_base_table>, <mcsymbol .Lmismatched_base_base>, 2
+
+  bb.2:
+    RTS implicit $pr
+...
+
+#--- out-of-range.mir
+--- |
+  define void @out_of_range() { ret void }
+...
+---
+name:            out_of_range
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+jumpTable:
+  kind:            inline
+  entries:
+    - id:              0
+      blocks:          [ '%bb.3' ]
+body:             |
+  bb.0:
+    successors: %bb.3
+    liveins: $r4
+
+    $r0 = MOVA <mcsymbol .Lout_of_range_table>
+    $r4 = SHLL killed $r4, implicit-def dead $tbit
+    $r1 = MOVW_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s16) from jump-table, align 4)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lout_of_range_base>
+
+  bb.1 (align 4):
+    successors:
+
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lout_of_range_table>, <mcsymbol .Lout_of_range_base>, 2
+
+  bb.2:
+    INLINEASM &".space 32768", sideeffect attdialect
+
+  bb.3:
+    RTS implicit $pr
+...

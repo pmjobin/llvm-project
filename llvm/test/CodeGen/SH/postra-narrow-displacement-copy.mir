@@ -1,0 +1,65 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-postra-peephole %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=sh-postra-peephole %s -o - | FileCheck %s
+
+--- |
+  define void @fold_byte_load_copy(ptr %p) { ret void }
+  define void @fold_word_load_copy_to_base(ptr %p) { ret void }
+  define void @keep_live_r0_address(ptr %p) { ret void }
+...
+---
+name:            fold_byte_load_copy
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r1
+
+    $r0 = MOVrr killed $r1
+    $r0 = ADDri $r0, 15
+    dead $r4 = MOVB_load_reg killed $r0 :: (load (s8) from %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            fold_byte_load_copy
+# CHECK-NOT: ADDri
+# CHECK: $r0 = MOVB_load_disp killed $r1, 15 :: (load (s8) from %ir.p)
+# CHECK-NEXT: dead $r4 = MOVrr killed $r0
+
+---
+name:            fold_word_load_copy_to_base
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r2
+
+    $r0 = MOVrr killed $r2
+    $r0 = ADDri $r0, 30
+    dead $r2 = MOVW_load_reg killed $r0 :: (load (s16) from %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            fold_word_load_copy_to_base
+# CHECK-NOT: ADDri
+# CHECK: $r0 = MOVW_load_disp killed $r2, 30 :: (load (s16) from %ir.p)
+# CHECK-NEXT: dead $r2 = MOVrr killed $r0
+
+---
+name:            keep_live_r0_address
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r1
+
+    $r0 = MOVrr killed $r1
+    $r0 = ADDri $r0, 4
+    $r2 = MOVB_load_reg $r0 :: (load (s8) from %ir.p)
+    $r3 = MOVrr killed $r0
+    RTS implicit $pr, implicit $r2, implicit $r3
+...
+
+# CHECK-LABEL: name:            keep_live_r0_address
+# CHECK: $r0 = MOVrr killed $r1
+# CHECK-NEXT: $r0 = ADDri $r0, 4
+# CHECK-NEXT: $r2 = MOVB_load_reg $r0

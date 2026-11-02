@@ -9,6 +9,7 @@ set(LLVM_LINK_COMPONENTS
   BinaryFormat
   DebugInfoDWARF
   MC
+  MCParser
   MCDisassembler
   Object
   Support
@@ -22,6 +23,7 @@ add_llvm_unittest(MCTests
   DwarfLineTableHeaders.cpp
   DXContainerWriterTest.cpp
   MCInstPrinter.cpp
+  MCAsmParserTest.cpp
   StringTableBuilderTest.cpp
   TargetRegistry.cpp
   MCDisassemblerTest.cpp

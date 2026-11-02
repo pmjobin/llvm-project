@@ -1,0 +1,91 @@
+# RUN: llc -mtriple=sh-unknown-none-elf -mcpu=sh4 -run-pass=post-ra-pseudos -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -run-pass=post-ra-pseudos -verify-machineinstrs %s -o - | FileCheck %s
+
+--- |
+  define void @equal_first_kill() {
+    ret void
+  }
+
+  define void @equal_second_kill() {
+    ret void
+  }
+
+  define void @equal_no_kill() {
+    ret void
+  }
+
+  define void @distinct_sources() {
+    ret void
+  }
+...
+---
+name:            equal_first_kill
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r2, $fpscr, $pr
+
+    $dr0 = GPR_PAIR_TO_DR_PSEUDO killed $r2, $r2, implicit-def dead $fpul, implicit $fpscr
+    RTS implicit $pr
+...
+---
+name:            equal_second_kill
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r2, $fpscr, $pr
+
+    $dr0 = GPR_PAIR_TO_DR_PSEUDO $r2, killed $r2, implicit-def dead $fpul, implicit $fpscr
+    RTS implicit $pr
+...
+---
+name:            equal_no_kill
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r2, $fpscr, $pr
+
+    $dr0 = GPR_PAIR_TO_DR_PSEUDO $r2, $r2, implicit-def dead $fpul, implicit $fpscr
+    RTS implicit $pr
+...
+---
+name:            distinct_sources
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r2, $r3, $fpscr, $pr
+
+    $dr0 = GPR_PAIR_TO_DR_PSEUDO killed $r2, killed $r3, implicit-def dead $fpul, implicit $fpscr
+    RTS implicit $pr
+...
+
+# Equal sources load FPUL once, and a kill on either pseudo operand is retained
+# on that single physical use.
+# CHECK-LABEL: name:            equal_first_kill
+# CHECK: LDS_FPUL killed $r2
+# CHECK-NEXT: $fr0 = FSTS
+# CHECK-NEXT: $fr1 = FSTS
+# CHECK-NOT: LDS_FPUL
+
+# CHECK-LABEL: name:            equal_second_kill
+# CHECK: LDS_FPUL killed $r2
+# CHECK-NEXT: $fr0 = FSTS
+# CHECK-NEXT: $fr1 = FSTS
+# CHECK-NOT: LDS_FPUL
+
+# CHECK-LABEL: name:            equal_no_kill
+# CHECK: LDS_FPUL $r2
+# CHECK-NEXT: $fr0 = FSTS
+# CHECK-NEXT: $fr1 = FSTS
+# CHECK-NOT: LDS_FPUL
+
+# Distinct sources still require independent FPUL loads and kills.
+# CHECK-LABEL: name:            distinct_sources
+# CHECK: LDS_FPUL killed $r2
+# CHECK-NEXT: $fr0 = FSTS
+# CHECK-NEXT: LDS_FPUL killed $r3
+# CHECK-NEXT: $fr1 = FSTS

@@ -1,0 +1,61 @@
+# RUN: llc -mtriple=sh-unknown-none-elf -mcpu=sh4 -run-pass=sh-fpu-state -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -run-pass=sh-fpu-state -verify-machineinstrs %s -o - | FileCheck %s
+
+# CHECK-LABEL: name: fpu_state_foundation
+# CHECK: SET_FPSCR_MODE 1
+# CHECK-NEXT: $fr0 = FADD_FR $fr0, $fr1
+# CHECK-NEXT: $fr0 = FMUL_FR $fr0, $fr2
+# CHECK-NEXT: TRANSITION_FPSCR_MODE 3, 8
+# CHECK-NEXT: $dr0 = FADD_DR $dr0, $dr2
+# CHECK-NEXT: TRANSITION_FPSCR_MODE 1, 8
+# CHECK-NEXT: $fr0 = FSUB_FR $fr0, $fr3
+
+--- |
+  define void @fpu_state_foundation() {
+    ret void
+  }
+  define void @scalar_move_mode() {
+    ret void
+  }
+...
+---
+name:            fpu_state_foundation
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $fr0, $fr1, $fr2, $fr3, $dr0, $dr2, $pr
+
+    $fr0 = FADD_FR $fr0, $fr1, implicit-def $fpscr, implicit $fpscr
+    $fr0 = FMUL_FR $fr0, $fr2, implicit-def $fpscr, implicit $fpscr
+    $dr0 = FADD_DR $dr0, $dr2, implicit-def $fpscr, implicit $fpscr
+    $fr0 = FSUB_FR $fr0, $fr3, implicit-def $fpscr, implicit $fpscr
+    RTS implicit $pr
+...
+
+# Scalar spill transfers require SZ=0 but preserve PR=1 for surrounding
+# double arithmetic.
+
+# CHECK-LABEL: name: scalar_move_mode
+# CHECK: SET_FPSCR_MODE 2
+# CHECK-NEXT: $dr0 = FADD_DR $dr0, $dr2
+# CHECK-NEXT: TRANSITION_FPSCR_MODE 3, 16
+# CHECK-NEXT: FMOV_D_STORE_FI $dr0
+# CHECK-NEXT: $dr0 = FADD_DR $dr0, $dr2
+
+---
+name:            scalar_move_mode
+tracksRegLiveness: true
+noVRegs:         true
+fixedStack:
+  - { id: 0, type: spill-slot, offset: -8, size: 8, alignment: 4 }
+body:             |
+  bb.0:
+    liveins: $dr0, $dr2, $pr
+
+    SET_FPSCR_MODE 2, implicit-def dead $r0, implicit-def dead $r1, implicit-def $fpscr, implicit $fpscr
+    $dr0 = FADD_DR $dr0, $dr2, implicit-def $fpscr, implicit $fpscr
+    FMOV_D_STORE_FI $dr0, %fixed-stack.0, 0, implicit $fpscr :: (store (s64) into %fixed-stack.0, align 4)
+    $dr0 = FADD_DR $dr0, $dr2, implicit-def $fpscr, implicit $fpscr
+    RTS implicit $pr
+...

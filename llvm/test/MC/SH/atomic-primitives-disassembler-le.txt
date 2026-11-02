@@ -1,0 +1,17 @@
+# RUN: split-file %s %t
+# RUN: llvm-mc -triple=shle-unknown-elf -disassemble %t/complete.s | FileCheck %s --check-prefix=DIS
+# RUN: not llvm-mc -triple=shle-unknown-elf -disassemble %t/incomplete.s 2>&1 | FileCheck %s --check-prefix=INCOMPLETE
+
+#--- complete.s
+[0x1b,0x44,0x29,0x04]
+
+# DIS: tas.b	@r4
+# DIS-NEXT: movt	r4
+
+#--- incomplete.s
+[0x1b,0x44,0x29]
+
+# INCOMPLETE: :1:12: warning: invalid instruction encoding
+# INCOMPLETE-NEXT: [0x1b,0x44,0x29]
+# INCOMPLETE-NEXT:            ^
+# INCOMPLETE-NEXT: tas.b	@r4

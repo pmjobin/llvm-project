@@ -1,0 +1,44 @@
+# RUN: split-file %s %t
+# RUN: not llc -x mir -mtriple=sh-unknown-elf -run-pass=none -verify-machineinstrs %t/missing-addc-use.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=MISSING-ADDC-USE
+# RUN: not llc -x mir -mtriple=sh-unknown-elf -run-pass=none -verify-machineinstrs %t/missing-addv-def.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=MISSING-ADDV-DEF
+
+# MISSING-ADDC-USE: missing implicit register operand 'implicit $tbit'
+# MISSING-ADDV-DEF: missing implicit register operand 'implicit-def $tbit'
+
+#--- missing-addc-use.mir
+--- |
+  define i32 @missing_addc_use(i32 %a, i32 %b) {
+    %result = add i32 %a, %b
+    ret i32 %result
+  }
+...
+---
+name:            missing_addc_use
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r4, $r5
+
+    $r0 = ADDC $r4, $r5, implicit-def $tbit
+    RTS implicit $pr, implicit $r0
+...
+
+#--- missing-addv-def.mir
+--- |
+  define i32 @missing_addv_def(i32 %a, i32 %b) {
+    %result = add i32 %a, %b
+    ret i32 %result
+  }
+...
+---
+name:            missing_addv_def
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r4, $r5
+
+    $r0 = ADDV $r4, $r5
+    RTS implicit $pr, implicit $r0
+...

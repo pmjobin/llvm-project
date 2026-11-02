@@ -1,0 +1,456 @@
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O3 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh4 -O3 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s
+
+# The late masked rewrite is omitted; preserve ordinary producer instructions.
+# The mask and every physical operand/memory contract remain explicit.
+--- |
+  define void @shift_window(ptr %p)  { ret void }
+  define void @shift_upper_window(ptr %p)  { ret void }
+  define void @left_window(ptr %p)  { ret void }
+  define void @word_window(ptr %p)  { ret void }
+  define void @byte_window(ptr %p)  { ret void }
+  define void @signed_window(ptr %p)  { ret void }
+  define void @shared_shift(ptr %p)  { ret void }
+  define void @shared_extension(ptr %p)  { ret void }
+  define void @r0_copy_tie(ptr %p)  { ret void }
+  define void @noncontiguous(ptr %p)  { ret void }
+  define void @zero(ptr %p)  { ret void }
+  define void @full(ptr %p)  { ret void }
+  define void @sign_touching(ptr %p)  { ret void }
+  define void @volatile_load(ptr %p)  { ret void }
+  define void @wide_demand(ptr %p)  { ret void }
+  define void @shift_tie(ptr %p)  { ret void }
+  define void @one_bit_T(ptr %p)  { ret void }
+  define void @size(ptr %p) optsize { ret void }
+  define void @minsize(ptr %p) minsize { ret void }
+  define void @optnone(ptr %p) optnone noinline { ret void }
+  define void @fault_boundary(ptr %p) { ret void }
+  define void @atomic_load(ptr %p) { ret void }
+...
+---
+name: shift_window
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+
+    $r1 = MOVri 60
+    $r0 = SHLR2 $r0
+    $r2 = MOVri 11
+    $r0 = SHLR2 $r0
+    $r0 = SHLR2 $r0
+    $r0 = ANDrr $r0, $r1
+...
+
+# CHECK-LABEL: name: shift_window
+# CHECK-COUNT-3: $r0 = SHLR2 $r0
+# CHECK: $r0 = ANDrr
+
+---
+name: shift_upper_window
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+
+    $r1 = MOVri 1020
+    $r0 = SHLR8 $r0
+    $r0 = SHLR2 $r0
+    $r0 = SHLR2 $r0
+    $r0 = SHLR2 $r0
+    $r0 = ANDrr $r0, $r1
+...
+
+# CHECK-LABEL: name: shift_upper_window
+# CHECK: $r0 = SHLR8 $r0
+# CHECK-COUNT-3: $r0 = SHLR2 $r0
+# CHECK: $r0 = ANDrr
+
+---
+name: left_window
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+
+    $r1 = MOVri 3840
+    $r0 = SHLL2 $r0
+    $r0 = SHLL2 $r0
+    $r0 = SHLL2 $r0
+    $r0 = ANDrr $r0, $r1
+...
+
+# CHECK-LABEL: name: left_window
+# CHECK-COUNT-3: $r0 = SHLL2 $r0
+# CHECK: $r0 = ANDrr
+
+---
+name: word_window
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+
+    $r1 = MOVri 31
+    $r0 = MOVW_load_reg $r4 :: (load (s16) from %ir.p)
+    $r0 = EXTUW $r0
+    $r0 = ANDrr $r0, $r1
+...
+
+# CHECK-LABEL: name: word_window
+# CHECK: MOV{{[BW]}}_load_reg{{.*}} :: (load
+# CHECK: $r0 = EXTUW $r0
+# CHECK: ANDrr
+
+---
+name: byte_window
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+
+    $r1 = MOVri 7
+    $r0 = MOVB_load_reg $r4 :: (load (s8) from %ir.p)
+    $r0 = EXTUB $r0
+    $r0 = ANDrr $r0, $r1
+...
+
+# CHECK-LABEL: name: byte_window
+# CHECK: MOV{{[BW]}}_load_reg{{.*}} :: (load
+# CHECK: $r0 = EXTUB $r0
+# CHECK: ANDrr
+
+---
+name: signed_window
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+
+    $r1 = MOVri 30720
+    $r0 = MOVW_load_reg $r4 :: (load (s16) from %ir.p)
+    $r0 = EXTSW $r0
+    $r0 = ANDrr $r0, $r1
+...
+
+# CHECK-LABEL: name: signed_window
+# CHECK: MOV{{[BW]}}_load_reg{{.*}} :: (load
+# CHECK: $r0 = EXTSW $r0
+# CHECK: ANDrr
+
+---
+name: shared_shift
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+
+    $r1 = MOVri 60
+    $r0 = SHLR2 $r0
+    $r0 = SHLR2 $r0
+    $r0 = SHLR2 $r0
+    $r2 = MOVrr $r0
+    $r0 = ANDrr $r0, $r1
+...
+
+# CHECK-LABEL: name: shared_shift
+# CHECK: ANDrr
+
+---
+name: shared_extension
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+
+    $r1 = MOVri 7
+    $r0 = MOVB_load_reg $r4 :: (load (s8) from %ir.p)
+    $r0 = EXTUB $r0
+    $r2 = MOVrr $r0
+    $r0 = ANDrr $r0, $r1
+...
+
+# CHECK-LABEL: name: shared_extension
+# CHECK: $r0 = EXTUB $r0
+# CHECK: ANDrr
+
+---
+name: r0_copy_tie
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+
+    $r1 = MOVri 15
+    $r0 = MOVW_load_reg $r4 :: (load (s16) from %ir.p)
+    $r5 = EXTUW $r0
+    $r5 = ANDrr $r5, $r1
+...
+
+# CHECK-LABEL: name: r0_copy_tie
+# CHECK: $r5 = EXTUW $r0
+# CHECK: ANDrr
+
+---
+name: noncontiguous
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+
+    $r1 = MOVri 5
+    $r0 = MOVB_load_reg $r4 :: (load (s8) from %ir.p)
+    $r0 = EXTUB $r0
+    $r0 = ANDrr $r0, $r1
+...
+
+# CHECK-LABEL: name: noncontiguous
+# CHECK: $r0 = EXTUB $r0
+# CHECK: ANDrr
+
+---
+name: zero
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+
+    $r1 = MOVri 0
+    $r0 = MOVB_load_reg $r4 :: (load (s8) from %ir.p)
+    $r0 = EXTUB $r0
+    $r0 = ANDrr $r0, $r1
+...
+
+# CHECK-LABEL: name: zero
+# CHECK: $r0 = EXTUB $r0
+# CHECK: ANDrr
+
+---
+name: full
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+
+    $r1 = MOVri -1
+    $r0 = MOVB_load_reg $r4 :: (load (s8) from %ir.p)
+    $r0 = EXTUB $r0
+    $r0 = ANDrr $r0, $r1
+...
+
+# CHECK-LABEL: name: full
+# CHECK: $r0 = EXTUB $r0
+# CHECK: ANDrr
+
+---
+name: sign_touching
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+
+    $r1 = MOVri -2147483648
+    $r0 = MOVB_load_reg $r4 :: (load (s8) from %ir.p)
+    $r0 = EXTUB $r0
+    $r0 = ANDrr $r0, $r1
+...
+
+# CHECK-LABEL: name: sign_touching
+# CHECK: $r0 = EXTUB $r0
+# CHECK: ANDrr
+
+---
+name: volatile_load
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+
+    $r1 = MOVri 7
+    $r0 = MOVB_load_reg $r4 :: (volatile load (s8) from %ir.p)
+    $r0 = EXTUB $r0
+    $r0 = ANDrr $r0, $r1
+...
+
+# CHECK-LABEL: name: volatile_load
+# CHECK: $r0 = EXTUB $r0
+# CHECK: ANDrr
+
+---
+name: wide_demand
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+
+    $r1 = MOVri 511
+    $r0 = MOVB_load_reg $r4 :: (load (s8) from %ir.p)
+    $r0 = EXTUB $r0
+    $r0 = ANDrr $r0, $r1
+...
+
+# CHECK-LABEL: name: wide_demand
+# CHECK: $r0 = EXTUB $r0
+# CHECK: ANDrr
+
+---
+name: shift_tie
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+
+    $r1 = MOVri 60
+    $r0 = SHLR8 $r0
+    $r0 = ANDrr $r0, $r1
+...
+
+# CHECK-LABEL: name: shift_tie
+# CHECK: ANDrr
+
+---
+name: one_bit_T
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+
+    $r1 = MOVri 60
+    $r0 = SHLR2 $r0
+    $r0 = SHLR2 $r0
+    $r0 = SHLR $r0, implicit-def $tbit
+    $r2 = MOVT implicit $tbit
+    $r0 = ANDrr $r0, $r1
+...
+
+# CHECK-LABEL: name: one_bit_T
+# CHECK: $r0 = SHLR $r0, implicit-def $tbit
+# CHECK: $r2 = MOVT implicit $tbit
+# CHECK: ANDrr
+
+---
+name: size
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+
+    $r1 = MOVri 7
+    $r0 = MOVB_load_reg $r4 :: (load (s8) from %ir.p)
+    $r0 = EXTUB $r0
+    $r0 = ANDrr $r0, $r1
+...
+
+# CHECK-LABEL: name: size
+# CHECK: $r0 = EXTUB $r0
+# CHECK: ANDrr
+
+---
+name: minsize
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+
+    $r1 = MOVri 7
+    $r0 = MOVB_load_reg $r4 :: (load (s8) from %ir.p)
+    $r0 = EXTUB $r0
+    $r0 = ANDrr $r0, $r1
+...
+
+# CHECK-LABEL: name: minsize
+# CHECK: $r0 = EXTUB $r0
+# CHECK: ANDrr
+
+---
+name: optnone
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+
+    $r1 = MOVri 7
+    $r0 = MOVB_load_reg $r4 :: (load (s8) from %ir.p)
+    $r0 = EXTUB $r0
+    $r0 = ANDrr $r0, $r1
+...
+
+# CHECK-LABEL: name: optnone
+# CHECK: $r0 = EXTUB $r0
+# CHECK: ANDrr
+
+---
+name: fault_boundary
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+    $r1 = MOVri 7
+    $r0 = MOVB_load_reg $r4 :: (load (s8) from %ir.p)
+    $r0 = EXTUB $r0
+    $r2 = MOVL_load_reg $r4 :: (load (s32) from %ir.p)
+    $r0 = ANDrr $r0, $r1
+...
+# CHECK-LABEL: name: fault_boundary
+# CHECK: $r0 = EXTUB $r0
+# CHECK-NEXT: $r2 = MOVL_load_reg
+# CHECK-NEXT: $r0 = ANDrr
+---
+name: atomic_load
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r4
+    $r1 = MOVri 7
+    $r0 = MOVB_load_reg $r4 :: (load monotonic (s8) from %ir.p)
+    $r0 = EXTUB $r0
+    $r0 = ANDrr $r0, $r1
+...
+# CHECK-LABEL: name: atomic_load
+# CHECK: load monotonic (s8)
+# CHECK-NEXT: $r0 = EXTUB $r0
+# CHECK-NEXT: $r0 = ANDrr

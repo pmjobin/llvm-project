@@ -1,0 +1,59 @@
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -run-pass=post-ra-pseudos -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-none-elf -mcpu=sh4 -run-pass=post-ra-pseudos -verify-machineinstrs %s -o - | FileCheck %s
+# Scalar-double expansion may reuse a proven r0=4, extending its live range.
+# Kills/dead defs from before expansion must describe the new indexed use.
+--- |
+  define void @store_after_kill(ptr %dst) { ret void }
+  define void @load_after_dead(ptr %src) { ret void }
+  define void @intervening_clobber(ptr %dst) { ret void }
+...
+---
+name: store_after_kill
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $dr4, $r4, $fpscr, $pr
+    $r0 = MOVri 4
+    MOVL_store_reg killed $r0, $r4 :: (store (s32) into %ir.dst)
+    FMOV_D_STORE_SCALAR killed $dr4, killed $r4, implicit-def dead $r0, implicit $fpscr :: (store (s64) into %ir.dst, align 4)
+    RTS implicit $pr
+...
+---
+name: load_after_dead
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r4, $fpscr, $pr
+    dead $r0 = MOVri 4
+    $dr0 = FMOV_D_LOAD_SCALAR killed $r4, implicit-def dead $r0, implicit $fpscr :: (load (s64) from %ir.src, align 4)
+    RTS implicit $pr, implicit $dr0
+...
+---
+name: intervening_clobber
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $dr4, $r4, $fpscr, $pr
+    dead $r0 = MOVri 4
+    $r0 = MOVri 2
+    MOVL_store_reg killed $r0, $r4 :: (store (s32) into %ir.dst)
+    FMOV_D_STORE_SCALAR killed $dr4, killed $r4, implicit-def dead $r0, implicit $fpscr :: (store (s64) into %ir.dst, align 4)
+    RTS implicit $pr
+...
+# CHECK-LABEL: name: store_after_kill
+# CHECK: $r0 = MOVri 4
+# CHECK: MOVL_store_reg $r0, $r4
+# CHECK-NOT: MOVri 4
+# CHECK: FMOV_S_STORE_INDEXED_ALIAS
+# CHECK-LABEL: name: load_after_dead
+# CHECK: $r0 = MOVri 4
+# CHECK-NOT: MOVri 4
+# CHECK: FMOV_S_LOAD_INDEXED_ALIAS
+# CHECK-LABEL: name: intervening_clobber
+# CHECK: $r0 = MOVri 2
+# CHECK: MOVL_store_reg killed $r0, $r4
+# CHECK: $r0 = MOVri 4
+# CHECK: FMOV_S_STORE_INDEXED_ALIAS

@@ -1,0 +1,83 @@
+# RUN: split-file %s %t
+# RUN: not --crash llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -run-pass=none -verify-machineinstrs -filetype=null %t/r0.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=INVALID
+# RUN: not --crash llc -mtriple=sh-unknown-none-elf -mcpu=sh4 -run-pass=none -verify-machineinstrs -filetype=null %t/r0.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=INVALID
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -run-pass=post-ra-pseudos -verify-machineinstrs %t/r5.mir -o - | FileCheck %s --check-prefix=PHYSICAL
+# RUN: llc -mtriple=sh-unknown-none-elf -mcpu=sh4 -run-pass=post-ra-pseudos -verify-machineinstrs %t/r5.mir -o - | FileCheck %s --check-prefix=PHYSICAL
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -run-pass=greedy,virt-reg-rewriter,post-ra-pseudos -verify-machineinstrs %t/dying.mir -o - | FileCheck %s --check-prefix=ALLOCATED
+# RUN: llc -mtriple=sh-unknown-none-elf -mcpu=sh4 -run-pass=greedy,virt-reg-rewriter,post-ra-pseudos -verify-machineinstrs %t/dying.mir -o - | FileCheck %s --check-prefix=ALLOCATED
+
+# The expansion overwrites R0 with FPSCR before it reads the mask. Enforce the
+# non-R0 input even for a dying mask, for which an ordinary implicit R0 def is
+# insufficient. This tests the physical-pseudo and allocation contract; it does
+# not establish that an ordinary frontend loop used to allocate the mask to R0.
+
+# INVALID: Bad machine code: Illegal physical register for instruction
+# INVALID: $r0 is not a GPRNoR0 register
+
+# PHYSICAL-LABEL: name: fpscr_mask_r5
+# PHYSICAL: $r5 = MOVri 8
+# PHYSICAL-NEXT: $r5 = SHLL16 $r5
+# PHYSICAL-NEXT: $r0 = STS_FPSCR implicit $fpscr
+# PHYSICAL-NEXT: $r0 = XORrr $r0, killed $r5
+# PHYSICAL-NEXT: LDS_FPSCR $r0, implicit-def $fpscr
+# PHYSICAL-NEXT: $r0 = STS_FPSCR implicit $fpscr
+
+# ALLOCATED-LABEL: name: dying_mask
+# ALLOCATED: $[[MASK:r([1-9]|1[0-4])]] = MOVri 8
+# ALLOCATED-NEXT: $[[MASK]] = SHLL16 $[[MASK]]
+# ALLOCATED-NEXT: $r0 = STS_FPSCR implicit $fpscr
+# ALLOCATED-NEXT: $r0 = XORrr $r0, killed $[[MASK]]
+# ALLOCATED-NEXT: LDS_FPSCR $r0, implicit-def $fpscr
+
+#--- r0.mir
+--- |
+  define i32 @fpscr_mask_r0() { ret i32 0 }
+...
+---
+name: fpscr_mask_r0
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $fpscr, $pr
+
+    $r0 = MATERIALIZE_FPSCR_MASK 8
+    TRANSITION_FPSCR_MODE_REG 3, killed $r0, 8, implicit-def $r0, implicit-def $fpscr, implicit $fpscr
+    $r0 = STS_FPSCR implicit $fpscr
+    RTS implicit $pr, implicit $r0
+...
+
+#--- r5.mir
+--- |
+  define i32 @fpscr_mask_r5() { ret i32 0 }
+...
+---
+name: fpscr_mask_r5
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $fpscr, $pr
+
+    $r5 = MATERIALIZE_FPSCR_MASK 8
+    TRANSITION_FPSCR_MODE_REG 3, killed $r5, 8, implicit-def $r0, implicit-def $fpscr, implicit $fpscr
+    $r0 = STS_FPSCR implicit $fpscr
+    RTS implicit $pr, implicit $r0
+...
+
+#--- dying.mir
+--- |
+  define i32 @dying_mask() { ret i32 0 }
+...
+---
+name: dying_mask
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $fpscr, $pr
+
+    %0:gprnor0 = MATERIALIZE_FPSCR_MASK 8
+    TRANSITION_FPSCR_MODE_REG 3, killed %0, 8, implicit-def $r0, implicit-def $fpscr, implicit $fpscr
+    $r0 = STS_FPSCR implicit $fpscr
+    RTS implicit $pr, implicit $r0
+...

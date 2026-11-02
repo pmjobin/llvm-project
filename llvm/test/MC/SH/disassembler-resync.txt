@@ -1,0 +1,19 @@
+# RUN: split-file %s %t
+# RUN: llvm-mc -triple=sh-unknown-elf -disassemble %t/resync-be.s 2>&1 | FileCheck %s --check-prefix=BE
+# RUN: llvm-mc -triple=shle-unknown-elf -disassemble %t/resync-le.s 2>&1 | FileCheck %s --check-prefix=LE
+
+#--- resync-be.s
+0xff 0xff 0x00 0x09
+
+#--- resync-le.s
+0xff 0xff 0x09 0x00
+
+# BE: :1:1: warning: invalid instruction encoding
+# BE-NEXT: 0xff 0xff 0x00 0x09
+# BE-NEXT: ^
+# BE-NEXT: nop
+
+# LE: :1:1: warning: invalid instruction encoding
+# LE-NEXT: 0xff 0xff 0x09 0x00
+# LE-NEXT: ^
+# LE-NEXT: nop

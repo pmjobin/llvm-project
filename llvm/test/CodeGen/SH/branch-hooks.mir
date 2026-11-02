@@ -1,0 +1,63 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=branch-folder -enable-tail-merge=0 %s -o - | FileCheck %s
+
+--- |
+  define i32 @reverse_to_fallthrough(i32 %a, i32 %b) {
+    ret i32 %a
+  }
+
+  define i32 @remove_fallthrough(i32 %a) {
+    ret i32 %a
+  }
+...
+---
+name:            reverse_to_fallthrough
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    liveins: $r4, $r5
+
+    CMP_EQ $r5, $r4, implicit-def $tbit
+    BT %bb.1, implicit $tbit
+    BRA %bb.2
+
+  bb.1:
+    liveins: $r4
+
+    $r0 = MOVrr $r4
+    RTS implicit $pr, implicit $r0
+
+  bb.2:
+    liveins: $r5
+
+    $r0 = MOVrr $r5
+    RTS implicit $pr, implicit $r0
+...
+---
+name:            remove_fallthrough
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4
+
+    BRA %bb.1
+
+  bb.1:
+    liveins: $r4
+
+    $r0 = MOVrr $r4
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            reverse_to_fallthrough
+# CHECK: CMP_EQ $r5, $r4, implicit-def $tbit
+# CHECK-NEXT: BF %bb.2, implicit $tbit
+# CHECK-NOT: BRA
+# CHECK: bb.1:
+# CHECK-LABEL: name:            remove_fallthrough
+# CHECK: bb.0:
+# CHECK-NOT: BRA
+# CHECK: $r0 = MOVrr $r4

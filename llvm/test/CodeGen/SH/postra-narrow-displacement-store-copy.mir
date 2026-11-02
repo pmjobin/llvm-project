@@ -1,0 +1,85 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-postra-peephole %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=sh-postra-peephole %s -o - | FileCheck %s
+
+--- |
+  define void @fold_byte_store_copy(ptr %p) { ret void }
+  define void @fold_word_store_source_base(ptr %p) { ret void }
+  define void @keep_live_r0_store_address(ptr %p) { ret void }
+  define void @keep_computed_r0_store_address(ptr %p) { ret void }
+...
+---
+name:            fold_byte_store_copy
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r1, $r4
+
+    $r0 = MOVrr killed $r1
+    $r0 = ADDri $r0, 15
+    MOVB_store_reg killed $r4, killed $r0 :: (store (s8) into %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            fold_byte_store_copy
+# CHECK-NOT: ADDri
+# CHECK: $r0 = MOVrr killed $r4
+# CHECK-NEXT: MOVB_store_disp killed $r0, killed $r1, 15
+
+---
+name:            fold_word_store_source_base
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r2
+
+    $r0 = MOVrr $r2
+    $r0 = ADDri $r0, 30
+    MOVW_store_reg killed $r2, killed $r0 :: (store (s16) into %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            fold_word_store_source_base
+# CHECK-NOT: ADDri
+# CHECK: $r0 = MOVrr $r2
+# CHECK-NEXT: MOVW_store_disp killed $r0, killed $r2, 30
+
+---
+name:            keep_live_r0_store_address
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r1, $r4
+
+    $r0 = MOVrr killed $r1
+    $r0 = ADDri $r0, 4
+    MOVB_store_reg killed $r4, $r0 :: (store (s8) into %ir.p)
+    $r2 = MOVrr killed $r0
+    RTS implicit $pr, implicit $r2
+...
+
+# CHECK-LABEL: name:            keep_live_r0_store_address
+# CHECK: $r0 = MOVrr killed $r1
+# CHECK-NEXT: $r0 = ADDri $r0, 4
+# CHECK-NEXT: MOVB_store_reg killed $r4, $r0
+
+---
+name:            keep_computed_r0_store_address
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r1, $r4
+
+    $r0 = ADDrr killed $r0, killed $r1
+    $r0 = ADDri killed $r0, 1
+    MOVB_store_reg killed $r4, killed $r0 :: (store (s8) into %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            keep_computed_r0_store_address
+# CHECK: $r0 = ADDrr killed $r0, killed $r1
+# CHECK-NEXT: $r0 = ADDri killed $r0, 1
+# CHECK-NEXT: MOVB_store_reg killed $r4, killed $r0

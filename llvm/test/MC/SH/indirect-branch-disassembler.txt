@@ -1,0 +1,8 @@
+# RUN: llvm-mc -triple=sh-unknown-elf -disassemble %s | FileCheck %s
+
+[0x40,0x2b,0x44,0x2b,0x4f,0x2b,0x44,0x0b]
+
+# CHECK: jmp	@r0
+# CHECK-NEXT: jmp	@r4
+# CHECK-NEXT: jmp	@r15
+# CHECK-NEXT: jsr	@r4

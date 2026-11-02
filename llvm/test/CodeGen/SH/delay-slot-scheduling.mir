@@ -1,0 +1,940 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh3 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -run-pass=sh-delay-slot-filler %s -o %t.1
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -run-pass=sh-delay-slot-filler %s -o %t.2
+# RUN: diff %t.1 %t.2
+
+--- |
+  define i32 @safe_fill(i32 %value) { ret i32 %value }
+  define void @nearest(i32 %a, i32 %b) { ret void }
+  define void @raw(i32 %a, i32 %b) { ret void }
+  define ptr @successor_mova() #0 { ret ptr null }
+  define i32 @successor_fill(i32 %value) #0 { ret i32 %value }
+  define i32 @successor_no_optsize(i32 %value) { ret i32 %value }
+  define i32 @successor_multiple_predecessors(i32 %value) #0 { ret i32 %value }
+  define i32 @successor_address_taken(i32 %value) #0 { ret i32 %value }
+  define void @war(i32 %a, i32 %b) { ret void }
+  define void @waw_pr(i32 %a, i32 %b) { ret void }
+  define void @t_dependency(i32 %a, i32 %b) { ret void }
+  define void @mach_dependency(i32 %a, i32 %b) { ret void }
+  define void @macl_dependency(i32 %a, i32 %b) { ret void }
+  define void @memory(ptr %p) { ret void }
+  define void @return_store(ptr %p, i32 %value) { ret void }
+  define void @volatile_memory(ptr %p) { ret void }
+  define void @atomic_memory(ptr %p) { ret void }
+  define void @call_argument(i32 %target, i32 %value) { ret void }
+  define void @tail_call_argument(i32 %target, i32 %value) { ret void }
+  define void @tail_call_target(i32 %target, i32 %value) { ret void }
+  define void @call_load_argument(ptr %p, i32 %target) { ret void }
+  define void @call_store(ptr %p, i32 %target, i32 %value) { ret void }
+  define void @call_volatile_store(ptr %p, i32 %target, i32 %value) { ret void }
+  define void @call_load_target(ptr %p) { ret void }
+  define void @call_target_load_separator(i32 %value) { ret void }
+  declare void @call_target_literal(i32)
+  define void @call_target_literal_separator() { ret void }
+  define void @call_nonadjacent_load_argument(ptr %p) { ret void }
+  define void @call_volatile_load_argument(ptr %p, i32 %target) { ret void }
+  define void @call_expanded_pic_load(i32 %target) { ret void }
+  define void @branch_load(ptr %p) { ret void }
+  define void @branch_nonadjacent_load(ptr %p) { ret void }
+  define void @branch_store(ptr %p, i32 %value) { ret void }
+  define void @branch_volatile_load(ptr %p) { ret void }
+  define void @branch_load_target(ptr %p) { ret void }
+  define void @call_target(i32 %target, i32 %value) { ret void }
+  define void @return_stack(i32 %value) { ret void }
+  define void @inline_asm(i32 %value) { ret void }
+  define void @cfi_boundary(i32 %value) { ret void }
+  define void @size_boundary(i32 %value) { ret void }
+  define void @control_boundary(i32 %value) { ret void }
+  define void @mova_sh2() { ret void }
+  define void @rte_boundary(i32 %value) { ret void }
+  define void @privileged_state(i32 %value) { ret void }
+
+  attributes #0 = { optsize }
+...
+---
+name:            safe_fill
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r4, $pr
+
+    $r0 = MOVrr $r4
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            safe_fill
+# CHECK: RTS implicit $pr, implicit internal $r0 {
+# CHECK-NEXT: $r0 = MOVrr $r4
+# CHECK-NEXT: }
+
+---
+name:            nearest
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4, $r5
+
+    $r1 = MOVrr $r4
+    $r0 = MOVrr $r5
+    BRA %bb.1
+
+  bb.1:
+...
+
+# CHECK-LABEL: name:            nearest
+# CHECK: $r1 = MOVrr $r4
+# CHECK-NEXT: BRA %bb.1 {
+# CHECK-NEXT: $r0 = MOVrr $r5
+# CHECK-NEXT: }
+
+---
+name:            raw
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4, $r5
+
+    $r0 = MOVrr $r4
+    $r4 = MOVrr $r5
+    JMP $r4
+
+  bb.1:
+...
+
+# CHECK-LABEL: name:            raw
+# CHECK: $r0 = MOVrr $r4
+# CHECK-NEXT: $r4 = MOVrr $r5
+# CHECK-NEXT: JMP $r4 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            successor_mova
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $pr
+
+    BRA %bb.1
+
+  bb.1:
+    liveins: $pr
+
+    $r0 = MOVA <mcsymbol .LCPI0_0_0>
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            successor_mova
+# CHECK: BRA %bb.1 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            successor_fill
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4, $pr
+
+    BRA %bb.1
+
+  bb.1:
+    liveins: $r4, $pr
+
+    $r0 = MOVrr $r4
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            successor_fill
+# CHECK: BRA %bb.1 {
+# CHECK-NEXT: $r0 = MOVrr $r4
+# CHECK-NEXT: }
+
+---
+name:            successor_no_optsize
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4, $pr
+
+    BRA %bb.1
+
+  bb.1:
+    liveins: $r4, $pr
+
+    $r0 = MOVrr $r4
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            successor_no_optsize
+# CHECK: BRA %bb.1 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            successor_multiple_predecessors
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    liveins: $r4, $pr, $tbit
+
+    BT_S %bb.2, implicit $tbit
+
+  bb.1:
+    successors: %bb.2(0x80000000)
+    BRA %bb.2
+
+  bb.2:
+    liveins: $r4, $pr
+
+    $r0 = MOVrr $r4
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            successor_multiple_predecessors
+# CHECK: BT_S %bb.2, implicit $tbit {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+# CHECK: BRA %bb.2 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            successor_address_taken
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4, $pr
+
+    BRA %bb.1
+
+  bb.1 (machine-block-address-taken):
+    liveins: $r4, $pr
+
+    $r0 = MOVrr $r4
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            successor_address_taken
+# CHECK: BRA %bb.1 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            war
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4, $r5
+
+    $r4 = MOVrr $r5
+    JMP $r4
+
+  bb.1:
+...
+
+# CHECK-LABEL: name:            war
+# CHECK: $r4 = MOVrr $r5
+# CHECK-NEXT: JMP $r4 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            waw_pr
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r4, $r5
+
+    LDS_PR $r4, implicit-def $pr
+    JSR $r5, csr_sh, implicit-def dead $pr, implicit-def $r15, implicit-def $r0
+...
+
+# CHECK-LABEL: name:            waw_pr
+# CHECK: LDS_PR $r4, implicit-def $pr
+# CHECK-NEXT: JSR $r5, csr_sh, implicit-def dead $pr, implicit-def $r15, implicit-def $r0 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            t_dependency
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    liveins: $r4, $r5
+
+    CMP_EQ $r5, $r4, implicit-def $tbit
+    BT_S %bb.1, implicit $tbit
+
+  bb.2:
+    successors: %bb.1(0x80000000)
+    BRA %bb.1
+
+  bb.1:
+...
+
+# CHECK-LABEL: name:            t_dependency
+# CHECK: CMP_EQ $r5, $r4, implicit-def $tbit
+# CHECK-NEXT: BT_S %bb.{{[0-9]+}}, implicit $tbit {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            mach_dependency
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4, $r5, $r6
+
+    $r0 = STS_MACH implicit $mach
+    DMULS_L $r5, $r4, implicit-def $mach, implicit-def $macl, implicit-def $r6
+    JMP $r6
+
+  bb.1:
+...
+
+# CHECK-LABEL: name:            mach_dependency
+# CHECK: $r0 = STS_MACH implicit $mach
+# CHECK-NEXT: DMULS_L $r5, $r4, implicit-def $mach, implicit-def $macl, implicit-def $r6
+# CHECK-NEXT: JMP $r6 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            macl_dependency
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4, $r5, $r6
+
+    $r0 = STS_MACL implicit $macl
+    DMULU_L $r5, $r4, implicit-def $mach, implicit-def $macl, implicit-def $r6
+    JMP $r6
+
+  bb.1:
+...
+
+# CHECK-LABEL: name:            macl_dependency
+# CHECK: $r0 = STS_MACL implicit $macl
+# CHECK-NEXT: DMULU_L $r5, $r4, implicit-def $mach, implicit-def $macl, implicit-def $r6
+# CHECK-NEXT: JMP $r6 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            memory
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r4, $pr
+
+    $r0 = MOVL_load_reg $r4 :: (load (s32) from %ir.p)
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            memory
+# CHECK: RTS implicit $pr, implicit internal $r0 {
+# CHECK-NEXT: $r0 = MOVL_load_reg $r4 :: (load (s32) from %ir.p)
+# CHECK-NEXT: }
+
+---
+name:            return_store
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r4, $r5, $pr
+
+    MOVL_store_reg $r5, $r4 :: (store (s32) into %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            return_store
+# CHECK: RTS implicit $pr {
+# CHECK-NEXT: MOVL_store_reg $r5, $r4 :: (store (s32) into %ir.p)
+# CHECK-NEXT: }
+
+---
+name:            volatile_memory
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r4, $pr
+
+    $r0 = MOVL_load_reg $r4 :: (volatile load (s32) from %ir.p)
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            volatile_memory
+# CHECK: volatile load
+# CHECK-NEXT: RTS implicit $pr, implicit $r0 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            atomic_memory
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r4, $pr
+
+    $r0 = MOVL_load_reg $r4 :: (load acquire (s32) from %ir.p)
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            atomic_memory
+# CHECK: load acquire
+# CHECK-NEXT: RTS implicit $pr, implicit $r0 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            call_argument
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r5, $r6
+
+    $r4 = MOVrr $r5
+    JSR $r6, csr_sh, implicit-def dead $pr, implicit $r4, implicit-def $r15, implicit-def $r0
+...
+
+# CHECK-LABEL: name:            call_argument
+# CHECK: JSR $r6, csr_sh, implicit-def dead $pr, implicit internal $r4, implicit-def $r15, implicit-def $r0 {
+# CHECK-NEXT: $r4 = MOVrr $r5
+# CHECK-NEXT: }
+
+---
+name:            tail_call_argument
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r5, $r6
+
+    $r4 = MOVrr $r5
+    TAIL_JMP $r6, csr_sh, $r4
+...
+
+# CHECK-LABEL: name:            tail_call_argument
+# CHECK: TAIL_JMP $r6, csr_sh, internal $r4 {
+# CHECK-NEXT: $r4 = MOVrr $r5
+# CHECK-NEXT: }
+
+---
+name:            tail_call_target
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r5
+
+    $r6 = MOVrr $r5
+    TAIL_JMP $r6, csr_sh
+...
+
+# CHECK-LABEL: name:            tail_call_target
+# CHECK: $r6 = MOVrr $r5
+# CHECK-NEXT: TAIL_JMP $r6, csr_sh {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            call_load_argument
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r5, $r6
+
+    $r4 = MOVL_load_reg $r5 :: (load (s32) from %ir.p)
+    JSR $r6, csr_sh, implicit-def dead $pr, implicit $r4, implicit-def $r15, implicit-def $r0
+...
+
+# CHECK-LABEL: name:            call_load_argument
+# CHECK: JSR $r6, csr_sh, implicit-def dead $pr, implicit internal $r4, implicit-def $r15, implicit-def $r0 {
+# CHECK-NEXT: $r4 = MOVL_load_reg $r5 :: (load (s32) from %ir.p)
+# CHECK-NEXT: }
+
+---
+name:            call_store
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r4, $r5, $r6
+
+    MOVL_store_reg $r6, $r4 :: (store (s32) into %ir.p)
+    JSR $r5, csr_sh, implicit-def dead $pr, implicit-def $r15, implicit-def $r0
+...
+
+# CHECK-LABEL: name:            call_store
+# CHECK: JSR $r5, csr_sh, implicit-def dead $pr, implicit-def $r15, implicit-def $r0 {
+# CHECK-NEXT: MOVL_store_reg $r6, $r4 :: (store (s32) into %ir.p)
+# CHECK-NEXT: }
+
+---
+name:            call_volatile_store
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r4, $r5, $r6
+
+    MOVL_store_reg $r6, $r4 :: (volatile store (s32) into %ir.p)
+    JSR $r5, csr_sh, implicit-def dead $pr, implicit-def $r15, implicit-def $r0
+...
+
+# CHECK-LABEL: name:            call_volatile_store
+# CHECK: MOVL_store_reg $r6, $r4 :: (volatile store (s32) into %ir.p)
+# CHECK-NEXT: JSR $r5, csr_sh, implicit-def dead $pr, implicit-def $r15, implicit-def $r0 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            call_load_target
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r5
+
+    $r6 = MOVL_load_reg $r5 :: (load (s32) from %ir.p)
+    JSR $r6, csr_sh, implicit-def dead $pr, implicit-def $r15, implicit-def $r0
+...
+
+# CHECK-LABEL: name:            call_load_target
+# CHECK: $r6 = MOVL_load_reg $r5 :: (load (s32) from %ir.p)
+# CHECK-NEXT: JSR $r6, csr_sh, implicit-def dead $pr, implicit-def $r15, implicit-def $r0 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            call_target_load_separator
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r5
+
+    $r4 = MOVrr $r5
+    $r0 = MOVL_load_pc <mcsymbol .LCPI0_0_0> :: (dereferenceable invariant load (s32) from constant-pool)
+    JSR $r0, csr_sh, implicit-def dead $pr, implicit $r4, implicit-def $r15, implicit-def $r0
+...
+
+# CHECK-LABEL: name:            call_target_load_separator
+# CHECK: $r0 = MOVL_load_pc <mcsymbol .LCPI0_0_0> :: (dereferenceable invariant load (s32) from constant-pool)
+# CHECK-NEXT: JSR $r0, csr_sh, implicit-def dead $pr, implicit internal $r4, implicit-def $r15, implicit-def $r0 {
+# CHECK-NEXT: $r4 = MOVrr $r5
+# CHECK-NEXT: }
+
+---
+name:            call_target_literal_separator
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 ptrtoint (ptr @call_target_literal to i32)'
+    alignment:   4
+body:             |
+  bb.0:
+    $r4 = MOVri 95
+    $r0 = MOVL_load_pc_island %const.0, -1 :: (dereferenceable invariant load (s32) from constant-pool)
+    JSR $r0, csr_sh, implicit-def dead $pr, implicit $r4, implicit-def $r15, implicit-def $r0
+...
+
+# CHECK-LABEL: name:            call_target_literal_separator
+# CHECK: $r0 = MOVL_load_pc_island %const.0, -1 :: (dereferenceable invariant load (s32) from constant-pool)
+# CHECK-NEXT: JSR $r0, csr_sh, implicit-def dead $pr, implicit internal $r4, implicit-def $r15, implicit-def $r0 {
+# CHECK-NEXT: $r4 = MOVri 95
+# CHECK-NEXT: }
+
+---
+name:            call_nonadjacent_load_argument
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 ptrtoint (ptr @call_target_literal to i32)'
+    alignment:   4
+body:             |
+  bb.0:
+    liveins: $r5
+
+    $r4 = MOVL_load_reg $r5 :: (load (s32) from %ir.p)
+    $r0 = MOVL_load_pc_island %const.0, -1 :: (dereferenceable invariant load (s32) from constant-pool)
+    JSR $r0, csr_sh, implicit-def dead $pr, implicit $r4, implicit-def $r15, implicit-def $r0
+...
+
+# CHECK-LABEL: name:            call_nonadjacent_load_argument
+# CHECK: $r0 = MOVL_load_pc_island %const.0, -1 :: (dereferenceable invariant load (s32) from constant-pool)
+# CHECK-NEXT: JSR $r0, csr_sh, implicit-def dead $pr, implicit internal $r4, implicit-def $r15, implicit-def $r0 {
+# CHECK-NEXT: $r4 = MOVL_load_reg $r5 :: (load (s32) from %ir.p)
+# CHECK-NEXT: }
+
+---
+name:            call_volatile_load_argument
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r5, $r6
+
+    $r4 = MOVL_load_reg $r5 :: (volatile load (s32) from %ir.p)
+    JSR $r6, csr_sh, implicit-def dead $pr, implicit $r4, implicit-def $r15, implicit-def $r0
+...
+
+# CHECK-LABEL: name:            call_volatile_load_argument
+# CHECK: $r4 = MOVL_load_reg $r5 :: (volatile load (s32) from %ir.p)
+# CHECK-NEXT: JSR $r6, csr_sh, implicit-def dead $pr, implicit $r4, implicit-def $r15, implicit-def $r0 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            call_expanded_pic_load
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r6
+
+    $r0 = MOVA <mcsymbol .LCPI0_0_0>
+    $r4 = MOVL_load_pc <mcsymbol .LCPI0_0_0> :: (dereferenceable invariant load (s32) from constant-pool)
+    JSR $r6, csr_sh, implicit-def dead $pr, implicit $r4, implicit-def $r15, implicit-def $r0
+...
+
+# CHECK-LABEL: name:            call_expanded_pic_load
+# CHECK: $r0 = MOVA <mcsymbol .LCPI0_0_0>
+# CHECK-NEXT: $r4 = MOVL_load_pc <mcsymbol .LCPI0_0_0> :: (dereferenceable invariant load (s32) from constant-pool)
+# CHECK-NEXT: JSR $r6, csr_sh, implicit-def dead $pr, implicit $r4, implicit-def $r15, implicit-def $r0 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            branch_load
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4
+
+    $r0 = MOVL_load_reg $r4 :: (load (s32) from %ir.p)
+    BRA %bb.1
+
+  bb.1:
+...
+
+# CHECK-LABEL: name:            branch_load
+# CHECK: BRA %bb.1 {
+# CHECK-NEXT: $r0 = MOVL_load_reg $r4 :: (load (s32) from %ir.p)
+# CHECK-NEXT: }
+
+---
+name:            branch_nonadjacent_load
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 42'
+    alignment:   4
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4
+
+    $r0 = MOVL_load_reg $r4 :: (load (s32) from %ir.p)
+    $r1 = MOVL_load_pc_island %const.0, -1 :: (dereferenceable invariant load (s32) from constant-pool)
+    BRA %bb.1
+
+  bb.1:
+...
+
+# CHECK-LABEL: name:            branch_nonadjacent_load
+# CHECK: $r1 = MOVL_load_pc_island %const.0, -1 :: (dereferenceable invariant load (s32) from constant-pool)
+# CHECK-NEXT: BRA %bb.1 {
+# CHECK-NEXT: $r0 = MOVL_load_reg $r4 :: (load (s32) from %ir.p)
+# CHECK-NEXT: }
+
+---
+name:            branch_store
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4, $r5
+
+    MOVL_store_reg $r5, $r4 :: (store (s32) into %ir.p)
+    BRA %bb.1
+
+  bb.1:
+...
+
+# CHECK-LABEL: name:            branch_store
+# CHECK: BRA %bb.1 {
+# CHECK-NEXT: MOVL_store_reg $r5, $r4 :: (store (s32) into %ir.p)
+# CHECK-NEXT: }
+
+---
+name:            branch_volatile_load
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4
+
+    $r0 = MOVL_load_reg $r4 :: (volatile load (s32) from %ir.p)
+    BRA %bb.1
+
+  bb.1:
+...
+
+# CHECK-LABEL: name:            branch_volatile_load
+# CHECK: $r0 = MOVL_load_reg $r4 :: (volatile load (s32) from %ir.p)
+# CHECK-NEXT: BRA %bb.1 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            branch_load_target
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4
+
+    $r5 = MOVL_load_reg $r4 :: (load (s32) from %ir.p)
+    JMP $r5
+
+  bb.1:
+...
+
+# CHECK-LABEL: name:            branch_load_target
+# CHECK: $r5 = MOVL_load_reg $r4 :: (load (s32) from %ir.p)
+# CHECK-NEXT: JMP $r5 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            call_target
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r5, $r6
+
+    $r6 = MOVrr $r5
+    JSR $r6, csr_sh, implicit-def dead $pr, implicit-def $r15, implicit-def $r0
+...
+
+# CHECK-LABEL: name:            call_target
+# CHECK: $r6 = MOVrr $r5
+# CHECK-NEXT: JSR $r6, csr_sh, implicit-def dead $pr, implicit-def $r15, implicit-def $r0 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            return_stack
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r15, $pr
+
+    $r15 = ADDri $r15, 4
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            return_stack
+# CHECK: $r15 = ADDri $r15, 4
+# CHECK-NEXT: RTS implicit $pr {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            inline_asm
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4
+
+    $r0 = MOVrr $r4
+    INLINEASM &"nop", sideeffect attdialect
+    BRA %bb.1
+
+  bb.1:
+...
+
+# CHECK-LABEL: name:            inline_asm
+# CHECK: $r0 = MOVrr $r4
+# CHECK-NEXT: INLINEASM
+# CHECK-NEXT: BRA %bb.1 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            cfi_boundary
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4
+
+    $r0 = MOVrr $r4
+    CFI_INSTRUCTION def_cfa_offset 4
+    BRA %bb.1
+
+  bb.1:
+...
+
+# CHECK-LABEL: name:            cfi_boundary
+# CHECK: $r0 = MOVrr $r4
+# CHECK-NEXT: CFI_INSTRUCTION def_cfa_offset 4
+# CHECK-NEXT: BRA %bb.1 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            size_boundary
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4, $r15
+
+    $r0 = MOVrr $r4
+    ADJCALLSTACKDOWN 0, 0, implicit-def $r15, implicit $r15
+    BRA %bb.1
+
+  bb.1:
+...
+
+# CHECK-LABEL: name:            size_boundary
+# CHECK: $r0 = MOVrr $r4
+# CHECK-NEXT: ADJCALLSTACKDOWN
+# CHECK-NEXT: BRA %bb.1 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            control_boundary
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    liveins: $r4, $tbit
+
+    $r0 = MOVrr $r4
+    BT %bb.1, implicit $tbit
+    BRA %bb.2
+
+  bb.1:
+    successors: %bb.2(0x80000000)
+    BRA %bb.2
+
+  bb.2:
+...
+
+# CHECK-LABEL: name:            control_boundary
+# CHECK: BT_S %bb.1, implicit $tbit {
+# CHECK-NEXT: $r0 = MOVrr $r4
+# CHECK-NEXT: }
+# CHECK-NEXT: BRA %bb.2 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            mova_sh2
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+
+    $r0 = MOVA <mcsymbol .LCPI0_0_0>
+    BRA %bb.1
+
+  bb.1:
+...
+
+# CHECK-LABEL: name:            mova_sh2
+# CHECK: BRA %bb.1 {
+# CHECK-NEXT: $r0 = MOVA <mcsymbol .LCPI0_0_0>
+# CHECK-NEXT: }
+
+---
+name:            rte_boundary
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r4, $r15
+
+    $r0 = MOVrr $r4
+    RTE implicit $r15, implicit-def $r15, implicit-def $sr, implicit-def $sbit, implicit-def $mbit, implicit-def $qbit, implicit-def $tbit
+...
+
+# CHECK-LABEL: name:            rte_boundary
+# CHECK: $r0 = MOVrr $r4
+# CHECK-NEXT: RTE {{.*}} {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            privileged_state
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4
+
+    LDC_GBR $r4, implicit-def $gbr
+    BRA %bb.1
+
+  bb.1:
+...
+
+# CHECK-LABEL: name:            privileged_state
+# CHECK: LDC_GBR $r4, implicit-def $gbr
+# CHECK-NEXT: BRA %bb.1 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }

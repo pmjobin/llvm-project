@@ -1,0 +1,8 @@
+# RUN: %python %S/Inputs/generate-i64-compare-slot-consumers.py > %t.ll
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O3 -verify-machineinstrs %t.ll -o - | FileCheck %t.ll --check-prefix=OPT
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh3 -O3 -verify-machineinstrs %t.ll -o - | FileCheck %t.ll --check-prefix=OPT
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -O3 -verify-machineinstrs -filetype=obj %t.ll -o %t.sh2.o
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh3 -O3 -verify-machineinstrs -filetype=obj %t.ll -o %t.sh3.o
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -O3 -verify-machineinstrs -filetype=obj %t.ll -o %t.sh4le.o
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh4 -O3 -verify-machineinstrs -filetype=obj %t.ll -o %t.sh4be.o
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -filetype=obj %t.ll -o %t.o0.o

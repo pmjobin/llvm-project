@@ -1,0 +1,186 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-postra-peephole %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=sh-postra-peephole %s -o - | FileCheck %s
+
+--- |
+  define void @rematerialize_call_copies() optsize { ret void }
+  define void @rematerialize_before_redefinition() optsize { ret void }
+  define void @rematerialize_before_call_clobber() optsize { ret void }
+  define void @keep_noncopy_use() optsize { ret void }
+  define void @keep_without_size_attribute() { ret void }
+  define void @keep_macl_copy() optsize { ret void }
+  define void @keep_mach_copy() optsize { ret void }
+  define void @keep_pr_copy() optsize { ret void }
+  define void @keep_fpul_copy() optsize { ret void }
+  define void @keep_fpscr_copy() optsize { ret void }
+  define void @keep_r15_copy() optsize { ret void }
+...
+---
+name:            rematerialize_call_copies
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r11
+
+    $r8 = MOVri 0
+    $r4 = COPY $r8
+    JSR $r11, csr_sh, implicit $r4, implicit-def dead $pr, implicit-def $r15, implicit-def dead $r0
+    $r4 = COPY killed $r8
+    JSR killed $r11, csr_sh, implicit $r4, implicit-def dead $pr, implicit-def $r15, implicit-def dead $r0
+...
+
+# CHECK-LABEL: name:            rematerialize_call_copies
+# CHECK-NOT: $r8 = MOVri
+# CHECK: $r4 = MOVri 0
+# CHECK: JSR $r11
+# CHECK-NEXT: $r4 = MOVri 0
+# CHECK-NEXT: JSR killed $r11
+
+---
+name:            rematerialize_before_redefinition
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    $r9 = MOVri -1
+    dead $r4 = COPY $r9
+    dead $r9 = MOVri 1
+...
+
+# CHECK-LABEL: name:            rematerialize_before_redefinition
+# CHECK: dead $r4 = MOVri -1
+# CHECK-NEXT: dead $r9 = MOVri 1
+
+---
+name:            rematerialize_before_call_clobber
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r11
+
+    $r2 = MOVri 7
+    $r4 = COPY $r2
+    JSR killed $r11, csr_sh, implicit $r4, implicit-def dead $pr, implicit-def $r15, implicit-def dead $r0
+...
+
+# CHECK-LABEL: name:            rematerialize_before_call_clobber
+# CHECK-NOT: $r2 = MOVri
+# CHECK: $r4 = MOVri 7
+# CHECK-NEXT: JSR killed $r11
+
+---
+name:            keep_noncopy_use
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0
+
+    $r10 = MOVri 7
+    dead $r4 = COPY $r10
+    dead $r0 = ADDrr killed $r0, killed $r10
+...
+
+# CHECK-LABEL: name:            keep_noncopy_use
+# CHECK: $r10 = MOVri 7
+# CHECK-NEXT: dead $r4 = COPY $r10
+# CHECK-NEXT: dead $r0 = ADDrr killed $r0, killed $r10
+
+---
+name:            keep_without_size_attribute
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    $r8 = MOVri 2
+    dead $r4 = COPY killed $r8
+...
+
+# CHECK-LABEL: name:            keep_without_size_attribute
+# CHECK: $r8 = MOVri 2
+# CHECK-NEXT: dead $r4 = COPY killed $r8
+...
+---
+name: keep_macl_copy
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    $r1 = MOVri 7
+    dead $macl = COPY killed $r1
+...
+
+# CHECK-LABEL: name: keep_macl_copy
+# CHECK: $r1 = MOVri 7
+# CHECK-NEXT: dead $macl = COPY killed $r1
+
+---
+name: keep_mach_copy
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    $r1 = MOVri 7
+    dead $mach = COPY killed $r1
+...
+
+# CHECK-LABEL: name: keep_mach_copy
+# CHECK: $r1 = MOVri 7
+# CHECK-NEXT: dead $mach = COPY killed $r1
+
+---
+name: keep_pr_copy
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    $r1 = MOVri 7
+    dead $pr = COPY killed $r1
+...
+
+# CHECK-LABEL: name: keep_pr_copy
+# CHECK: $r1 = MOVri 7
+# CHECK-NEXT: dead $pr = COPY killed $r1
+
+---
+name: keep_fpul_copy
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    $r1 = MOVri 7
+    dead $fpul = COPY killed $r1
+...
+
+# CHECK-LABEL: name: keep_fpul_copy
+# CHECK: $r1 = MOVri 7
+# CHECK-NEXT: dead $fpul = COPY killed $r1
+
+---
+name: keep_fpscr_copy
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    $r1 = MOVri 7
+    dead $fpscr = COPY killed $r1
+...
+
+# CHECK-LABEL: name: keep_fpscr_copy
+# CHECK: $r1 = MOVri 7
+# CHECK-NEXT: dead $fpscr = COPY killed $r1
+
+---
+name: keep_r15_copy
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    $r1 = MOVri 7
+    dead $r15 = COPY killed $r1
+...
+
+# CHECK-LABEL: name: keep_r15_copy
+# CHECK: $r1 = MOVri 7
+# CHECK-NEXT: dead $r15 = COPY killed $r1

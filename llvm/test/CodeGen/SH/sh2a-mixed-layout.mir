@@ -1,0 +1,78 @@
+# RUN: llc -mtriple=sh-unknown-none-elf -mcpu=sh2a -verify-machineinstrs -run-pass=branch-relaxation %s -o %t-branch-be.mir
+# RUN: FileCheck %s --check-prefix=BRANCH < %t-branch-be.mir
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh2a -verify-machineinstrs -run-pass=branch-relaxation %s -o %t-branch-le.mir
+# RUN: FileCheck %s --check-prefix=BRANCH < %t-branch-le.mir
+# RUN: llc -mtriple=sh-unknown-linux-gnu -mcpu=sh2a -verify-machineinstrs -run-pass=sh-literal-islands,branch-relaxation,sh-delay-slot-filler,sh-literal-pool-range-check %s -o - | FileCheck %s --check-prefix=LITERAL
+# RUN: llc -mtriple=shle-unknown-linux-gnu -mcpu=sh2a -verify-machineinstrs -run-pass=sh-literal-islands,branch-relaxation,sh-delay-slot-filler,sh-literal-pool-range-check %s -o /dev/null
+
+# BRANCH-LABEL: name:            bt_wide_forward_legal
+# BRANCH: BT %bb.2
+# BRANCH-NOT: BRA
+# BRANCH-LABEL: name:            bf_wide_forward_relaxes
+# BRANCH: BT %bb.1
+# BRANCH-NEXT: BRA %bb.2
+# LITERAL-LABEL: name:            literal_wide_branch_growth
+# LITERAL: $r0 = MOVL_load_pc_island %const.0, 0
+# LITERAL: SH_REL16_BRANCH
+# LITERAL: SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+
+--- |
+  @global = external global i32
+
+  define void @bt_wide_forward_legal() { ret void }
+  define void @bf_wide_forward_relaxes() { ret void }
+  define i32 @literal_wide_branch_growth() { ret i32 0 }
+...
+---
+name:            bt_wide_forward_legal
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1, %bb.2
+    BT %bb.2, implicit $tbit
+  bb.1:
+    successors: %bb.2
+    INLINEASM &".rept 64; movi20 #1,r1; .endr", sideeffect attdialect
+  bb.2:
+    RTS implicit $pr
+...
+---
+name:            bf_wide_forward_relaxes
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1, %bb.2
+    BF %bb.2, implicit $tbit
+  bb.1:
+    successors: %bb.2
+    INLINEASM &".rept 64; movi20 #1,r1; .endr; nop", sideeffect attdialect
+  bb.2:
+    RTS implicit $pr
+...
+---
+name:            literal_wide_branch_growth
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 ptrtoint (ptr @global to i32)'
+    alignment:   4
+body:             |
+  bb.0:
+    successors: %bb.3
+    liveins: $pr
+    $r0 = MOVL_load_pc_island %const.0, -1 :: (dereferenceable invariant load (s32) from constant-pool)
+    BRA %bb.3
+  bb.1:
+    INLINEASM &".rept 250; movi20 #1,r1; .endr", sideeffect attdialect
+    RTS implicit $pr
+  bb.2:
+    INLINEASM &".rept 1250; movi20 #1,r1; .endr", sideeffect attdialect
+    RTS implicit $pr
+  bb.3:
+    liveins: $r0, $pr
+    RTS implicit $pr, implicit $r0
+...

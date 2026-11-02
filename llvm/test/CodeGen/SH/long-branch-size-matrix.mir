@@ -1,0 +1,157 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=branch-relaxation %s -o %t-be.mir
+# RUN: FileCheck %s < %t-be.mir
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=branch-relaxation %s -o %t-le.mir
+# RUN: FileCheck %s < %t-le.mir
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -start-after=branch-relaxation -filetype=obj %t-be.mir -o /dev/null
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -start-after=branch-relaxation -filetype=obj %t-le.mir -o /dev/null
+
+# CHECK-LABEL: name:            matrix_256
+# CHECK: BF
+# CHECK-NOT: SH_LONG_BRANCH
+# CHECK-LABEL: name:            matrix_512
+# CHECK: BF
+# CHECK-NOT: SH_LONG_BRANCH
+# CHECK-LABEL: name:            matrix_1024
+# CHECK: BF
+# CHECK-NOT: SH_LONG_BRANCH
+# CHECK-LABEL: name:            matrix_2048
+# CHECK: BF
+# CHECK-NOT: SH_LONG_BRANCH
+# CHECK-LABEL: name:            matrix_4096
+# CHECK: BF
+# CHECK: SH_REL16_BRANCH
+# CHECK-LABEL: name:            matrix_8192
+# CHECK: BF
+# CHECK: SH_REL16_BRANCH
+# CHECK-LABEL: name:            matrix_16384
+# CHECK: BF
+# CHECK: SH_LONG_BRANCH
+
+--- |
+  define void @matrix_256() { ret void }
+  define void @matrix_512() { ret void }
+  define void @matrix_1024() { ret void }
+  define void @matrix_2048() { ret void }
+  define void @matrix_4096() { ret void }
+  define void @matrix_8192() { ret void }
+  define void @matrix_16384() { ret void }
+...
+---
+name:            matrix_256
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $r0
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.2, implicit $tbit
+  bb.1:
+    successors: %bb.2
+    INLINEASM &".space 256", sideeffect attdialect
+    BRA %bb.2
+  bb.2:
+    RTS implicit $pr
+...
+---
+name:            matrix_512
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $r0
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.2, implicit $tbit
+  bb.1:
+    successors: %bb.2
+    INLINEASM &".space 512", sideeffect attdialect
+    BRA %bb.2
+  bb.2:
+    RTS implicit $pr
+...
+---
+name:            matrix_1024
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $r0
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.2, implicit $tbit
+  bb.1:
+    successors: %bb.2
+    INLINEASM &".space 1024", sideeffect attdialect
+    BRA %bb.2
+  bb.2:
+    RTS implicit $pr
+...
+---
+name:            matrix_2048
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $r0
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.2, implicit $tbit
+  bb.1:
+    successors: %bb.2
+    INLINEASM &".space 2048", sideeffect attdialect
+    BRA %bb.2
+  bb.2:
+    RTS implicit $pr
+...
+---
+name:            matrix_4096
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $r0
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.2, implicit $tbit
+  bb.1:
+    successors: %bb.2
+    INLINEASM &".space 4096", sideeffect attdialect
+    BRA %bb.2
+  bb.2:
+    RTS implicit $pr
+...
+---
+name:            matrix_8192
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $r0
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.2, implicit $tbit
+  bb.1:
+    successors: %bb.2
+    INLINEASM &".space 8192", sideeffect attdialect
+    BRA %bb.2
+  bb.2:
+    RTS implicit $pr
+...
+---
+name:            matrix_16384
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $r0
+    TST $r0, $r0, implicit-def $tbit
+    BT %bb.2, implicit $tbit
+  bb.1:
+    successors: %bb.2
+    INLINEASM &".space 16384", sideeffect attdialect
+    BRA %bb.2
+  bb.2:
+    RTS implicit $pr
+...

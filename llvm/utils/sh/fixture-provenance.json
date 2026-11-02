@@ -1,0 +1,124 @@
+{
+  "note": "Frozen original fixtures are preserved byte-for-byte; third-party application sources remain external. No historical runtime outcomes are imported.",
+  "files": [
+    {
+      "origin_commit": "c7e524b75f3e2567cd9c37a36487504421db6917",
+      "origin_path": "utils/sh-corpus/release-sprint/fixtures/cxx17/abi.hpp",
+      "path": "llvm/utils/sh/fixtures/cxx17/abi.hpp",
+      "sha256": "0cc196c6f846113d9f17c0d0e6c5da096c440570d0d58820206ebe4417825f18",
+      "bytes": 428
+    },
+    {
+      "origin_commit": "c7e524b75f3e2567cd9c37a36487504421db6917",
+      "origin_path": "utils/sh-corpus/release-sprint/fixtures/cxx17/abi_main.cpp",
+      "path": "llvm/utils/sh/fixtures/cxx17/abi_main.cpp",
+      "sha256": "a0dd13ab7bbb74d467aa67a38248f31d0a76da0bb7bbb32b1a9015ad98f1ce10",
+      "bytes": 475
+    },
+    {
+      "origin_commit": "c7e524b75f3e2567cd9c37a36487504421db6917",
+      "origin_path": "utils/sh-corpus/release-sprint/fixtures/cxx17/abi_provider.cpp",
+      "path": "llvm/utils/sh/fixtures/cxx17/abi_provider.cpp",
+      "sha256": "8590bcbc43c5bea72c2ca2dba6d6541118de87f7ff13cb65abe411c9c36905e1",
+      "bytes": 488
+    },
+    {
+      "origin_commit": "c7e524b75f3e2567cd9c37a36487504421db6917",
+      "origin_path": "utils/sh-corpus/release-sprint/fixtures/cxx17/constructors.hpp",
+      "path": "llvm/utils/sh/fixtures/cxx17/constructors.hpp",
+      "sha256": "f9aecee7bfaeba97cf02327bc1b694482de70f03eb82359da6991a7c2fbc4c1b",
+      "bytes": 87
+    },
+    {
+      "origin_commit": "c7e524b75f3e2567cd9c37a36487504421db6917",
+      "origin_path": "utils/sh-corpus/release-sprint/fixtures/cxx17/constructors_main.cpp",
+      "path": "llvm/utils/sh/fixtures/cxx17/constructors_main.cpp",
+      "sha256": "e65fc734e9ef4e6f44eda0927ed2ea46d48ba669d39399a07d3642b28671a318",
+      "bytes": 281
+    },
+    {
+      "origin_commit": "c7e524b75f3e2567cd9c37a36487504421db6917",
+      "origin_path": "utils/sh-corpus/release-sprint/fixtures/cxx17/constructors_provider.cpp",
+      "path": "llvm/utils/sh/fixtures/cxx17/constructors_provider.cpp",
+      "sha256": "8907df6020e58d3e66550eebc7ffdc012e3f91ba2f2e60cc1d9a193ca54d223f",
+      "bytes": 390
+    },
+    {
+      "origin_commit": "c7e524b75f3e2567cd9c37a36487504421db6917",
+      "origin_path": "utils/sh-corpus/release-sprint/fixtures/cxx17/core17.cpp",
+      "path": "llvm/utils/sh/fixtures/cxx17/core17.cpp",
+      "sha256": "47d985c969ef220383d5077a16b2f38a841baefa7e75d97906be8dc9e1599e7b",
+      "bytes": 938
+    },
+    {
+      "origin_commit": "c7e524b75f3e2567cd9c37a36487504421db6917",
+      "origin_path": "utils/sh-corpus/release-sprint/fixtures/cxx17/exceptions.hpp",
+      "path": "llvm/utils/sh/fixtures/cxx17/exceptions.hpp",
+      "sha256": "e01d0ada7ad471d361a6573d4d00742294ff74048fd48dd47dab3004b9c31f64",
+      "bytes": 182
+    },
+    {
+      "origin_commit": "c7e524b75f3e2567cd9c37a36487504421db6917",
+      "origin_path": "utils/sh-corpus/release-sprint/fixtures/cxx17/exceptions_main.cpp",
+      "path": "llvm/utils/sh/fixtures/cxx17/exceptions_main.cpp",
+      "sha256": "0b7c9c0bbfcf86f6d3fe4662fb3c46afca70c7e5fc28f110f1b4755d76f51158",
+      "bytes": 345
+    },
+    {
+      "origin_commit": "c7e524b75f3e2567cd9c37a36487504421db6917",
+      "origin_path": "utils/sh-corpus/release-sprint/fixtures/cxx17/exceptions_middle.cpp",
+      "path": "llvm/utils/sh/fixtures/cxx17/exceptions_middle.cpp",
+      "sha256": "75bdbc0a4bda1a10e0839e4faf555ab7ebfcc8670d128c1a8f535edc1bfbec3c",
+      "bytes": 128
+    },
+    {
+      "origin_commit": "c7e524b75f3e2567cd9c37a36487504421db6917",
+      "origin_path": "utils/sh-corpus/release-sprint/fixtures/cxx17/exceptions_leaf.cpp",
+      "path": "llvm/utils/sh/fixtures/cxx17/exceptions_leaf.cpp",
+      "sha256": "39609213a7a9720b7a077571bb2938cdcc415ee03d8b7076446598335f186072",
+      "bytes": 181
+    },
+    {
+      "origin_commit": "c7e524b75f3e2567cd9c37a36487504421db6917",
+      "origin_path": "utils/sh-corpus/release-sprint/fixtures/cxx17/ORACLES.json",
+      "path": "llvm/utils/sh/fixtures/cxx17/ORACLES.json",
+      "sha256": "d7662807e20d97cff0281a38e62dfefcb5d8fc454ed7906be460dbcada1b38a6",
+      "bytes": 852
+    },
+    {
+      "origin_commit": "c7e524b75f3e2567cd9c37a36487504421db6917",
+      "origin_path": "utils/sh-corpus/development11/zlib_roundtrip.c",
+      "path": "llvm/utils/sh/fixtures/apps/zlib_roundtrip.c",
+      "sha256": "8acfde32c97a1d00168127ce23f1a6f34a76c7c30feeb69678ea5cbe692aeb61",
+      "bytes": 2372
+    },
+    {
+      "origin_commit": "c7e524b75f3e2567cd9c37a36487504421db6917",
+      "origin_path": "utils/sh-corpus/development11/sqlite_workload.c",
+      "path": "llvm/utils/sh/fixtures/apps/sqlite_workload.c",
+      "sha256": "6fd3f43d27c2d881e5eae282c7c80c0442bd6bc96da50bf3e3fb404ca10f26bf",
+      "bytes": 2799
+    },
+    {
+      "origin_commit": "c7e524b75f3e2567cd9c37a36487504421db6917",
+      "origin_path": "utils/sh-corpus/release-sprint/fixtures/apps/tinyxml2.cpp",
+      "path": "llvm/utils/sh/fixtures/apps/tinyxml2.cpp",
+      "sha256": "93c34d8dc46ad48d52b9a57176505702425a6ad22a03abaf54f7a304786579e8",
+      "bytes": 735
+    },
+    {
+      "origin_commit": "c7e524b75f3e2567cd9c37a36487504421db6917",
+      "origin_path": "utils/sh-corpus/release-sprint/fixtures/apps/fmt.cpp",
+      "path": "llvm/utils/sh/fixtures/apps/fmt.cpp",
+      "sha256": "f22376fff3c91c8c1db8a058609c32a5b9e88f0898b5ead7c04a2167caea0d1e",
+      "bytes": 426
+    },
+    {
+      "origin_commit": "c7e524b75f3e2567cd9c37a36487504421db6917",
+      "origin_path": "compiler-rt/utils/build-sh-i32.py",
+      "path": "compiler-rt/utils/build-sh-i32.py",
+      "sha256": "36a96d20a0065eefe0ff2c7915e972e7402a28a2fbdd642800584690bf1c321f",
+      "bytes": 9865
+    }
+  ]
+}

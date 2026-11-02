@@ -1,0 +1,38 @@
+# RUN: split-file %s %t
+# RUN: llvm-mc -triple=sh-unknown-elf -mcpu=sh4al-dsp -disassemble -show-encoding %t/be.txt | FileCheck %s --check-prefix=BE
+# RUN: llvm-mc -triple=shle-unknown-elf -mcpu=sh4al-dsp -disassemble -show-encoding %t/le.txt | FileCheck %s --check-prefix=LE
+# RUN: llvm-mc -triple=sh-unknown-elf -mcpu=sh4al-dsp -disassemble %t/invalid-be.txt 2>&1 | FileCheck %s --check-prefix=RECOVER
+# RUN: llvm-mc -triple=shle-unknown-elf -mcpu=sh4al-dsp -disassemble %t/invalid-le.txt 2>&1 | FileCheck %s --check-prefix=RECOVER
+# RUN: llvm-mc -triple=sh-unknown-elf -mcpu=sh4al-dsp -disassemble %t/truncated-be.txt 2>&1 | FileCheck %s --check-prefix=TRUNCATED
+# RUN: llvm-mc -triple=shle-unknown-elf -mcpu=sh4al-dsp -disassemble %t/truncated-le.txt 2>&1 | FileCheck %s --check-prefix=TRUNCATED
+
+# BE: padd	x0,y0,a0
+# BE-SAME: encoding: [0xf8,0x00,0xb1,0x07]
+# BE-NEXT: movs.l	@r4+,x0
+# BE-SAME: encoding: [0xf4,0x8a]
+# LE: padd	x0,y0,a0
+# LE-SAME: encoding: [0x00,0xf8,0x07,0xb1]
+# LE-NEXT: movs.l	@r4+,x0
+# LE-SAME: encoding: [0x8a,0xf4]
+# RECOVER: warning: invalid instruction encoding
+# RECOVER: movs.l	@r4+,x0
+# TRUNCATED: warning: invalid instruction encoding
+# TRUNCATED-NOT: padd
+
+#--- be.txt
+0xf8 0x00 0xb1 0x07 0xf4 0x8a
+
+#--- le.txt
+0x00 0xf8 0x07 0xb1 0x8a 0xf4
+
+#--- invalid-be.txt
+0xf8 0x00 0x00 0x00 0xf4 0x8a
+
+#--- invalid-le.txt
+0x00 0xf8 0x00 0x00 0x8a 0xf4
+
+#--- truncated-be.txt
+0xf8 0x00
+
+#--- truncated-le.txt
+0x00 0xf8

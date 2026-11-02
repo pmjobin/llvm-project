@@ -1,0 +1,500 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=branch-relaxation,sh-compress-jump-tables %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=branch-relaxation,sh-compress-jump-tables %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -start-before=branch-relaxation -filetype=obj %s -o %t.be.o
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -start-before=branch-relaxation -filetype=obj %s -o %t.le.o
+
+# RUN: llc -enable-new-pm -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -start-before=branch-relaxation -filetype=obj %s -o %t.new-be.o
+# RUN: llc -enable-new-pm -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -start-before=branch-relaxation -filetype=obj %s -o %t.new-le.o
+
+# Compressing five entries moves the forward conditional from 34 to 24 and
+# its four-byte-aligned target from 292 to 284: displacement 127 becomes 128,
+# although the function shrinks. The backward cases align the source instead.
+# BRA exercises the corresponding signed twelve-bit boundaries.
+# Safe odd/even tables must still use SHLL, MOVW and two-byte entries.
+# In sequential_tables, either table alone can compress. After the first has
+# compressed, compressing the second would move BF from 30 to 28 while its
+# eight-byte-aligned target stays at 288. The second must remain wide.
+
+# CHECK-LABEL: name: forward_bf
+# CHECK: $r4 = SHLL2 killed $r4
+# CHECK: $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+# CHECK: SH_JUMPTABLE %jump-table.0, {{.*}}, 4
+
+# CHECK-LABEL: name: forward_bt
+# CHECK: $r4 = SHLL2 killed $r4
+# CHECK: $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+# CHECK: SH_JUMPTABLE %jump-table.0, {{.*}}, 4
+
+# CHECK-LABEL: name: backward_bf
+# CHECK: $r4 = SHLL2 killed $r4
+# CHECK: $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+# CHECK: SH_JUMPTABLE %jump-table.0, {{.*}}, 4
+
+# CHECK-LABEL: name: backward_bt
+# CHECK: $r4 = SHLL2 killed $r4
+# CHECK: $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+# CHECK: SH_JUMPTABLE %jump-table.0, {{.*}}, 4
+
+# CHECK-LABEL: name: forward_bra
+# CHECK: $r4 = SHLL2 killed $r4
+# CHECK: $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+# CHECK: SH_JUMPTABLE %jump-table.0, {{.*}}, 4
+
+# CHECK-LABEL: name: backward_bra
+# CHECK: $r4 = SHLL2 killed $r4
+# CHECK: $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+# CHECK: SH_JUMPTABLE %jump-table.0, {{.*}}, 4
+
+# CHECK-LABEL: name: safe_odd
+# CHECK: $r4 = SHLL killed $r4, implicit-def dead $tbit
+# CHECK: $r1 = MOVW_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s16) from jump-table, align 4)
+# CHECK: SH_JUMPTABLE %jump-table.0, {{.*}}, 2
+
+# CHECK-LABEL: name: safe_even
+# CHECK: $r4 = SHLL killed $r4, implicit-def dead $tbit
+# CHECK: $r1 = MOVW_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s16) from jump-table, align 4)
+# CHECK: SH_JUMPTABLE %jump-table.0, {{.*}}, 2
+
+# CHECK-LABEL: name: sequential_tables
+# CHECK: SH_JUMPTABLE %jump-table.0, {{.*}}, 2
+# CHECK: SH_JUMPTABLE %jump-table.1, {{.*}}, 4
+
+# CHECK-LABEL: name: literal_island
+# CHECK: SH_JUMPTABLE %jump-table.0, {{.*}}, 4
+# CHECK: SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+
+# CHECK-LABEL: name: compression_then_filling
+# CHECK: SH_JUMPTABLE %jump-table.0, {{.*}}, 2
+
+--- |
+  define void @forward_bf() { ret void }
+  define void @forward_bt() { ret void }
+  define void @backward_bf() { ret void }
+  define void @backward_bt() { ret void }
+  define void @forward_bra() { ret void }
+  define void @backward_bra() { ret void }
+  define void @safe_odd() { ret void }
+  define void @safe_even() { ret void }
+  define void @sequential_tables() { ret void }
+  define void @literal_island() { ret void }
+  define void @compression_then_filling() { ret void }
+...
+---
+name: forward_bf
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.2', '%bb.2', '%bb.2', '%bb.2', '%bb.2' ]
+body: |
+  bb.0:
+    successors: %bb.2
+    liveins: $r4, $pr
+    $r0 = MOVA <mcsymbol .Lforward_bf_table>
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lforward_bf_base>
+  bb.1 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lforward_bf_table>, <mcsymbol .Lforward_bf_base>, 4
+  bb.2:
+    successors: %bb.3, %bb.4
+    liveins: $pr
+    SETT implicit-def $tbit
+    BF %bb.4, implicit killed $tbit
+  bb.3:
+    successors: %bb.4
+    liveins: $pr
+    INLINEASM &".space 256", sideeffect attdialect
+  bb.4 (align 4):
+    liveins: $pr
+    RTS implicit $pr
+...
+---
+name: forward_bt
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.2', '%bb.2', '%bb.2', '%bb.2', '%bb.2' ]
+body: |
+  bb.0:
+    successors: %bb.2
+    liveins: $r4, $pr
+    $r0 = MOVA <mcsymbol .Lforward_bt_table>
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lforward_bt_base>
+  bb.1 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lforward_bt_table>, <mcsymbol .Lforward_bt_base>, 4
+  bb.2:
+    successors: %bb.3, %bb.4
+    liveins: $pr
+    SETT implicit-def $tbit
+    BT %bb.4, implicit killed $tbit
+  bb.3:
+    successors: %bb.4
+    liveins: $pr
+    INLINEASM &".space 256", sideeffect attdialect
+  bb.4 (align 4):
+    liveins: $pr
+    RTS implicit $pr
+...
+---
+name: backward_bf
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.2', '%bb.2', '%bb.2', '%bb.2', '%bb.2' ]
+body: |
+  bb.0:
+    successors: %bb.2
+    liveins: $r4, $pr
+    $r0 = MOVA <mcsymbol .Lbackward_bf_table>
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lbackward_bf_base>
+  bb.1 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lbackward_bf_table>, <mcsymbol .Lbackward_bf_base>, 4
+  bb.2:
+    successors: %bb.3
+    liveins: $pr
+    NOP
+  bb.3:
+    successors: %bb.4
+    liveins: $pr
+    INLINEASM &".space 246", sideeffect attdialect
+  bb.4 (align 4):
+    successors: %bb.2, %bb.5
+    liveins: $pr
+    SETT implicit-def $tbit
+    NOP
+    BF %bb.2, implicit killed $tbit
+  bb.5:
+    liveins: $pr
+    RTS implicit $pr
+...
+---
+name: backward_bt
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.2', '%bb.2', '%bb.2', '%bb.2', '%bb.2' ]
+body: |
+  bb.0:
+    successors: %bb.2
+    liveins: $r4, $pr
+    $r0 = MOVA <mcsymbol .Lbackward_bt_table>
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lbackward_bt_base>
+  bb.1 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lbackward_bt_table>, <mcsymbol .Lbackward_bt_base>, 4
+  bb.2:
+    successors: %bb.3
+    liveins: $pr
+    NOP
+  bb.3:
+    successors: %bb.4
+    liveins: $pr
+    INLINEASM &".space 246", sideeffect attdialect
+  bb.4 (align 4):
+    successors: %bb.2, %bb.5
+    liveins: $pr
+    SETT implicit-def $tbit
+    NOP
+    BT %bb.2, implicit killed $tbit
+  bb.5:
+    liveins: $pr
+    RTS implicit $pr
+...
+---
+name: forward_bra
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.2', '%bb.2', '%bb.2', '%bb.2', '%bb.2' ]
+body: |
+  bb.0:
+    successors: %bb.2
+    liveins: $r4, $pr
+    $r0 = MOVA <mcsymbol .Lforward_bra_table>
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lforward_bra_base>
+  bb.1 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lforward_bra_table>, <mcsymbol .Lforward_bra_base>, 4
+  bb.2:
+    successors: %bb.4
+    liveins: $pr
+    NOP
+    BRA %bb.4
+  bb.3:
+    successors: %bb.4
+    liveins: $pr
+    INLINEASM &".space 4094", sideeffect attdialect
+  bb.4 (align 4):
+    liveins: $pr
+    RTS implicit $pr
+...
+---
+name: backward_bra
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.2', '%bb.2', '%bb.2', '%bb.2', '%bb.2' ]
+body: |
+  bb.0:
+    successors: %bb.2
+    liveins: $r4, $pr
+    $r0 = MOVA <mcsymbol .Lbackward_bra_table>
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lbackward_bra_base>
+  bb.1 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lbackward_bra_table>, <mcsymbol .Lbackward_bra_base>, 4
+  bb.2:
+    successors: %bb.3
+    liveins: $pr
+    NOP
+  bb.3:
+    successors: %bb.4
+    liveins: $pr
+    INLINEASM &".space 4086", sideeffect attdialect
+  bb.4 (align 4):
+    successors: %bb.2
+    liveins: $pr
+    NOP
+    NOP
+    BRA %bb.2
+  bb.5:
+    liveins: $pr
+    RTS implicit $pr
+...
+---
+name: safe_odd
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.2', '%bb.2', '%bb.2', '%bb.2', '%bb.2' ]
+body: |
+  bb.0:
+    successors: %bb.2
+    liveins: $r4, $pr
+    $r0 = MOVA <mcsymbol .Lsafe_odd_table>
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lsafe_odd_base>
+  bb.1 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lsafe_odd_table>, <mcsymbol .Lsafe_odd_base>, 4
+  bb.2:
+    successors: %bb.3, %bb.4
+    liveins: $pr
+    SETT implicit-def $tbit
+    BF %bb.4, implicit killed $tbit
+  bb.3:
+    successors: %bb.4
+    liveins: $pr
+    INLINEASM &".space 254", sideeffect attdialect
+  bb.4 (align 4):
+    liveins: $pr
+    RTS implicit $pr
+...
+---
+name: safe_even
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.2', '%bb.2', '%bb.2', '%bb.2' ]
+body: |
+  bb.0:
+    successors: %bb.2
+    liveins: $r4, $pr
+    $r0 = MOVA <mcsymbol .Lsafe_even_table>
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lsafe_even_base>
+  bb.1 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lsafe_even_table>, <mcsymbol .Lsafe_even_base>, 4
+  bb.2:
+    successors: %bb.3, %bb.4
+    liveins: $pr
+    SETT implicit-def $tbit
+    BF %bb.4, implicit killed $tbit
+  bb.3:
+    successors: %bb.4
+    liveins: $pr
+    INLINEASM &".space 256", sideeffect attdialect
+  bb.4 (align 4):
+    liveins: $pr
+    RTS implicit $pr
+...
+---
+name: sequential_tables
+alignment: 8
+tracksRegLiveness: true
+noVRegs: true
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.2' ]
+    - id: 1
+      blocks: [ '%bb.4' ]
+body: |
+  bb.0:
+    successors: %bb.2
+    liveins: $r4, $r5, $pr
+    $r0 = MOVA <mcsymbol .Lseq_table0>
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lseq_base0>
+  bb.1 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lseq_table0>, <mcsymbol .Lseq_base0>, 4
+  bb.2:
+    successors: %bb.4
+    liveins: $r5, $pr
+    $r0 = MOVA <mcsymbol .Lseq_table1>
+    $r5 = SHLL2 killed $r5
+    $r1 = MOVL_load_indexed killed $r5, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.1, <mcsymbol .Lseq_base1>
+  bb.3 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.1, <mcsymbol .Lseq_table1>, <mcsymbol .Lseq_base1>, 4
+  bb.4:
+    successors: %bb.5, %bb.6
+    liveins: $pr
+    SETT implicit-def $tbit
+    BF %bb.6, implicit killed $tbit
+  bb.5:
+    successors: %bb.6
+    liveins: $pr
+    INLINEASM &".space 252", sideeffect attdialect
+  bb.6 (align 8):
+    liveins: $pr
+    RTS implicit $pr
+...
+---
+name: literal_island
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+constants:
+  - id: 0
+    value: 'i32 42'
+    alignment: 4
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.2', '%bb.2', '%bb.2', '%bb.2', '%bb.2' ]
+body: |
+  bb.0:
+    successors: %bb.2
+    liveins: $r4, $pr
+    dead $r2 = MOVL_load_pc_island %const.0, 0 :: (dereferenceable invariant load (s32) from constant-pool)
+    $r0 = MOVA <mcsymbol .Lliteral_island_table>
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lliteral_island_base>
+  bb.1 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lliteral_island_table>, <mcsymbol .Lliteral_island_base>, 4
+  bb.2:
+    successors: %bb.3, %bb.5
+    liveins: $pr
+    SETT implicit-def $tbit
+    BF %bb.5, implicit killed $tbit
+  bb.3:
+    successors: %bb.5
+    liveins: $pr
+    INLINEASM &".space 248", sideeffect attdialect
+    BRA %bb.5
+  bb.4 (align 4):
+    successors:
+    SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+  bb.5 (align 4):
+    liveins: $pr
+    RTS implicit $pr
+...
+---
+name: compression_then_filling
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.2', '%bb.2', '%bb.2', '%bb.2' ]
+body: |
+  bb.0:
+    successors: %bb.2
+    liveins: $r4, $r5, $pr
+    $r0 = MOVA <mcsymbol .Lfill_table>
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lfill_base>
+  bb.1 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lfill_table>, <mcsymbol .Lfill_base>, 4
+  bb.2:
+    successors: %bb.3
+    liveins: $r5, $pr
+    SETT implicit-def $tbit
+    $r1 = MOVrr $r5
+    BRA %bb.3
+  bb.3:
+    successors: %bb.4, %bb.6
+    liveins: $pr, $tbit
+    BF %bb.6, implicit killed $tbit
+  bb.4:
+    successors: %bb.5
+    liveins: $pr
+    INLINEASM &".space 254", sideeffect attdialect
+  bb.5 (align 4):
+    successors: %bb.6
+    liveins: $pr
+    NOP
+  bb.6:
+    liveins: $pr
+    RTS implicit $pr
+...

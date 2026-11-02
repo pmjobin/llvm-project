@@ -1,0 +1,51 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh4 -run-pass=sh-fpu-state -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -run-pass=sh-fpu-state -verify-machineinstrs %s -o - | FileCheck %s
+
+# Exercise the pass's explicit mode-pseudo contract. Ordinary C/C++ lowering
+# currently scalarizes double transfers; this is not a frontend reachability
+# claim. A Single|Double join must describe the actual scalar-move transition
+# to ABI mode, so the successor's single arithmetic establishes PR=0 again.
+# CHECK-LABEL: name: scalar_move_join
+# CHECK: bb.3:
+# CHECK: SET_FPSCR_MODE 3
+# CHECK-NEXT: $fr0 = FMOV_FR $fr2
+# CHECK: bb.4:
+# CHECK: TRANSITION_FPSCR_MODE 1, 8
+# CHECK-NEXT: $fr0 = FADD_FR $fr0, $fr1
+--- |
+  define void @scalar_move_join() { ret void }
+...
+---
+name: scalar_move_join
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $tbit, $fr0, $fr1, $fr2, $fpscr, $pr
+    BT %bb.2, implicit $tbit
+    BRA %bb.1
+
+  bb.1:
+    successors: %bb.3
+    liveins: $fr0, $fr1, $fr2, $fpscr, $pr
+    SET_FPSCR_MODE 2, implicit-def dead $r0, implicit-def dead $r1, implicit-def $fpscr, implicit $fpscr
+    BRA %bb.3
+
+  bb.2:
+    successors: %bb.3
+    liveins: $fr0, $fr1, $fr2, $fpscr, $pr
+    SET_FPSCR_MODE 1, implicit-def dead $r0, implicit-def dead $r1, implicit-def $fpscr, implicit $fpscr
+    BRA %bb.3
+
+  bb.3:
+    successors: %bb.4
+    liveins: $fr0, $fr1, $fr2, $fpscr, $pr
+    $fr0 = FMOV_FR $fr2, implicit $fpscr
+    BRA %bb.4
+
+  bb.4:
+    liveins: $fr0, $fr1, $fpscr, $pr
+    $fr0 = FADD_FR $fr0, $fr1, implicit-def $fpscr, implicit $fpscr
+    RTS implicit $pr
+...

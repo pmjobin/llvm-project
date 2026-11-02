@@ -1,0 +1,39 @@
+# RUN: split-file %s %t
+# RUN: llvm-mc -triple=sh-unknown-elf -mcpu=sh4a -disassemble %t/be.txt | FileCheck %s --check-prefix=DIS
+# RUN: llvm-mc -triple=shle-unknown-elf -mcpu=sh4a -disassemble %t/le.txt | FileCheck %s --check-prefix=DIS
+# RUN: llvm-mc -triple=sh-unknown-elf -mcpu=sh4 -disassemble %t/unsupported.txt 2>&1 | FileCheck %s --check-prefix=RECOVER
+# RUN: llvm-mc -triple=sh-unknown-elf -mcpu=sh4a -disassemble %t/invalid.txt 2>&1 | FileCheck %s --check-prefix=RECOVER
+# RUN: printf '0x01\n' | llvm-mc -triple=sh-unknown-elf -mcpu=sh4a -disassemble 2>&1 | FileCheck %s --check-prefix=TRUNCATED
+
+# DIS: movco.l	r0,@r1
+# DIS-NEXT: movli.l	@r2,r0
+# DIS-NEXT: movua.l	@r3,r0
+# DIS-NEXT: movua.l	@r4+,r0
+# DIS-NEXT: icbi	@r5
+# DIS-NEXT: ldc	r6,sgr
+# DIS-NEXT: ldc.l	@r7+,sgr
+# DIS-NEXT: prefi	@r8
+# DIS-NEXT: synco
+# DIS-NEXT: fsrra	fr9
+# DIS-NEXT: fsca	fpul,dr10
+# DIS-NEXT: fpchg
+# DIS-NEXT: nop
+
+# RECOVER: warning: invalid instruction encoding
+# RECOVER: nop
+# TRUNCATED: warning: invalid instruction encoding
+# TRUNCATED-NOT: movco.l
+
+#--- be.txt
+0x01 0x73 0x02 0x63 0x43 0xa9 0x44 0xe9 0x05 0xe3 0x46 0x3a
+0x47 0x36 0x08 0xd3 0x00 0xab 0xf9 0x7d 0xfa 0xfd 0xf7 0xfd 0x00 0x09
+
+#--- le.txt
+0x73 0x01 0x63 0x02 0xa9 0x43 0xe9 0x44 0xe3 0x05 0x3a 0x46
+0x36 0x47 0xd3 0x08 0xab 0x00 0x7d 0xf9 0xfd 0xfa 0xfd 0xf7 0x09 0x00
+
+#--- unsupported.txt
+0x01 0x73 0x00 0x09
+
+#--- invalid.txt
+0xff 0xff 0x00 0x09

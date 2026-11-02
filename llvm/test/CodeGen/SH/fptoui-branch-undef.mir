@@ -1,0 +1,42 @@
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -run-pass=finalize-isel -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-none-elf -mcpu=sh4 -run-pass=finalize-isel -verify-machineinstrs %s -o - | FileCheck %s
+
+# YAML block indentation follows MIR syntax.
+--- |
+  define i32 @undef_single() { ret i32 0 }
+  define i32 @undef_wide() { ret i32 0 }
+...
+---
+name: undef_single
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr
+    %0:fr = IMPLICIT_DEF
+    %1:fr = IMPLICIT_DEF
+    %2:gpr = F32_TO_U32_PSEUDO undef %0, undef %1, implicit $fpscr, implicit-def $tbit, implicit-def $fpul, implicit-def $fpscr
+    $r0 = COPY %2
+    RTS implicit $pr, implicit $r0
+...
+# CHECK-LABEL: name: undef_single
+# CHECK: FCMP_GT_FR undef %0, undef %1
+# CHECK: FSUB_FR undef %0, undef %1
+# CHECK: PHI undef %0
+# CHECK: F32_TO_I32_PSEUDO
+---
+name: undef_wide
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr
+    %0:dr = IMPLICIT_DEF
+    %1:dr = IMPLICIT_DEF
+    %2:gpr = F64_TO_U32_PSEUDO undef %0, undef %1, implicit $fpscr, implicit-def $tbit, implicit-def $fpul, implicit-def $fpscr
+    $r0 = COPY %2
+    RTS implicit $pr, implicit $r0
+...
+# CHECK-LABEL: name: undef_wide
+# CHECK: FCMP_GT_DR undef %0, undef %1
+# CHECK: FSUB_DR undef %0, undef %1
+# CHECK: PHI undef %0
+# CHECK: F64_TO_I32_PSEUDO

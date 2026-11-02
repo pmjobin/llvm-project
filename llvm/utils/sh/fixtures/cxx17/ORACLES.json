@@ -1,0 +1,35 @@
+{
+  "format": "llvm-sh-cxx-host-fixture-oracles/1",
+  "compiler_target": "host only until validated on SH",
+  "language_standard": "c++17",
+  "fixtures": {
+    "core17": {
+      "sources": [
+        "core17.cpp"
+      ],
+      "stdout": "core17:sum=22:str=abcdef:map=7:variant=ok:PASS\n"
+    },
+    "exceptions": {
+      "sources": [
+        "exceptions_main.cpp",
+        "exceptions_middle.cpp",
+        "exceptions_leaf.cpp"
+      ],
+      "stdout": "exceptions:what=needle:unwound=2:PASS\n"
+    },
+    "abi": {
+      "sources": [
+        "abi_main.cpp",
+        "abi_provider.cpp"
+      ],
+      "stdout": "abi:virt=34:raw=17:joined=abi!:bridge=6:dtor=1:PASS\n"
+    },
+    "constructors": {
+      "sources": [
+        "constructors_main.cpp",
+        "constructors_provider.cpp"
+      ],
+      "stdout": "ctors:global=1:local=1:PASS\n"
+    }
+  }
+}

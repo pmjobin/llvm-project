@@ -1,0 +1,215 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh1 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s --check-prefix=SH1
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s --check-prefix=SH2
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh3 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s --check-prefix=SH2
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s --check-prefix=SH4
+
+--- |
+  define void @safe(i32 %a, i32 %b) { ret void }
+  define void @no_candidate(i32 %a, i32 %b) { ret void }
+  define void @register_dependency(i32 %a, i32 %b) { ret void }
+  define void @memory(ptr %p, i32 %a, i32 %b) { ret void }
+  define void @forward_boundary_safe(i32 %a, i32 %b) { ret void }
+  define void @forward_boundary_unsafe(i32 %a, i32 %b) { ret void }
+  define void @moved_use_after_kill(i32 %a, i32 %b) { ret void }
+...
+---
+name:            safe
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+
+    BRA %bb.1
+
+  bb.1:
+    successors: %bb.0(0x40000000), %bb.2(0x40000000)
+    liveins: $r4, $r5
+
+    $r0 = MOVrr $r4
+    CMP_EQ $r5, $r4, implicit-def $tbit
+    BT %bb.0, implicit $tbit
+
+  bb.2:
+...
+
+# SH1-LABEL: name:            safe
+# SH1: $r0 = MOVrr $r4
+# SH1-NEXT: CMP_EQ $r5, $r4, implicit-def $tbit
+# SH1-NEXT: BT %bb.{{[0-9]+}}, implicit $tbit
+# SH2-LABEL: name:            safe
+# SH2: CMP_EQ $r5, $r4, implicit-def $tbit
+# SH2-NEXT: BT_S %bb.{{[0-9]+}}, implicit $tbit {
+# SH2-NEXT: $r0 = MOVrr $r4
+# SH2-NEXT: }
+# SH4-LABEL: name:            forward_boundary_safe
+# SH4: $r0 = MOVrr $r4
+# SH4-NEXT: CMP_EQ $r5, $r4, implicit-def $tbit
+# SH4-NEXT: BT %bb.{{[0-9]+}}, implicit $tbit
+
+---
+name:            no_candidate
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+
+    BRA %bb.1
+
+  bb.1:
+    successors: %bb.0(0x40000000), %bb.2(0x40000000)
+    liveins: $r4, $r5
+
+    CMP_EQ $r5, $r4, implicit-def $tbit
+    BT %bb.0, implicit $tbit
+
+  bb.2:
+...
+
+# SH2-LABEL: name:            no_candidate
+# SH2: CMP_EQ $r5, $r4, implicit-def $tbit
+# SH2-NEXT: BT %bb.{{[0-9]+}}, implicit $tbit
+
+---
+name:            register_dependency
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+
+    BRA %bb.1
+
+  bb.1:
+    successors: %bb.0(0x40000000), %bb.2(0x40000000)
+    liveins: $r4
+
+    $r5 = MOVrr $r4
+    CMP_EQ $r5, $r4, implicit-def $tbit
+    BF %bb.0, implicit $tbit
+
+  bb.2:
+...
+
+# SH2-LABEL: name:            register_dependency
+# SH2: $r5 = MOVrr $r4
+# SH2-NEXT: CMP_EQ $r5, $r4, implicit-def $tbit
+# SH2-NEXT: BF %bb.{{[0-9]+}}, implicit $tbit
+
+---
+name:            memory
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+
+    BRA %bb.1
+
+  bb.1:
+    successors: %bb.0(0x40000000), %bb.2(0x40000000)
+    liveins: $r4, $r5, $r6
+
+    $r0 = MOVL_load_reg $r6 :: (load (s32) from %ir.p)
+    CMP_EQ $r5, $r4, implicit-def $tbit
+    BF %bb.0, implicit $tbit
+
+  bb.2:
+...
+
+# SH2-LABEL: name:            memory
+# SH2: $r0 = MOVL_load_reg $r6
+# SH2-NEXT: CMP_EQ $r5, $r4, implicit-def $tbit
+# SH2-NEXT: BF %bb.{{[0-9]+}}, implicit $tbit
+
+---
+name:            forward_boundary_safe
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    liveins: $r4, $r5
+
+    $r0 = MOVrr $r4
+    CMP_EQ $r5, $r4, implicit-def $tbit
+    BT %bb.2, implicit $tbit
+
+  bb.1:
+    successors: %bb.2(0x80000000)
+
+    INLINEASM &".space 254", sideeffect attdialect
+
+  bb.2:
+...
+
+# SH1-LABEL: name:            forward_boundary_safe
+# SH1: $r0 = MOVrr $r4
+# SH1-NEXT: CMP_EQ $r5, $r4, implicit-def $tbit
+# SH1-NEXT: BT %bb.{{[0-9]+}}, implicit $tbit
+# SH2-LABEL: name:            forward_boundary_safe
+# SH2: CMP_EQ $r5, $r4, implicit-def $tbit
+# SH2-NEXT: BT_S %bb.{{[0-9]+}}, implicit $tbit {
+# SH2-NEXT: $r0 = MOVrr $r4
+# SH2-NEXT: }
+
+---
+name:            forward_boundary_unsafe
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    liveins: $r4, $r5
+
+    $r0 = MOVrr $r4
+    CMP_EQ $r5, $r4, implicit-def $tbit
+    BT %bb.2, implicit $tbit
+
+  bb.1:
+    successors: %bb.2(0x80000000)
+
+    INLINEASM &".space 256", sideeffect attdialect
+
+  bb.2:
+...
+
+# SH2-LABEL: name:            forward_boundary_unsafe
+# SH2: $r0 = MOVrr $r4
+# SH2-NEXT: CMP_EQ $r5, $r4, implicit-def $tbit
+# SH2-NEXT: BT %bb.{{[0-9]+}}, implicit $tbit
+
+---
+name:            moved_use_after_kill
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    liveins: $r5, $r6
+
+    $r0 = MOVrr $r5
+    CMP_HS $r6, killed $r5, implicit-def $tbit
+    BF %bb.2, implicit $tbit
+
+  bb.1:
+    liveins: $r0
+
+    RTS implicit $pr, implicit killed $r0
+
+  bb.2:
+    liveins: $r0
+
+    RTS implicit $pr, implicit killed $r0
+...
+
+# SH1-LABEL: name:            moved_use_after_kill
+# SH1: $r0 = MOVrr $r5
+# SH1-NEXT: CMP_HS $r6, killed $r5, implicit-def $tbit
+# SH1-NEXT: BF %bb.{{[0-9]+}}, implicit $tbit
+# SH2-LABEL: name:            moved_use_after_kill
+# SH2: CMP_HS $r6, $r5, implicit-def $tbit
+# SH2-NEXT: BF_S %bb.{{[0-9]+}}, implicit $tbit {
+# SH2-NEXT: $r0 = MOVrr killed $r5
+# SH2-NEXT: }

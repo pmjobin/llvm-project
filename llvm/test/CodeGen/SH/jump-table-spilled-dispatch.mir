@@ -1,0 +1,91 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -run-pass=sh-inline-jump-tables -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -run-pass=sh-inline-jump-tables,sh-literal-pool-range-check -verify-machineinstrs %s -o /dev/null
+
+# CHECK-LABEL: name:            spilled_dispatch
+# CHECK: $r0 = MOVA <mcsymbol [[TABLE:.*]]>
+# CHECK: MOVL_store_disp killed $r1, $r15, 0
+# CHECK: $r6 = MOVL_load_disp $r15, 0
+# CHECK-NEXT: BRAF killed $r6, %jump-table.0, <mcsymbol [[BASE:.*]]>
+# CHECK: SH_JUMPTABLE %jump-table.0, <mcsymbol [[TABLE]]>, <mcsymbol [[BASE]]>, 4
+
+# CHECK-LABEL: name:            duplicated_dispatch
+# CHECK: $r0 = MOVA <mcsymbol [[TABLE1:.*]]>
+# CHECK: BRAF killed $r1, %jump-table.0, <mcsymbol [[BASE1:.*]]>
+# CHECK: SH_JUMPTABLE %jump-table.0, <mcsymbol [[TABLE1]]>, <mcsymbol [[BASE1]]>, 4
+# CHECK: $r0 = MOVA <mcsymbol [[TABLE2:.*]]>
+# CHECK: BRAF killed $r1, %jump-table.0, <mcsymbol [[BASE2:.*]]>
+# CHECK: SH_JUMPTABLE %jump-table.0, <mcsymbol [[TABLE2]]>, <mcsymbol [[BASE2]]>, 4
+
+--- |
+  define void @spilled_dispatch() { ret void }
+  define void @duplicated_dispatch() { ret void }
+...
+---
+name:            spilled_dispatch
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+jumpTable:
+  kind:            inline
+  entries:
+    - id:              0
+      blocks:          [ '%bb.2', '%bb.3', '%bb.4', '%bb.5' ]
+body:             |
+  bb.0:
+    successors: %bb.2, %bb.3, %bb.4, %bb.5
+    liveins: $r4, $r15
+
+    $r0 = MOVA %jump-table.0
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    MOVL_store_disp killed $r1, $r15, 0
+    $r6 = MOVL_load_disp $r15, 0
+    BRAF killed $r6, %jump-table.0
+
+  bb.2:
+    RTS implicit $pr
+
+  bb.3:
+    RTS implicit $pr
+
+  bb.4:
+    RTS implicit $pr
+
+  bb.5:
+    RTS implicit $pr
+...
+---
+name:            duplicated_dispatch
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+jumpTable:
+  kind:            inline
+  entries:
+    - id:              0
+      blocks:          [ '%bb.2', '%bb.3' ]
+body:             |
+  bb.0:
+    successors: %bb.2, %bb.3
+    liveins: $r4
+
+    $r0 = MOVA %jump-table.0
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.0
+
+  bb.1:
+    successors: %bb.2, %bb.3
+    liveins: $r5
+
+    $r0 = MOVA %jump-table.0
+    $r5 = SHLL2 killed $r5
+    $r1 = MOVL_load_indexed killed $r5, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.0
+
+  bb.2:
+    RTS implicit $pr
+
+  bb.3:
+    RTS implicit $pr
+...

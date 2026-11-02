@@ -1,0 +1,193 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-postra-peephole %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=sh-postra-peephole %s -o - | FileCheck %s
+
+--- |
+  define void @fold_byte_direct(ptr %p) { ret void }
+  define void @fold_word_direct(ptr %p) { ret void }
+  define void @fold_byte_copy(ptr %p) { ret void }
+  define void @fold_word_r0_base(ptr %p) { ret void }
+  define void @keep_live_address(ptr %p) { ret void }
+  define void @keep_illegal_byte_offset(ptr %p) { ret void }
+  define void @keep_illegal_word_offset(ptr %p) { ret void }
+  define void @keep_r0_address(ptr %p) { ret void }
+  define void @keep_r15_address(ptr %p) { ret void }
+  define void @keep_frame_flags(ptr %p) { ret void }
+...
+---
+name:            fold_byte_direct
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r1
+
+    $r1 = ADDri $r1, 15
+    MOVB_store_reg killed $r0, killed $r1 :: (volatile store (s8) into %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            fold_byte_direct
+# CHECK-NOT: ADDri
+# CHECK: MOVB_store_disp killed $r0, killed $r1, 15 :: (volatile store (s8) into %ir.p)
+
+---
+name:            fold_word_direct
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r8
+
+    renamable $r8 = ADDri renamable $r8, 30
+    MOVW_store_reg killed $r0, killed renamable $r8 :: (store (s16) into %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            fold_word_direct
+# CHECK-NOT: ADDri
+# CHECK: MOVW_store_disp killed $r0, killed $r8, 30 :: (store (s16) into %ir.p)
+
+---
+name:            fold_byte_copy
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r1
+
+    $r2 = COPY killed $r1
+    $r2 = ADDri $r2, 7
+    MOVB_store_reg killed $r0, killed $r2 :: (store (s8) into %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            fold_byte_copy
+# CHECK-NOT: COPY
+# CHECK-NOT: ADDri
+# CHECK: MOVB_store_disp killed $r0, killed $r1, 7 :: (store (s8) into %ir.p)
+
+---
+name:            fold_word_r0_base
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0
+
+    $r3 = MOVrr $r0
+    $r3 = ADDri $r3, 14
+    MOVW_store_reg killed $r0, killed $r3 :: (volatile store (s16) into %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            fold_word_r0_base
+# CHECK-NOT: MOVrr
+# CHECK-NOT: ADDri
+# CHECK: MOVW_store_disp killed $r0, $r0, 14 :: (volatile store (s16) into %ir.p)
+
+---
+name:            keep_live_address
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r1
+
+    $r1 = ADDri $r1, 4
+    MOVB_store_reg killed $r0, $r1 :: (store (s8) into %ir.p)
+    $r0 = MOVrr killed $r1
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            keep_live_address
+# CHECK: $r1 = ADDri $r1, 4
+# CHECK-NEXT: MOVB_store_reg killed $r0, $r1
+
+---
+name:            keep_illegal_byte_offset
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r1
+
+    $r1 = ADDri $r1, 16
+    MOVB_store_reg killed $r0, killed $r1 :: (store (s8) into %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            keep_illegal_byte_offset
+# CHECK: $r1 = ADDri $r1, 16
+# CHECK-NEXT: MOVB_store_reg killed $r0, killed $r1
+
+---
+name:            keep_illegal_word_offset
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r1
+
+    $r1 = ADDri $r1, 3
+    MOVW_store_reg killed $r0, killed $r1 :: (store (s16) into %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            keep_illegal_word_offset
+# CHECK: $r1 = ADDri $r1, 3
+# CHECK-NEXT: MOVW_store_reg killed $r0, killed $r1
+
+---
+name:            keep_r0_address
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0
+
+    $r0 = ADDri $r0, 4
+    MOVB_store_reg $r0, killed $r0 :: (store (s8) into %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            keep_r0_address
+# CHECK: $r0 = ADDri $r0, 4
+# CHECK-NEXT: MOVB_store_reg $r0, killed $r0
+
+---
+name:            keep_r15_address
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r15
+
+    $r15 = ADDri $r15, 4
+    MOVB_store_reg killed $r0, killed $r15 :: (store (s8) into %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            keep_r15_address
+# CHECK: $r15 = ADDri $r15, 4
+# CHECK-NEXT: MOVB_store_reg killed $r0, killed $r15
+
+---
+name:            keep_frame_flags
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r1, $r2
+
+    $r1 = frame-setup ADDri $r1, 4
+    MOVB_store_reg $r0, killed $r1 :: (store (s8) into %ir.p)
+    $r2 = ADDri $r2, 6
+    frame-destroy MOVW_store_reg killed $r0, killed $r2 :: (store (s16) into %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            keep_frame_flags
+# CHECK: $r1 = frame-setup ADDri $r1, 4
+# CHECK-NEXT: MOVB_store_reg $r0, killed $r1
+# CHECK-NEXT: $r2 = ADDri $r2, 6
+# CHECK-NEXT: frame-destroy MOVW_store_reg killed $r0, killed $r2

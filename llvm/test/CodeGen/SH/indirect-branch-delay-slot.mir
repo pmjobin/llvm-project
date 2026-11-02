@@ -1,0 +1,76 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o %t.mir
+# RUN: FileCheck %s < %t.mir
+# RUN: llc -mtriple=sh-unknown-elf -verify-machineinstrs -run-pass=sh-delay-slot-filler,sh-delay-slot-filler %t.mir -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s
+
+--- |
+  define void @fill_jmp(i32 %a, i32 %b) {
+    ret void
+  }
+
+  define void @reuse_jmp_nop(ptr %target) {
+    ret void
+  }
+...
+---
+name:            fill_jmp
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    liveins: $r4, $r5
+
+    CMP_EQ $r5, $r4, implicit-def $tbit
+    BT %bb.1, implicit $tbit
+    JMP $r4
+
+  bb.1:
+    successors: %bb.2(0x80000000)
+    liveins: $r4, $r5
+
+    CMP_EQ $r5, $r4, implicit-def $tbit
+    BF %bb.2, implicit $tbit
+
+  bb.2:
+
+    RTS implicit $pr
+...
+---
+name:            reuse_jmp_nop
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r4
+
+    JMP $r4 {
+      NOP
+    }
+
+  bb.1:
+
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            fill_jmp
+# CHECK-LABEL: body:
+# CHECK: CMP_EQ $r5, $r4, implicit-def $tbit
+# CHECK-NEXT: BT %bb.1, implicit $tbit
+# CHECK-NEXT: JMP $r4 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+# CHECK: CMP_EQ $r5, $r4, implicit-def $tbit
+# CHECK-NEXT: BF %bb.2, implicit $tbit
+# CHECK: bb.2:
+# CHECK: RTS implicit $pr {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+# CHECK-LABEL: name:            reuse_jmp_nop
+# CHECK-LABEL: body:
+# CHECK: JMP $r4 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+# CHECK: bb.1:

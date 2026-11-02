@@ -1,0 +1,25 @@
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -run-pass=post-ra-pseudos -verify-machineinstrs %s -o - | FileCheck %s
+
+--- |
+  define void @fpscr_transition() { ret void }
+...
+---
+name: fpscr_transition
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $fpscr, $pr
+
+    TRANSITION_FPSCR_MODE 2, 24, implicit-def $r0, implicit-def $r1, implicit-def $fpscr, implicit $fpscr
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            fpscr_transition
+# CHECK: $r0 = STS_FPSCR implicit $fpscr
+# CHECK-NEXT: $r1 = MOVri 24
+# CHECK-NEXT: $r1 = SHLL16 $r1
+# CHECK-NEXT: $r0 = XORrr $r0, $r1
+# CHECK-NEXT: LDS_FPSCR $r0
+# CHECK-NOT: SET_FPSCR_MODE
+# CHECK-NOT: TRANSITION_FPSCR_MODE

@@ -1,0 +1,39 @@
+## Check that SH processor flags and relocations round-trip through ObjectYAML.
+
+# RUN: yaml2obj %s | obj2yaml | FileCheck %s
+
+# CHECK:      FileHeader:
+# CHECK:        Class:   ELFCLASS32
+# CHECK:        Data:    ELFDATA2LSB
+# CHECK:        Type:    ET_REL
+# CHECK:        Machine: EM_SH
+# CHECK:        Flags:   [ EF_SH4, EF_SH_PIC ]
+# CHECK:      Sections:
+# CHECK:        - Name: .text
+# CHECK:        - Name: .rela.text
+# CHECK:          Relocations:
+# CHECK:            - Type:   R_SH_NONE
+# CHECK:            - Offset: 0x1
+# CHECK:              Type:   R_SH_DIR8
+
+--- !ELF
+FileHeader:
+  Class:   ELFCLASS32
+  Data:    ELFDATA2LSB
+  Type:    ET_REL
+  Machine: EM_SH
+  Flags:   [ EF_SH4, EF_SH_PIC ]
+Sections:
+  - Name:  .text
+    Type:  SHT_PROGBITS
+    Flags: [ SHF_ALLOC, SHF_EXECINSTR ]
+    Size:  4
+  - Name: .rela.text
+    Type: SHT_RELA
+    Info: .text
+    Relocations:
+      - Offset: 0x0
+        Type:   R_SH_NONE
+      - Offset: 0x1
+        Type:   R_SH_DIR8
+...

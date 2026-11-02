@@ -1,0 +1,54 @@
+# RUN: llc -mtriple=sh-unknown-none-elf -mcpu=sh2 -O2 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh2 -O2 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh3 -O2 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -O2 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s
+
+--- |
+  define i32 @hot_spill_slot() { ret i32 0 }
+...
+---
+name: hot_spill_slot
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: spill-slot, size: 4, alignment: 4 }
+  - { id: 1, type: spill-slot, size: 4, alignment: 4 }
+  - { id: 2, type: spill-slot, size: 4, alignment: 4 }
+  - { id: 3, type: spill-slot, size: 4, alignment: 4 }
+  - { id: 4, type: spill-slot, size: 4, alignment: 4 }
+  - { id: 5, type: spill-slot, size: 4, alignment: 4 }
+  - { id: 6, type: spill-slot, size: 4, alignment: 4 }
+  - { id: 7, type: spill-slot, size: 4, alignment: 4 }
+  - { id: 8, type: spill-slot, size: 4, alignment: 4 }
+  - { id: 9, type: spill-slot, size: 4, alignment: 4 }
+  - { id: 10, type: spill-slot, size: 4, alignment: 4 }
+  - { id: 11, type: spill-slot, size: 4, alignment: 4 }
+  - { id: 12, type: spill-slot, size: 4, alignment: 4 }
+  - { id: 13, type: spill-slot, size: 4, alignment: 4 }
+  - { id: 14, type: spill-slot, size: 4, alignment: 4 }
+  - { id: 15, type: spill-slot, size: 4, alignment: 4 }
+  - { id: 16, type: spill-slot, size: 4, alignment: 4 }
+  - { id: 17, type: spill-slot, size: 4, alignment: 4 }
+body: |
+  bb.0:
+    dead $r0 = MOVL_load_disp %stack.0, 0 :: (load (s32) from %stack.0)
+    NOP
+    dead $r1 = MOVL_load_disp %stack.0, 0 :: (load (s32) from %stack.0)
+    NOP
+    dead $r2 = MOVL_load_disp %stack.0, 0 :: (load (s32) from %stack.0)
+    NOP
+    $r0 = MOVL_load_disp %stack.17, 0 :: (load (s32) from %stack.17)
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            hot_spill_slot
+# CHECK: - { id: 0, name: '', type: spill-slot, offset: -72,
+# CHECK: - { id: 17, name: '', type: spill-slot, offset: -68,
+# CHECK-LABEL: body:
+# CHECK: dead $r0 = MOVL_load_reg $r15
+# CHECK-NEXT: NOP
+# CHECK-NEXT: dead $r1 = MOVL_load_reg $r15
+# CHECK-NEXT: NOP
+# CHECK-NEXT: dead $r2 = MOVL_load_reg $r15
+# CHECK-NEXT: NOP
+# CHECK-NEXT: $r0 = MOVL_load_disp $r15, 4

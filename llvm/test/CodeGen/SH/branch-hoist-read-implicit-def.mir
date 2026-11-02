@@ -1,0 +1,85 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=branch-folder -enable-tail-merge=false -branch-folder-reorder-blocks=false -branch-folder-hoist-common-code=true %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=branch-folder -enable-tail-merge=false -branch-folder-reorder-blocks=false -branch-folder-hoist-common-code=true %s -o - | FileCheck %s
+
+# Reduced from the source-pinned libvorbis Os compare-ablation failure.
+# The branch-folder must preserve inputs read and implicitly clobbered by
+# the same condition-setting pseudo, irrespective of operand order.
+--- |
+  define void @keep_read_before_implicit_clobber() { ret void }
+  define void @hoist_when_scratch_is_not_read() { ret void }
+...
+---
+name: keep_read_before_implicit_clobber
+tracksRegLiveness: true
+noVRegs: true
+constants:
+  - { id: 0, value: 'float -9.999000e+03', alignment: 4 }
+body: |
+  bb.0:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    liveins: $r0, $r2, $r3, $fpscr, $pr
+
+    CMP_EQri_VALUE_PSEUDO killed $r0, 1, implicit-def $tbit, implicit-def dead $r0
+    BF %bb.2, implicit $tbit
+    BRA %bb.1
+
+  bb.1:
+    liveins: $r2, $fpscr, $pr
+
+    $fr2 = FMOV_S_LOAD_PC_ISLAND %const.0, -1, implicit-def dead $r0, implicit $fpscr :: (load (s32) from constant-pool)
+    FMOV_S_STORE killed $fr2, killed $r2, implicit $fpscr :: (store (s32))
+    RTS implicit $pr
+
+  bb.2:
+    liveins: $r3, $fpscr, $pr
+
+    $fr2 = FMOV_S_LOAD_PC_ISLAND %const.0, -1, implicit-def dead $r0, implicit $fpscr :: (load (s32) from constant-pool)
+    FMOV_S_STORE killed $fr2, killed $r3, implicit $fpscr :: (store (s32))
+    RTS implicit $pr
+...
+---
+name: hoist_when_scratch_is_not_read
+tracksRegLiveness: true
+noVRegs: true
+constants:
+  - { id: 0, value: 'float -9.999000e+03', alignment: 4 }
+body: |
+  bb.0:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    liveins: $r1, $r2, $r3, $fpscr, $pr
+
+    CMP_EQri_VALUE_PSEUDO killed $r1, 1, implicit-def $tbit, implicit-def dead $r0
+    BF %bb.2, implicit $tbit
+    BRA %bb.1
+
+  bb.1:
+    liveins: $r2, $fpscr, $pr
+
+    $fr2 = FMOV_S_LOAD_PC_ISLAND %const.0, -1, implicit-def dead $r0, implicit $fpscr :: (load (s32) from constant-pool)
+    FMOV_S_STORE killed $fr2, killed $r2, implicit $fpscr :: (store (s32))
+    RTS implicit $pr
+
+  bb.2:
+    liveins: $r3, $fpscr, $pr
+
+    $fr2 = FMOV_S_LOAD_PC_ISLAND %const.0, -1, implicit-def dead $r0, implicit $fpscr :: (load (s32) from constant-pool)
+    FMOV_S_STORE killed $fr2, killed $r3, implicit $fpscr :: (store (s32))
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            keep_read_before_implicit_clobber
+# CHECK: bb.0:
+# CHECK-NOT: FMOV_S_LOAD_PC_ISLAND
+# CHECK: CMP_EQri_VALUE_PSEUDO killed $r0, 1, implicit-def $tbit, implicit-def dead $r0
+# CHECK-NEXT: BF
+# CHECK: bb.1:
+# CHECK: $fr2 = FMOV_S_LOAD_PC_ISLAND
+# CHECK: FMOV_S_STORE killed $fr2, killed $r2
+# CHECK: bb.2:
+# CHECK: $fr2 = FMOV_S_LOAD_PC_ISLAND
+# CHECK: FMOV_S_STORE killed $fr2, killed $r3
+
+# CHECK-LABEL: name:            hoist_when_scratch_is_not_read
+# CHECK: bb.0:
+# CHECK: $fr2 = FMOV_S_LOAD_PC_ISLAND
+# CHECK-NEXT: CMP_EQri_VALUE_PSEUDO killed $r1, 1, implicit-def $tbit, implicit-def dead $r0

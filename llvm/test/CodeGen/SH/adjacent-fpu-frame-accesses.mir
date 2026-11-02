@@ -1,0 +1,31 @@
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -O2 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s
+
+--- |
+  define void @adjacent_fpu_frame_accesses() { ret void }
+...
+---
+name: adjacent_fpu_frame_accesses
+tracksRegLiveness: true
+noVRegs: true
+fixedStack:
+  - { id: 0, type: default, offset: 64, size: 4, alignment: 4, isImmutable: false }
+  - { id: 1, type: default, offset: 68, size: 4, alignment: 4, isImmutable: false }
+body: |
+  bb.0:
+    liveins: $fr12, $fr13, $fpscr, $pr
+
+    FMOV_S_STORE_FI $fr12, %fixed-stack.1, 0, implicit $fpscr :: (store (s32) into %fixed-stack.1)
+    FMOV_S_STORE_FI $fr13, %fixed-stack.0, 0, implicit $fpscr :: (store (s32) into %fixed-stack.0)
+    $fr13 = FMOV_S_LOAD_FI %fixed-stack.0, 0, implicit $fpscr :: (load (s32) from %fixed-stack.0)
+    $fr12 = FMOV_S_LOAD_FI %fixed-stack.1, 0, implicit $fpscr :: (load (s32) from %fixed-stack.1)
+    RTS implicit $pr
+...
+
+# CHECK: [[STORE_ADDRESS:\$r[0-9]+]] = MOVrr $r15
+# CHECK-NEXT: [[STORE_ADDRESS]] = ADDri [[STORE_ADDRESS]], 76
+# CHECK-NEXT: [[STORE_ADDRESS]] = FMOV_S_STORE_PREDEC_ALIAS $fr12, killed [[STORE_ADDRESS]]
+# CHECK-NEXT: dead [[STORE_ADDRESS]] = FMOV_S_STORE_PREDEC_ALIAS $fr13, killed [[STORE_ADDRESS]]
+# CHECK-NEXT: [[LOAD_ADDRESS:\$r[0-9]+]] = MOVrr $r15
+# CHECK-NEXT: [[LOAD_ADDRESS]] = ADDri [[LOAD_ADDRESS]], 68
+# CHECK-NEXT: $fr13, [[LOAD_ADDRESS]] = FMOV_S_LOAD_POSTINC_ALIAS killed [[LOAD_ADDRESS]]
+# CHECK-NEXT: $fr12, dead [[LOAD_ADDRESS]] = FMOV_S_LOAD_POSTINC_ALIAS killed [[LOAD_ADDRESS]]

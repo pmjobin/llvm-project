@@ -1,0 +1,316 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -run-pass=sh-compress-jump-tables -verify-machineinstrs %s -o - | FileCheck %s
+
+# CHECK-LABEL: name:            narrow
+# CHECK: $r0 = MOVA <mcsymbol .Lnarrow_table>
+# CHECK-NEXT: $r4 = SHLL killed $r4
+# CHECK-NEXT: $r2 = MOVrr $r3
+# CHECK-NEXT: $r1 = MOVW_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s16) from jump-table, align 4)
+# CHECK-NEXT: $r3 = MOVrr killed $r2
+# CHECK-NEXT: BRAF killed $r1, %jump-table.0, <mcsymbol .Lnarrow_base>
+# CHECK: SH_JUMPTABLE %jump-table.0, <mcsymbol .Lnarrow_table>, <mcsymbol .Lnarrow_base>, 2
+
+# CHECK-LABEL: name:            out_of_range
+# CHECK: $r0 = MOVA <mcsymbol .Lwide_table>
+# CHECK-NEXT: $r4 = SHLL2 killed $r4
+# CHECK-NEXT: $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+# CHECK-NEXT: BRAF killed $r1, %jump-table.0, <mcsymbol .Lwide_base>
+# CHECK: SH_JUMPTABLE %jump-table.0, <mcsymbol .Lwide_table>, <mcsymbol .Lwide_base>, 4
+# CHECK: INLINEASM &".space 32768"
+
+# CHECK-LABEL: name:            prescaled
+# CHECK: $r0 = MOVA <mcsymbol .Lprescaled_table>
+# CHECK-NEXT: $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+# CHECK-NEXT: BRAF killed $r1, %jump-table.0, <mcsymbol .Lprescaled_base>
+# CHECK: SH_JUMPTABLE %jump-table.0, <mcsymbol .Lprescaled_table>, <mcsymbol .Lprescaled_base>, 4
+
+# CHECK-LABEL: name:            t_live
+# CHECK: $r0 = MOVA <mcsymbol .Lt_live_table>
+# CHECK-NEXT: $r4 = SHLL2 killed $r4
+# CHECK-NEXT: $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+# CHECK-NEXT: BRAF killed $r1, %jump-table.0, <mcsymbol .Lt_live_base>
+# CHECK: SH_JUMPTABLE %jump-table.0, <mcsymbol .Lt_live_table>, <mcsymbol .Lt_live_base>, 4
+
+# CHECK-LABEL: name:            missing_mmo
+# CHECK: $r4 = SHLL2 killed $r4
+# CHECK-NEXT: $r1 = MOVL_load_indexed killed $r4, implicit killed $r0
+# CHECK: SH_JUMPTABLE %jump-table.0, <mcsymbol .Lmissing_mmo_table>, <mcsymbol .Lmissing_mmo_base>, 4
+
+# CHECK-LABEL: name:            multiple_mmos
+# CHECK: $r4 = SHLL2 killed $r4
+# CHECK-NEXT: $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table), (dereferenceable invariant load (s32) from jump-table)
+# CHECK: SH_JUMPTABLE %jump-table.0, <mcsymbol .Lmultiple_mmos_table>, <mcsymbol .Lmultiple_mmos_base>, 4
+
+# CHECK-LABEL: name:            wrong_mmo_size
+# CHECK: $r4 = SHLL2 killed $r4
+# CHECK-NEXT: $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s16) from jump-table, align 4)
+# CHECK: SH_JUMPTABLE %jump-table.0, <mcsymbol .Lwrong_mmo_size_table>, <mcsymbol .Lwrong_mmo_size_base>, 4
+
+# CHECK-LABEL: name:            non_jump_table_mmo
+# CHECK: $r4 = SHLL2 killed $r4
+# CHECK-NEXT: $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from %ir.p)
+# CHECK: SH_JUMPTABLE %jump-table.0, <mcsymbol .Lnon_jump_table_mmo_table>, <mcsymbol .Lnon_jump_table_mmo_base>, 4
+
+--- |
+  define void @narrow() { ret void }
+  define void @out_of_range() { ret void }
+  define void @prescaled() { ret void }
+  define void @t_live() { ret void }
+  define void @missing_mmo() { ret void }
+  define void @multiple_mmos() { ret void }
+  define void @wrong_mmo_size() { ret void }
+  define void @non_jump_table_mmo(ptr %p) { ret void }
+...
+---
+name:            t_live
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+jumpTable:
+  kind:            inline
+  entries:
+    - id:              0
+      blocks:          [ '%bb.2', '%bb.3', '%bb.4', '%bb.5' ]
+body:             |
+  bb.0:
+    successors: %bb.2, %bb.3, %bb.4, %bb.5
+    liveins: $r4
+
+    $r0 = MOVA <mcsymbol .Lt_live_table>
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lt_live_base>
+
+  bb.1 (align 4):
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lt_live_table>, <mcsymbol .Lt_live_base>, 4
+
+  bb.2:
+    liveins: $tbit
+    $r0 = MOVT implicit killed $tbit
+    RTS implicit $pr
+
+  bb.3:
+    liveins: $tbit
+    $r0 = MOVT implicit killed $tbit
+    RTS implicit $pr
+
+  bb.4:
+    liveins: $tbit
+    $r0 = MOVT implicit killed $tbit
+    RTS implicit $pr
+
+  bb.5:
+    liveins: $tbit
+    $r0 = MOVT implicit killed $tbit
+    RTS implicit $pr
+...
+---
+name:            prescaled
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+jumpTable:
+  kind:            inline
+  entries:
+    - id:              0
+      blocks:          [ '%bb.2', '%bb.3', '%bb.4', '%bb.5' ]
+body:             |
+  bb.0:
+    successors: %bb.2, %bb.3, %bb.4, %bb.5
+    liveins: $r4
+
+    $r0 = MOVA <mcsymbol .Lprescaled_table>
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lprescaled_base>
+
+  bb.1 (align 4):
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lprescaled_table>, <mcsymbol .Lprescaled_base>, 4
+
+  bb.2:
+    RTS implicit $pr
+
+  bb.3:
+    RTS implicit $pr
+
+  bb.4:
+    RTS implicit $pr
+
+  bb.5:
+    RTS implicit $pr
+...
+---
+name:            narrow
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+jumpTable:
+  kind:            inline
+  entries:
+    - id:              0
+      blocks:          [ '%bb.2', '%bb.3', '%bb.4', '%bb.5' ]
+body:             |
+  bb.0:
+    successors: %bb.2, %bb.3, %bb.4, %bb.5
+    liveins: $r3, $r4
+
+    $r0 = MOVA <mcsymbol .Lnarrow_table>
+    $r4 = SHLL2 killed $r4
+    $r2 = MOVrr $r3
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    $r3 = MOVrr killed $r2
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lnarrow_base>
+
+  bb.1 (align 4):
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lnarrow_table>, <mcsymbol .Lnarrow_base>, 4
+
+  bb.2:
+    RTS implicit $pr
+
+  bb.3:
+    RTS implicit $pr
+
+  bb.4:
+    RTS implicit $pr
+
+  bb.5:
+    RTS implicit $pr
+...
+---
+name:            out_of_range
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+jumpTable:
+  kind:            inline
+  entries:
+    - id:              0
+      blocks:          [ '%bb.2', '%bb.3', '%bb.4', '%bb.5' ]
+body:             |
+  bb.0:
+    successors: %bb.2, %bb.3, %bb.4, %bb.5
+    liveins: $r4
+
+    $r0 = MOVA <mcsymbol .Lwide_table>
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lwide_base>
+
+  bb.1 (align 4):
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lwide_table>, <mcsymbol .Lwide_base>, 4
+
+  bb.2:
+    INLINEASM &".space 32768", sideeffect attdialect
+    RTS implicit $pr
+
+  bb.3:
+    RTS implicit $pr
+
+  bb.4:
+    RTS implicit $pr
+
+  bb.5:
+    RTS implicit $pr
+...
+---
+name:            missing_mmo
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+jumpTable:
+  kind:            inline
+  entries:
+    - id:              0
+      blocks:          [ '%bb.2' ]
+body:             |
+  bb.0:
+    successors: %bb.2
+    liveins: $r4
+
+    $r0 = MOVA <mcsymbol .Lmissing_mmo_table>
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lmissing_mmo_base>
+
+  bb.1 (align 4):
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lmissing_mmo_table>, <mcsymbol .Lmissing_mmo_base>, 4
+
+  bb.2:
+    RTS implicit $pr
+...
+---
+name:            multiple_mmos
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+jumpTable:
+  kind:            inline
+  entries:
+    - id:              0
+      blocks:          [ '%bb.2' ]
+body:             |
+  bb.0:
+    successors: %bb.2
+    liveins: $r4
+
+    $r0 = MOVA <mcsymbol .Lmultiple_mmos_table>
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table), (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lmultiple_mmos_base>
+
+  bb.1 (align 4):
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lmultiple_mmos_table>, <mcsymbol .Lmultiple_mmos_base>, 4
+
+  bb.2:
+    RTS implicit $pr
+...
+---
+name:            wrong_mmo_size
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+jumpTable:
+  kind:            inline
+  entries:
+    - id:              0
+      blocks:          [ '%bb.2' ]
+body:             |
+  bb.0:
+    successors: %bb.2
+    liveins: $r4
+
+    $r0 = MOVA <mcsymbol .Lwrong_mmo_size_table>
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s16) from jump-table, align 4)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lwrong_mmo_size_base>
+
+  bb.1 (align 4):
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lwrong_mmo_size_table>, <mcsymbol .Lwrong_mmo_size_base>, 4
+
+  bb.2:
+    RTS implicit $pr
+...
+---
+name:            non_jump_table_mmo
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+jumpTable:
+  kind:            inline
+  entries:
+    - id:              0
+      blocks:          [ '%bb.2' ]
+body:             |
+  bb.0:
+    successors: %bb.2
+    liveins: $r4
+
+    $r0 = MOVA <mcsymbol .Lnon_jump_table_mmo_table>
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from %ir.p, align 4)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lnon_jump_table_mmo_base>
+
+  bb.1 (align 4):
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lnon_jump_table_mmo_table>, <mcsymbol .Lnon_jump_table_mmo_base>, 4
+
+  bb.2:
+    RTS implicit $pr
+...

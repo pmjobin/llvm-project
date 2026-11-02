@@ -1,0 +1,238 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o %t.sh.mir
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -start-after=prolog-epilog -filetype=obj %t.sh.mir -o /dev/null
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o %t.shle.mir
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -start-after=prolog-epilog -filetype=obj %t.shle.mir -o /dev/null
+
+--- |
+  define void @frame_0() { ret void }
+  define void @frame_4() { ret void }
+  define void @frame_16() { ret void }
+  define void @frame_32() { ret void }
+  define void @frame_56() { ret void }
+  define void @frame_60() { ret void }
+  define void @frame_64() { ret void }
+  define void @frame_68() { ret void }
+  define void @frame_72() { ret void }
+  define void @frame_80() { ret void }
+  define void @frame_96() { ret void }
+  define void @frame_112() { ret void }
+  define void @frame_128() { ret void }
+  define void @frame_256() { ret void }
+...
+---
+name: frame_0
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_4
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 4, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_16
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 16, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_32
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 32, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_56
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 56, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_60
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 60, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_64
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 64, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_68
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 68, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_72
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 72, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_80
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 80, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_96
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 96, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_112
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 112, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_128
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 128, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_256
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 256, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            frame_0
+# CHECK: stackSize:       0
+# CHECK-LABEL: body:
+# CHECK-NOT: ADDri $r15
+# CHECK: RTS
+
+# CHECK-LABEL: name:            frame_4
+# CHECK: stackSize:       4
+# CHECK: $r15 = frame-setup ADDri $r15, -4
+# CHECK: $r15 = frame-destroy ADDri $r15, 4
+
+# CHECK-LABEL: name:            frame_16
+# CHECK: stackSize:       16
+# CHECK: $r15 = frame-setup ADDri $r15, -16
+# CHECK: $r15 = frame-destroy ADDri $r15, 16
+
+# CHECK-LABEL: name:            frame_32
+# CHECK: stackSize:       32
+# CHECK: $r15 = frame-setup ADDri $r15, -32
+# CHECK: $r15 = frame-destroy ADDri $r15, 32
+
+# CHECK-LABEL: name:            frame_56
+# CHECK: stackSize:       56
+# CHECK: $r15 = frame-setup ADDri $r15, -56
+# CHECK: $r15 = frame-destroy ADDri $r15, 56
+
+# CHECK-LABEL: name:            frame_60
+# CHECK: stackSize:       60
+# CHECK: $r15 = frame-setup ADDri $r15, -60
+# CHECK: $r15 = frame-destroy ADDri $r15, 60
+
+# CHECK-LABEL: name:            frame_64
+# CHECK: stackSize:       64
+# CHECK: $r15 = frame-setup ADDri $r15, -64
+# CHECK: $r15 = frame-destroy ADDri $r15, 64
+
+# CHECK-LABEL: name:            frame_68
+# CHECK: stackSize:       68
+# CHECK: $r15 = frame-setup ADDri $r15, -68
+# CHECK: $r15 = frame-destroy ADDri $r15, 68
+
+# CHECK-LABEL: name:            frame_72
+# CHECK: stackSize:       72
+# CHECK: $r15 = frame-setup ADDri $r15, -72
+# CHECK: $r15 = frame-destroy ADDri $r15, 72
+
+# CHECK-LABEL: name:            frame_80
+# CHECK: stackSize:       80
+# CHECK: $r15 = frame-setup ADDri $r15, -80
+# CHECK: $r15 = frame-destroy ADDri $r15, 80
+
+# CHECK-LABEL: name:            frame_96
+# CHECK: stackSize:       96
+# CHECK: $r15 = frame-setup ADDri $r15, -96
+# CHECK: $r15 = frame-destroy ADDri $r15, 96
+
+# CHECK-LABEL: name:            frame_112
+# CHECK: stackSize:       112
+# CHECK: $r15 = frame-setup ADDri $r15, -112
+# CHECK: $r15 = frame-destroy ADDri $r15, 112
+
+# CHECK-LABEL: name:            frame_128
+# CHECK: stackSize:       128
+# CHECK: $r15 = frame-setup ADDri $r15, -128
+# CHECK: $r15 = frame-destroy ADDri $r15, 127
+# CHECK: $r15 = frame-destroy ADDri $r15, 1
+
+# CHECK-LABEL: name:            frame_256
+# CHECK: stackSize:       256
+# CHECK: $r15 = frame-setup ADDri $r15, -128
+# CHECK-NEXT: frame-setup CFI_INSTRUCTION def_cfa_offset 128
+# CHECK-NEXT: $r15 = frame-setup ADDri $r15, -128
+# CHECK-NEXT: frame-setup CFI_INSTRUCTION def_cfa_offset 256
+# CHECK: $r15 = frame-destroy ADDri $r15, 127
+# CHECK: $r15 = frame-destroy ADDri $r15, 127
+# CHECK: $r15 = frame-destroy ADDri $r15, 2

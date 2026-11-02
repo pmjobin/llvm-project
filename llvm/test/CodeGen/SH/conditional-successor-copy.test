@@ -1,0 +1,8 @@
+# RUN: %python %S/Inputs/generate-conditional-successor-copy.py > %t.mir
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O3 -verify-machineinstrs -run-pass=sh-delay-slot-filler %t.mir -o - | FileCheck %t.mir --check-prefixes=COMMON,OPT
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh3 -O3 -verify-machineinstrs -run-pass=sh-delay-slot-filler %t.mir -o - | FileCheck %t.mir --check-prefixes=COMMON,OPT
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh1 -O3 -verify-machineinstrs -run-pass=sh-delay-slot-filler %t.mir -o - | FileCheck %t.mir --check-prefixes=COMMON,BASE
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -O3 -verify-machineinstrs -run-pass=sh-delay-slot-filler %t.mir -o - | FileCheck %t.mir --check-prefixes=COMMON,BASE
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -O0 -verify-machineinstrs -run-pass=sh-delay-slot-filler %t.mir -o - | FileCheck %t.mir --check-prefixes=COMMON,BASE
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -start-before=branch-relaxation -filetype=obj %t.mir -o %t.le.o
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh3 -verify-machineinstrs -start-before=branch-relaxation -filetype=obj %t.mir -o %t.be.o

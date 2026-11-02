@@ -1,0 +1,25 @@
+# RUN: llvm-mc -triple=sh-unknown-elf -disassemble %s | FileCheck %s
+
+[0x34,0x58,0x64,0x5b,0x24,0x59,0x24,0x5b]
+[0x24,0x5a,0x64,0x57,0x24,0x58,0x44,0x10]
+[0x44,0x00,0x44,0x01,0x44,0x21,0x44,0x08]
+[0x44,0x09,0x44,0x18,0x44,0x19,0x44,0x28]
+[0x44,0x29]
+
+# CHECK: sub	r5,r4
+# CHECK-NEXT: neg	r5,r4
+# CHECK-NEXT: and	r5,r4
+# CHECK-NEXT: or	r5,r4
+# CHECK-NEXT: xor	r5,r4
+# CHECK-NEXT: not	r5,r4
+# CHECK-NEXT: tst	r5,r4
+# CHECK-NEXT: dt	r4
+# CHECK-NEXT: shll	r4
+# CHECK-NEXT: shlr	r4
+# CHECK-NEXT: shar	r4
+# CHECK-NEXT: shll2	r4
+# CHECK-NEXT: shlr2	r4
+# CHECK-NEXT: shll8	r4
+# CHECK-NEXT: shlr8	r4
+# CHECK-NEXT: shll16	r4
+# CHECK-NEXT: shlr16	r4

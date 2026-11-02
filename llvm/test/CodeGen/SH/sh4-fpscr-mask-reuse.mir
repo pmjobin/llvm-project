@@ -1,0 +1,69 @@
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -run-pass=post-ra-pseudos -verify-machineinstrs %s -o - | FileCheck %s
+
+--- |
+  define void @reuse_fpscr_mask() { ret void }
+  define void @clobber_fpscr_mask() { ret void }
+  define void @register_fpscr_mask() { ret void }
+...
+---
+name: reuse_fpscr_mask
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $fr0, $fr1, $fpscr, $pr
+
+    TRANSITION_FPSCR_MODE 3, 8, implicit-def $r0, implicit-def $r1, implicit-def $fpscr, implicit $fpscr
+    $fr0 = FADD_FR $fr0, $fr1, implicit-def $fpscr, implicit $fpscr
+    TRANSITION_FPSCR_MODE 1, 8, implicit-def $r0, implicit-def $r1, implicit-def $fpscr, implicit $fpscr
+    RTS implicit $pr
+...
+---
+name: clobber_fpscr_mask
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $fr0, $fr1, $fpscr, $pr
+
+    TRANSITION_FPSCR_MODE 3, 8, implicit-def $r0, implicit-def $r1, implicit-def $fpscr, implicit $fpscr
+    $r1 = MOVri 7
+    $fr0 = FADD_FR $fr0, $fr1, implicit-def $fpscr, implicit $fpscr
+    TRANSITION_FPSCR_MODE 1, 8, implicit-def $r0, implicit-def $r1, implicit-def $fpscr, implicit $fpscr
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: reuse_fpscr_mask
+# CHECK: $r1 = MOVri 8
+# CHECK-NEXT: $r1 = SHLL16 $r1
+# CHECK: $r0 = XORrr $r0, $r1
+# CHECK: $fr0 = FADD_FR $fr0, $fr1
+# CHECK-NOT: $r1 = MOVri 8
+# CHECK: $r0 = XORrr $r0, $r1
+
+# CHECK-LABEL: name: clobber_fpscr_mask
+# CHECK: $r1 = MOVri 8
+# CHECK: $r1 = MOVri 7
+# CHECK: $r1 = MOVri 8
+
+...
+---
+name: register_fpscr_mask
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r5, $fpscr, $pr
+
+    $r5 = MATERIALIZE_FPSCR_MASK 8
+    TRANSITION_FPSCR_MODE_REG 3, $r5, 8, implicit-def $r0, implicit-def $fpscr, implicit $fpscr
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: register_fpscr_mask
+# CHECK: $r5 = MOVri 8
+# CHECK-NEXT: $r5 = SHLL16 $r5
+# CHECK-NEXT: $r0 = STS_FPSCR
+# CHECK-NEXT: $r0 = XORrr $r0, $r5
+# CHECK-NEXT: LDS_FPSCR $r0
+# CHECK-NOT: $r1 = MOVri

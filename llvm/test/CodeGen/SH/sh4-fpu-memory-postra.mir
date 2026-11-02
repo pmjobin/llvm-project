@@ -1,0 +1,43 @@
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -run-pass=post-ra-pseudos -verify-machineinstrs %s -o - | FileCheck %s
+
+--- |
+  define void @load_with_multiple_memory_refs(ptr %first, ptr %second) {
+    ret void
+  }
+
+  define void @store_with_multiple_memory_refs(ptr %first, ptr %second) {
+    ret void
+  }
+...
+---
+name: load_with_multiple_memory_refs
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r4, $fpscr, $pr
+
+    $dr4 = FMOV_D_LOAD_SCALAR killed $r4, implicit-def dead $r0, implicit $fpscr :: (load (s64) from %ir.first, align 4), (load (s64) from %ir.second, align 4)
+    RTS implicit $pr
+...
+---
+name: store_with_multiple_memory_refs
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $dr4, $r4, $fpscr, $pr
+
+    FMOV_D_STORE_SCALAR killed $dr4, killed $r4, implicit-def dead $r0, implicit $fpscr :: (store (s64) into %ir.first, align 4), (store (s64) into %ir.second, align 4)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: load_with_multiple_memory_refs
+# CHECK: $fr5 = FMOV_S_LOAD_ALIAS $r4{{.*}} :: (load (s32) from %ir.first), (load (s32) from %ir.second)
+# CHECK: $r0 = MOVri 4
+# CHECK: $fr4 = FMOV_S_LOAD_INDEXED_ALIAS killed $r4{{.*}} :: (load (s32) from %ir.first + 4), (load (s32) from %ir.second + 4)
+
+# CHECK-LABEL: name: store_with_multiple_memory_refs
+# CHECK: FMOV_S_STORE_ALIAS killed $fr5, $r4{{.*}} :: (store (s32) into %ir.first), (store (s32) into %ir.second)
+# CHECK: $r0 = MOVri 4
+# CHECK: FMOV_S_STORE_INDEXED_ALIAS killed $fr4, killed $r4{{.*}} :: (store (s32) into %ir.first + 4), (store (s32) into %ir.second + 4)

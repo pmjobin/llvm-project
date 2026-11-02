@@ -1,0 +1,396 @@
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -run-pass=sh-fpu-state,post-ra-pseudos -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-none-elf -mcpu=sh4 -run-pass=sh-fpu-state,post-ra-pseudos -verify-machineinstrs %s -o - | FileCheck %s
+
+# Physical data inputs retain undef through expansion; control state is defined.
+# YAML block indentation follows MIR syntax.
+
+# CHECK-LABEL: name: gpr_to_fr_undef
+# CHECK: LDS_FPUL undef $r4
+# CHECK: $fr2 = FSTS implicit $fpul
+---
+name: gpr_to_fr_undef
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr
+
+    $fr2 = GPR_TO_FR_PSEUDO undef $r4, implicit-def $fpul, implicit $fpscr
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: fr_to_gpr_undef
+# CHECK: FLDS undef $fr2
+# CHECK: $r4 = STS_FPUL implicit $fpul
+---
+name: fr_to_gpr_undef
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr
+
+    $r4 = FR_TO_GPR_PSEUDO undef $fr2, implicit-def $fpul, implicit $fpscr
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: i32_to_f32_undef
+# CHECK: LDS_FPUL undef $r4
+# CHECK: $fr2 = FLOAT_FR implicit-def $fpscr, implicit $fpul, implicit $fpscr
+---
+name: i32_to_f32_undef
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr
+
+    $fr2 = I32_TO_F32_PSEUDO undef $r4, implicit-def $fpul, implicit-def $fpscr, implicit $fpscr
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: i32_to_f64_undef
+# CHECK: LDS_FPUL undef $r4
+# CHECK: $dr2 = FLOAT_DR implicit-def $fpscr, implicit $fpul, implicit $fpscr
+---
+name: i32_to_f64_undef
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr
+
+    $dr2 = I32_TO_F64_PSEUDO undef $r4, implicit-def $fpul, implicit-def $fpscr, implicit $fpscr
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: f32_to_i32_undef
+# CHECK: FTRC_FR undef $fr2
+# CHECK: $r4 = STS_FPUL implicit $fpul
+---
+name: f32_to_i32_undef
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr
+
+    $r4 = F32_TO_I32_PSEUDO undef $fr2, implicit-def $fpul, implicit-def $fpscr, implicit $fpscr
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: f64_to_i32_undef
+# CHECK: FTRC_DR undef $dr2
+# CHECK: $r4 = STS_FPUL implicit $fpul
+---
+name: f64_to_i32_undef
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr
+
+    $r4 = F64_TO_I32_PSEUDO undef $dr2, implicit-def $fpul, implicit-def $fpscr, implicit $fpscr
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: f32_to_f64_undef
+# CHECK: FLDS undef $fr2
+# CHECK: $dr2 = FCNVSD implicit-def $fpscr, implicit $fpul, implicit $fpscr
+---
+name: f32_to_f64_undef
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr
+
+    $dr2 = F32_TO_F64_PSEUDO undef $fr2, implicit-def $fpul, implicit-def $fpscr, implicit $fpscr
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: f64_to_f32_undef
+# CHECK: FCNVDS undef $dr2
+# CHECK: $fr2 = FSTS implicit $fpul
+---
+name: f64_to_f32_undef
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr
+
+    $fr2 = F64_TO_F32_PSEUDO undef $dr2, implicit-def $fpul, implicit-def $fpscr, implicit $fpscr
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: dr_to_pair_undef
+# CHECK: FLDS undef $fr0, implicit-def $fpul, implicit $fpscr
+# CHECK: $r1 = STS_FPUL implicit $fpul
+# CHECK: FLDS undef $fr1, implicit-def $fpul, implicit $fpscr
+# CHECK: $r0 = STS_FPUL implicit $fpul
+---
+name: dr_to_pair_undef
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr
+
+    $r1, $r0 = DR_TO_GPR_PAIR_PSEUDO undef $dr0, implicit-def dead $fpul, implicit $fpscr
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: dr_to_pair_killed_undef
+# CHECK: FLDS undef $fr0
+# CHECK: FLDS killed undef $fr1
+---
+name: dr_to_pair_killed_undef
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr
+
+    $r1, $r0 = DR_TO_GPR_PAIR_PSEUDO killed undef $dr0, implicit-def dead $fpul, implicit $fpscr
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: dr_to_pair_live
+# CHECK: FLDS $fr2
+# CHECK: FLDS $fr3
+# CHECK: $fr4 = FMOV_FR $fr2
+# CHECK: $fr5 = FMOV_FR $fr3
+# CHECK: $r7 = MOVrr $r5
+---
+name: dr_to_pair_live
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr, $dr2
+
+    $r5, $r6 = DR_TO_GPR_PAIR_PSEUDO $dr2, implicit-def dead $fpul, implicit $fpscr
+    $dr4 = COPY $dr2
+    $r7 = MOVrr $r5
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: dr_to_pair_killed
+# CHECK: FLDS $fr2
+# CHECK: FLDS killed $fr3
+---
+name: dr_to_pair_killed
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr, $dr2
+
+    $r5, $r6 = DR_TO_GPR_PAIR_PSEUDO killed $dr2, implicit-def dead $fpul, implicit $fpscr
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: pair_to_dr_both_undef
+# CHECK: LDS_FPUL undef $r4
+# CHECK: $fr2 = FSTS
+# CHECK: LDS_FPUL undef $r5
+# CHECK: $fr3 = FSTS
+---
+name: pair_to_dr_both_undef
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr
+
+    $dr2 = GPR_PAIR_TO_DR_PSEUDO undef $r4, undef $r5, implicit-def dead $fpul, implicit $fpscr
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: pair_to_dr_high_undef
+# CHECK: LDS_FPUL undef $r4
+# CHECK: $fr2 = FSTS
+# CHECK: LDS_FPUL killed $r5
+# CHECK: $fr3 = FSTS
+---
+name: pair_to_dr_high_undef
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr, $r5
+
+    $dr2 = GPR_PAIR_TO_DR_PSEUDO undef $r4, killed $r5, implicit-def dead $fpul, implicit $fpscr
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: pair_to_dr_low_undef
+# CHECK: LDS_FPUL $r4
+# CHECK: $fr2 = FSTS
+# CHECK: LDS_FPUL undef $r5
+# CHECK: $fr3 = FSTS
+---
+name: pair_to_dr_low_undef
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr, $r4
+
+    $dr2 = GPR_PAIR_TO_DR_PSEUDO $r4, undef $r5, implicit-def dead $fpul, implicit $fpscr
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: pair_to_dr_same_undef
+# CHECK: LDS_FPUL killed undef $r4
+# CHECK: $fr2 = FSTS
+# CHECK: $fr3 = FSTS
+---
+name: pair_to_dr_same_undef
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr
+
+    $dr2 = GPR_PAIR_TO_DR_PSEUDO undef $r4, killed undef $r4, implicit-def dead $fpul, implicit $fpscr
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: pair_to_dr_same_first_undef
+# CHECK: LDS_FPUL killed $r4
+# CHECK: $fr2 = FSTS
+# CHECK: $fr3 = FSTS
+---
+name: pair_to_dr_same_first_undef
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr, $r4
+
+    $dr2 = GPR_PAIR_TO_DR_PSEUDO undef $r4, killed $r4, implicit-def dead $fpul, implicit $fpscr
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: pair_to_dr_same_second_undef
+# CHECK: LDS_FPUL $r4
+# CHECK: $fr2 = FSTS
+# CHECK: $fr3 = FSTS
+---
+name: pair_to_dr_same_second_undef
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr, $r4
+
+    $dr2 = GPR_PAIR_TO_DR_PSEUDO $r4, undef $r4, implicit-def dead $fpul, implicit $fpscr
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: same_source_live_False
+# CHECK: LDS_FPUL $r4
+# CHECK: $fr2 = FSTS
+# CHECK: $fr3 = FSTS
+# CHECK: $r5 = MOVrr $r4
+---
+name: same_source_live_False
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr, $r4
+
+    $dr2 = GPR_PAIR_TO_DR_PSEUDO killed undef $r4, $r4, implicit-def dead $fpul, implicit $fpscr
+    $r5 = MOVrr $r4
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: same_source_live_True
+# CHECK: LDS_FPUL $r4
+# CHECK: $fr2 = FSTS
+# CHECK: $fr3 = FSTS
+# CHECK: $r5 = MOVrr $r4
+---
+name: same_source_live_True
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr, $r4
+
+    $dr2 = GPR_PAIR_TO_DR_PSEUDO $r4, killed undef $r4, implicit-def dead $fpul, implicit $fpscr
+    $r5 = MOVrr $r4
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: scalar_defined_live_and_killed
+# CHECK: LDS_FPUL $r4
+# CHECK: FLDS killed $fr2
+# CHECK: LDS_FPUL killed $r4
+# CHECK: FTRC_FR $fr3
+---
+name: scalar_defined_live_and_killed
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr, $r4
+
+    $fr2 = GPR_TO_FR_PSEUDO $r4, implicit-def dead $fpul, implicit $fpscr
+    $r5 = FR_TO_GPR_PSEUDO killed $fr2, implicit-def dead $fpul, implicit $fpscr
+    $fr3 = I32_TO_F32_PSEUDO killed $r4, implicit-def dead $fpul, implicit-def $fpscr, implicit $fpscr
+    $r6 = F32_TO_I32_PSEUDO $fr3, implicit-def dead $fpul, implicit-def $fpscr, implicit $fpscr
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: scalar_double_defined_alias
+# CHECK: FLDS killed $fr2
+# CHECK: $dr2 = FCNVSD
+# CHECK: FCNVDS killed $dr2
+# CHECK: $fr2 = FSTS
+---
+name: scalar_double_defined_alias
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr, $fr2
+
+    $dr2 = F32_TO_F64_PSEUDO killed $fr2, implicit-def dead $fpul, implicit-def $fpscr, implicit $fpscr
+    $fr2 = F64_TO_F32_PSEUDO killed $dr2, implicit-def dead $fpul, implicit-def $fpscr, implicit $fpscr
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: scalar_store_undef
+# CHECK: FMOV_S_STORE_ALIAS undef $fr{{[23]}}, $r4
+# CHECK: FMOV_S_STORE_INDEXED_ALIAS undef $fr{{[23]}}, killed $r4
+---
+name: scalar_store_undef
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr, $r4
+
+    FMOV_D_STORE_SCALAR undef $dr2, killed $r4, implicit-def dead $r0, implicit $fpscr :: (volatile store (s64) into unknown-address, align 4)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: undef_copies
+# CHECK: $fr2 = KILL undef $fr0
+# CHECK: $dr4 = KILL undef $dr0
+---
+name: undef_copies
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $pr, $fpscr
+
+    $fr2 = COPY undef $fr0
+    $dr4 = COPY undef $dr0
+    RTS implicit $pr
+...

@@ -1,0 +1,23 @@
+# RUN: llvm-mc -triple=sh-unknown-elf -mcpu=sh2a -disassemble %s | FileCheck %s --check-prefix=SH2A
+# RUN: llvm-mc -triple=sh-unknown-elf -mcpu=sh2 -disassemble %s 2>&1 | FileCheck %s --check-prefix=SH2
+# RUN: printf '0x04 0x00\n' | llvm-mc -triple=sh-unknown-elf -mcpu=sh2a -disassemble 2>&1 | FileCheck %s --check-prefix=TRUNCATED
+# RUN: printf '0x34 0x51 0xf8 0x00 0x00 0x09\n' | llvm-mc -triple=sh-unknown-elf -mcpu=sh2a -disassemble 2>&1 | FileCheck %s --check-prefix=INVALID
+# RUN: printf '0x34 0x21 0x32 0x00\n' | llvm-mc -triple=sh-unknown-elf -mcpu=sh2a -mattr=+fpu-single-mode -disassemble | FileCheck %s --check-prefix=SINGLE
+
+0x04 0x00 0x00 0x04 0x00 0x09
+
+# SH2A: movi20 #4,r4
+# SH2A-NEXT: nop
+
+# SH2: warning: invalid instruction encoding
+# SH2: mov.b r0,@(r0,r0)
+# SH2-NEXT: nop
+
+# TRUNCATED: warning: invalid instruction encoding
+# TRUNCATED-NOT: movi20
+
+# INVALID: warning: invalid instruction encoding
+# INVALID: fadd fr0,fr8
+# INVALID-NEXT: nop
+
+# SINGLE: fmov.s fr2,@(4096,r4)

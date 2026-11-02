@@ -1,0 +1,280 @@
+# RUN: split-file %s %t
+# RUN: llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check -verify-machineinstrs %t/valid.mir -o /dev/null
+# RUN: llc -mtriple=shle-unknown-elf -run-pass=sh-literal-pool-range-check -verify-machineinstrs %t/valid.mir -o /dev/null
+# RUN: not llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check %t/clobber.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=LOAD
+# RUN: not llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check %t/delay-clobber.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=LOAD
+# RUN: not llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check %t/call-clobber.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=LOAD
+# RUN: not llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check %t/join.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=LOAD
+# RUN: not llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check %t/cycle.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=LOAD
+# RUN: not llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check %t/memory.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=MEMORY
+
+# Literal-island insertion may split a MOVA and its table entry load. Follow
+# only a linear CFG chain, checking every instruction, including delay slots
+# and call regmasks. The table, load metadata and range proofs remain required.
+# LOAD: LLVM ERROR: SH literal island validation failed: function {{.*}}, inline jump-table dispatch has an invalid entry load
+# MEMORY: LLVM ERROR: SH literal island validation failed: function memory, inline jump-table dispatch has invalid memory metadata
+
+#--- valid.mir
+--- |
+  define void @wide_island() { ret void }
+  define void @narrow_chain() { ret void }
+...
+---
+name: wide_island
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+constants:
+  - id: 0
+    value: 'i32 42'
+    alignment: 4
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.4' ]
+body: |
+  bb.0:
+    successors: %bb.2
+    liveins: $r4, $pr
+    $r0 = MOVA <mcsymbol .Lwide_table>
+    BRA %bb.2 {
+      $r4 = SHLL2 killed $r4
+    }
+  bb.1 (align 4):
+    successors:
+    SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+  bb.2:
+    successors: %bb.4
+    liveins: $r0, $r4, $pr
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lwide_base> {
+      NOP
+    }
+  bb.3 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lwide_table>, <mcsymbol .Lwide_base>, 4
+  bb.4:
+    liveins: $pr
+    RTS implicit $pr {
+      NOP
+    }
+...
+---
+name: narrow_chain
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.4' ]
+body: |
+  bb.0:
+    successors: %bb.1
+    liveins: $r4, $pr
+    $r0 = MOVA <mcsymbol .Lnarrow_table>
+    $r4 = SHLL killed $r4, implicit-def dead $tbit
+  bb.1:
+    successors: %bb.2
+    liveins: $r0, $r4, $pr
+    NOP
+  bb.2:
+    successors: %bb.4
+    liveins: $r0, $r4, $pr
+    $r1 = MOVW_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s16) from jump-table, align 4)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lnarrow_base> {
+      NOP
+    }
+  bb.3 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lnarrow_table>, <mcsymbol .Lnarrow_base>, 2
+  bb.4:
+    liveins: $pr
+    RTS implicit $pr {
+      NOP
+    }
+...
+
+#--- clobber.mir
+--- |
+  define void @clobber() { ret void }
+...
+---
+name: clobber
+alignment: 4
+noVRegs: true
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.3' ]
+body: |
+  bb.0:
+    successors: %bb.1
+    $r0 = MOVA <mcsymbol .Ltable>
+    $r0 = MOVri 0
+  bb.1:
+    successors: %bb.3
+    $r1 = MOVL_load_indexed $r4, implicit $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF $r1, %jump-table.0, <mcsymbol .Lbase>
+  bb.2 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Ltable>, <mcsymbol .Lbase>, 4
+  bb.3:
+    RTS implicit $pr
+...
+
+#--- delay-clobber.mir
+--- |
+  define void @delay_clobber() { ret void }
+...
+---
+name: delay_clobber
+alignment: 4
+noVRegs: true
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.3' ]
+body: |
+  bb.0:
+    successors: %bb.1
+    $r0 = MOVA <mcsymbol .Ltable>
+    BRA %bb.1 {
+      $r0 = MOVri 0
+    }
+  bb.1:
+    successors: %bb.3
+    $r1 = MOVL_load_indexed $r4, implicit $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF $r1, %jump-table.0, <mcsymbol .Lbase>
+  bb.2 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Ltable>, <mcsymbol .Lbase>, 4
+  bb.3:
+    RTS implicit $pr
+...
+
+#--- call-clobber.mir
+--- |
+  define void @call_clobber() { ret void }
+...
+---
+name: call_clobber
+alignment: 4
+noVRegs: true
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.3' ]
+body: |
+  bb.0:
+    successors: %bb.1
+    $r0 = MOVA <mcsymbol .Ltable>
+    JSR $r8, csr_sh, implicit-def $pr
+  bb.1:
+    successors: %bb.3
+    $r1 = MOVL_load_indexed $r4, implicit $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF $r1, %jump-table.0, <mcsymbol .Lbase>
+  bb.2 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Ltable>, <mcsymbol .Lbase>, 4
+  bb.3:
+    RTS implicit $pr
+...
+
+#--- join.mir
+--- |
+  define void @join() { ret void }
+...
+---
+name: join
+alignment: 4
+noVRegs: true
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.5' ]
+body: |
+  bb.0:
+    successors: %bb.1, %bb.2
+    $r0 = MOVA <mcsymbol .Ltable>
+    BT %bb.2, implicit $tbit
+  bb.1:
+    successors: %bb.3
+    BRA %bb.3
+  bb.2:
+    successors: %bb.3
+    $r0 = MOVri 0
+  bb.3:
+    successors: %bb.5
+    $r1 = MOVL_load_indexed $r4, implicit $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF $r1, %jump-table.0, <mcsymbol .Lbase>
+  bb.4 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Ltable>, <mcsymbol .Lbase>, 4
+  bb.5:
+    RTS implicit $pr
+...
+
+#--- cycle.mir
+--- |
+  define void @cycle() { ret void }
+...
+---
+name: cycle
+alignment: 4
+noVRegs: true
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.1' ]
+body: |
+  bb.0:
+    successors:
+    $r0 = MOVA <mcsymbol .Ltable>
+    RTS implicit $pr
+  bb.1:
+    successors: %bb.2
+    NOP
+  bb.2:
+    successors: %bb.1
+    $r1 = MOVL_load_indexed $r4, implicit $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF $r1, %jump-table.0, <mcsymbol .Lbase>
+  bb.3 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Ltable>, <mcsymbol .Lbase>, 4
+...
+
+#--- memory.mir
+--- |
+  define void @memory() { ret void }
+...
+---
+name: memory
+alignment: 4
+noVRegs: true
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.3' ]
+body: |
+  bb.0:
+    successors: %bb.1
+    $r0 = MOVA <mcsymbol .Ltable>
+  bb.1:
+    successors: %bb.3
+    $r1 = MOVL_load_indexed $r4, implicit $r0 :: (load (s32))
+    BRAF $r1, %jump-table.0, <mcsymbol .Lbase>
+  bb.2 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Ltable>, <mcsymbol .Lbase>, 4
+  bb.3:
+    RTS implicit $pr
+...

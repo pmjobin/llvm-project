@@ -1,0 +1,74 @@
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -O0 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=CHECK
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -O2 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=CHECK
+# RUN: llc -mtriple=sh-unknown-none-elf -mcpu=sh4 -O2 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=CHECK
+
+# CHECK-LABEL: name: double_frame_undef
+# CHECK: FMOV_S_STORE_PREDEC_ALIAS undef $fr{{[23]}}, killed $r{{[0-9]+}}
+# CHECK: FMOV_S_STORE_PREDEC_ALIAS undef $fr{{[23]}}, killed $r{{[0-9]+}}
+---
+name: double_frame_undef
+tracksRegLiveness: true
+noVRegs: true
+fixedStack:
+  - { id: 0, type: default, offset: 0, size: 8, alignment: 4, isImmutable: false }
+body: |
+  bb.0:
+    liveins: $pr, $fpscr
+
+    FMOV_D_STORE_FI undef $dr2, %fixed-stack.0, 0, implicit $fpscr :: (store (s64) into %fixed-stack.0)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: single_frame_undef
+# CHECK: FMOV_S_STORE_INDEXED_ALIAS undef $fr2, $r15
+---
+name: single_frame_undef
+tracksRegLiveness: true
+noVRegs: true
+fixedStack:
+  - { id: 0, type: default, offset: 0, size: 4, alignment: 4, isImmutable: false }
+body: |
+  bb.0:
+    liveins: $pr, $fpscr
+
+    FMOV_S_STORE_FI undef $fr2, %fixed-stack.0, 0, implicit $fpscr :: (store (s32) into %fixed-stack.0)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: single_frame_fallback_undef
+# CHECK: FMOV_S_STORE_PREDEC_ALIAS undef $fr2, killed $r{{[0-9]+}}
+---
+name: single_frame_fallback_undef
+tracksRegLiveness: true
+noVRegs: true
+fixedStack:
+  - { id: 0, type: default, offset: 0, size: 4, alignment: 4, isImmutable: false }
+body: |
+  bb.0:
+    liveins: $pr, $fpscr, $r0
+
+    FMOV_S_STORE_FI undef $fr2, %fixed-stack.0, 0, implicit $fpscr :: (store (s32) into %fixed-stack.0)
+    $r5 = MOVrr $r0
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name: adjacent_frame_undef
+# CHECK: FMOV_S_STORE_PREDEC_ALIAS undef $fr{{[23]}}, killed $r{{[0-9]+}}
+# CHECK: FMOV_S_STORE_PREDEC_ALIAS undef $fr{{[23]}}, killed $r{{[0-9]+}}
+# CHECK: FMOV_S_STORE_PREDEC_ALIAS undef $fr{{[45]}}, killed $r{{[0-9]+}}
+# CHECK: FMOV_S_STORE_PREDEC_ALIAS undef $fr{{[45]}}, killed $r{{[0-9]+}}
+---
+name: adjacent_frame_undef
+tracksRegLiveness: true
+noVRegs: true
+fixedStack:
+  - { id: 0, type: default, offset: 0, size: 8, alignment: 4, isImmutable: false }
+  - { id: 1, type: default, offset: 8, size: 8, alignment: 4, isImmutable: false }
+body: |
+  bb.0:
+    liveins: $pr, $fpscr
+
+    FMOV_D_STORE_FI undef $dr2, %fixed-stack.1, 0, implicit $fpscr :: (store (s64) into %fixed-stack.1)
+    FMOV_D_STORE_FI undef $dr4, %fixed-stack.0, 0, implicit $fpscr :: (store (s64) into %fixed-stack.0)
+    RTS implicit $pr
+...

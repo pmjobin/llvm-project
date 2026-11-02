@@ -1,0 +1,239 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh3 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh3 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s
+# RUN: llc -O0 -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s --check-prefix=O0
+
+# An independent argument can precede a dependent target-load chain. Check
+# the bounded search, speed-only scope, and an argument consumed by that chain.
+
+--- |
+  define void @independent_argument(ptr %p)  { ret void }
+  define void @last_in_bound(ptr %p)  { ret void }
+  define void @outside_bound(ptr %p)  { ret void }
+  define void @size_control(ptr %p) optsize { ret void }
+  define void @minsize_control(ptr %p) minsize { ret void }
+  define void @optnone_control(ptr %p) optnone noinline { ret void }
+  define void @argument_used_by_target(ptr %p)  { ret void }
+...
+---
+name: independent_argument
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+  liveins: $r1, $r6
+
+  $r6 = ADDri $r6, 1
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  JSR $r1, csr_sh, implicit-def dead $pr, implicit $r6, implicit-def $r15, implicit-def $r0
+...
+---
+name: last_in_bound
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+  liveins: $r1, $r6
+
+  $r6 = ADDri $r6, 1
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  JSR $r1, csr_sh, implicit-def dead $pr, implicit $r6, implicit-def $r15, implicit-def $r0
+...
+---
+name: outside_bound
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+  liveins: $r1, $r6
+
+  $r6 = ADDri $r6, 1
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  JSR $r1, csr_sh, implicit-def dead $pr, implicit $r6, implicit-def $r15, implicit-def $r0
+...
+---
+name: size_control
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+  liveins: $r1, $r6
+
+  $r6 = ADDri $r6, 1
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  JSR $r1, csr_sh, implicit-def dead $pr, implicit $r6, implicit-def $r15, implicit-def $r0
+...
+---
+name: minsize_control
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+  liveins: $r1, $r6
+
+  $r6 = ADDri $r6, 1
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  JSR $r1, csr_sh, implicit-def dead $pr, implicit $r6, implicit-def $r15, implicit-def $r0
+...
+---
+name: optnone_control
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+  liveins: $r1, $r6
+
+  $r6 = ADDri $r6, 1
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  JSR $r1, csr_sh, implicit-def dead $pr, implicit $r6, implicit-def $r15, implicit-def $r0
+...
+---
+name: argument_used_by_target
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+  liveins: $r1, $r6
+
+  $r6 = ADDri $r6, 1
+  $r1 = MOVrr $r6
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  $r1 = MOVL_load_reg $r1 :: (load (s32) from %ir.p)
+  JSR $r1, csr_sh, implicit-def dead $pr, implicit $r6, implicit-def $r15, implicit-def $r0
+...
+
+# CHECK-LABEL: name:            independent_argument
+# CHECK-NOT: $r6 = ADDri
+# CHECK: JSR $r1, csr_sh,{{.*}} {
+# CHECK-NEXT: $r6 = ADDri $r6, 1
+# CHECK-NEXT: }
+
+# CHECK-LABEL: name:            last_in_bound
+# CHECK-NOT: $r6 = ADDri
+# CHECK: JSR $r1, csr_sh,{{.*}} {
+# CHECK-NEXT: $r6 = ADDri $r6, 1
+# CHECK-NEXT: }
+
+# CHECK-LABEL: name:            outside_bound
+# CHECK: $r6 = ADDri $r6, 1
+# CHECK: JSR $r1, csr_sh,{{.*}} {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+# CHECK-LABEL: name:            size_control
+# CHECK: $r6 = ADDri $r6, 1
+# CHECK: JSR $r1, csr_sh,{{.*}} {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+# CHECK-LABEL: name:            minsize_control
+# CHECK: $r6 = ADDri $r6, 1
+# CHECK: JSR $r1, csr_sh,{{.*}} {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+# CHECK-LABEL: name:            optnone_control
+# CHECK: $r6 = ADDri $r6, 1
+# CHECK: JSR $r1, csr_sh,{{.*}} {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+# CHECK-LABEL: name:            argument_used_by_target
+# CHECK: $r6 = ADDri $r6, 1
+# CHECK: JSR $r1, csr_sh,{{.*}} {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+# O0-LABEL: name:            independent_argument
+# O0: $r6 = ADDri $r6, 1
+# O0: JSR $r1, csr_sh,{{.*}} {
+# O0-NEXT: NOP
+# O0-NEXT: }
+
+# O0-LABEL: name:            last_in_bound
+# O0: $r6 = ADDri $r6, 1
+# O0: JSR $r1, csr_sh,{{.*}} {
+# O0-NEXT: NOP
+# O0-NEXT: }
+
+# O0-LABEL: name:            outside_bound
+# O0: $r6 = ADDri $r6, 1
+# O0: JSR $r1, csr_sh,{{.*}} {
+# O0-NEXT: NOP
+# O0-NEXT: }
+
+# O0-LABEL: name:            size_control
+# O0: $r6 = ADDri $r6, 1
+# O0: JSR $r1, csr_sh,{{.*}} {
+# O0-NEXT: NOP
+# O0-NEXT: }
+
+# O0-LABEL: name:            minsize_control
+# O0: $r6 = ADDri $r6, 1
+# O0: JSR $r1, csr_sh,{{.*}} {
+# O0-NEXT: NOP
+# O0-NEXT: }
+
+# O0-LABEL: name:            optnone_control
+# O0: $r6 = ADDri $r6, 1
+# O0: JSR $r1, csr_sh,{{.*}} {
+# O0-NEXT: NOP
+# O0-NEXT: }
+
+# O0-LABEL: name:            argument_used_by_target
+# O0: $r6 = ADDri $r6, 1
+# O0: JSR $r1, csr_sh,{{.*}} {
+# O0-NEXT: NOP
+# O0-NEXT: }

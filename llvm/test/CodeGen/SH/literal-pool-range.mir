@@ -1,0 +1,209 @@
+# RUN: split-file %s %t
+# RUN: llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check -verify-machineinstrs %t/exact.mir -o /dev/null
+# RUN: llc -mtriple=shle-unknown-elf -run-pass=sh-literal-pool-range-check -verify-machineinstrs %t/exact.mir -o /dev/null
+# RUN: llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check -verify-machineinstrs %t/word-exact.mir -o /dev/null
+# RUN: llc -mtriple=shle-unknown-elf -run-pass=sh-literal-pool-range-check -verify-machineinstrs %t/word-exact.mir -o /dev/null
+# RUN: not llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check %t/out.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=OUT
+# RUN: not llc -mtriple=shle-unknown-elf -run-pass=sh-literal-pool-range-check %t/out.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=OUT
+# RUN: not llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check %t/word-out.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=WORD-OUT
+# RUN: not llc -mtriple=shle-unknown-elf -run-pass=sh-literal-pool-range-check %t/word-out.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=WORD-OUT
+# RUN: not llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check %t/unassigned.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=UNASSIGNED
+# RUN: not llc -mtriple=sh-unknown-elf -run-pass=sh-literal-pool-range-check %t/fallthrough.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=FALLTHROUGH
+
+# OUT: LLVM ERROR: SH literal island validation failed: function out_of_range
+# OUT-SAME: CPI 0
+# OUT-SAME: instance 0
+# OUT-SAME: use offset 0
+# OUT-SAME: entry offset 1028
+# OUT-SAME: distance 1024
+
+# WORD-OUT: LLVM ERROR: SH literal island validation failed: function word_out_of_range
+# WORD-OUT-SAME: CPI 0
+# WORD-OUT-SAME: instance 0
+# WORD-OUT-SAME: use offset 0
+# WORD-OUT-SAME: entry offset 516
+# WORD-OUT-SAME: distance 512
+
+# UNASSIGNED: LLVM ERROR: SH literal island validation failed: function unassigned
+# UNASSIGNED-SAME: literal load has an unassigned island instance
+
+# FALLTHROUGH: LLVM ERROR: SH literal island validation failed: function fallthrough
+# FALLTHROUGH-SAME: execution can fall through into an island
+
+#--- exact.mir
+--- |
+  define i32 @exact_boundary() {
+    ret i32 0
+  }
+...
+---
+name:            exact_boundary
+alignment:       1024
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 42'
+    alignment:   4
+body:             |
+  bb.0:
+    $r0 = MOVL_load_pc_island %const.0, 0 :: (dereferenceable invariant load (s32) from constant-pool)
+    RTS implicit $pr, implicit $r0 {
+      NOP
+    }
+
+  bb.1 (align 1024):
+    successors:
+
+  bb.2 (align 4):
+    successors:
+
+    SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+...
+
+#--- word-exact.mir
+--- |
+  define i32 @word_exact_boundary() {
+    ret i32 0
+  }
+...
+---
+name:            word_exact_boundary
+alignment:       512
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i16 300'
+    alignment:   2
+body:             |
+  bb.0:
+    $r0 = MOVW_load_pc_island %const.0, 0 :: (dereferenceable invariant load (s16) from constant-pool)
+    RTS implicit $pr, implicit $r0 {
+      NOP
+    }
+
+  bb.1 (align 512):
+    successors:
+
+  bb.2 (align 4):
+    successors:
+
+    SH_CONSTPOOL_ENTRY %const.0, 0, 2, 2
+...
+
+#--- word-out.mir
+--- |
+  define i32 @word_out_of_range() {
+    ret i32 0
+  }
+...
+---
+name:            word_out_of_range
+alignment:       512
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i16 300'
+    alignment:   2
+body:             |
+  bb.0:
+    $r0 = MOVW_load_pc_island %const.0, 0 :: (dereferenceable invariant load (s16) from constant-pool)
+    RTS implicit $pr, implicit $r0 {
+      NOP
+    }
+
+  bb.1 (align 512):
+    successors:
+
+    NOP
+    NOP
+
+  bb.2 (align 4):
+    successors:
+
+    SH_CONSTPOOL_ENTRY %const.0, 0, 2, 2
+...
+
+#--- out.mir
+--- |
+  define i32 @out_of_range() {
+    ret i32 0
+  }
+...
+---
+name:            out_of_range
+alignment:       1024
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 42'
+    alignment:   4
+body:             |
+  bb.0:
+    $r0 = MOVL_load_pc_island %const.0, 0 :: (dereferenceable invariant load (s32) from constant-pool)
+    RTS implicit $pr, implicit $r0 {
+      NOP
+    }
+
+  bb.1 (align 1024):
+    successors:
+
+    NOP
+
+  bb.2 (align 4):
+    successors:
+
+    SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+...
+
+#--- unassigned.mir
+--- |
+  define i32 @unassigned() {
+    ret i32 0
+  }
+...
+---
+name:            unassigned
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 42'
+    alignment:   4
+body:             |
+  bb.0:
+    $r0 = MOVL_load_pc_island %const.0, -1 :: (dereferenceable invariant load (s32) from constant-pool)
+    RTS implicit $pr, implicit $r0 {
+      NOP
+    }
+...
+
+#--- fallthrough.mir
+--- |
+  define i32 @fallthrough() {
+    ret i32 0
+  }
+...
+---
+name:            fallthrough
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i32 42'
+    alignment:   4
+body:             |
+  bb.0:
+    $r0 = MOVL_load_pc_island %const.0, 0 :: (dereferenceable invariant load (s32) from constant-pool)
+    NOP
+
+  bb.1 (align 4):
+    successors:
+
+    SH_CONSTPOOL_ENTRY %const.0, 0, 4, 4
+...

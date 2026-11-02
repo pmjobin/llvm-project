@@ -1,0 +1,73 @@
+# RUN: split-file %s %t
+# RUN: not --crash llc -mtriple=sh-unknown-none-elf -mcpu=sh4 -run-pass=prolog-epilog %t/xf.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=XF
+# RUN: not --crash llc -mtriple=sh-unknown-none-elf -mcpu=sh4al-dsp -run-pass=prolog-epilog %t/dsp.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=DSP
+# RUN: not --crash llc -mtriple=sh-unknown-none-elf -mcpu=sh2 -run-pass=prolog-epilog %t/fpul.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=NOFPU
+# RUN: not --crash llc -mtriple=sh-unknown-none-elf -mcpu=sh2 -run-pass=prolog-epilog %t/fpscr.mir -o /dev/null 2>&1 | FileCheck %s --check-prefix=NOFPU
+
+# XF: LLVM ERROR: SH hardware handlers do not support alternate-bank FPU state
+# DSP: LLVM ERROR: SH core hardware handlers do not preserve DSP state
+# NOFPU: LLVM ERROR: SH hardware handler FPU state requires an FPU target
+
+#--- xf.mir
+--- |
+  define void @invalid_xf_state() #0 {
+    ret void
+  }
+  attributes #0 = { noinline nounwind "disable-tail-calls"="true" "sh-interrupt-handler"="interrupt" "target-abi"="gnu-hard-float" }
+...
+---
+name: invalid_xf_state
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    $xf0 = IMPLICIT_DEF
+    RTE_RETURN implicit-def dead $r15, implicit-def dead $sr, implicit-def dead $sbit, implicit-def dead $mbit, implicit-def dead $qbit, implicit-def dead $tbit, implicit $r15
+...
+
+#--- dsp.mir
+--- |
+  define void @invalid_dsp_state() #0 {
+    ret void
+  }
+  attributes #0 = { noinline nounwind "disable-tail-calls"="true" "sh-interrupt-handler"="interrupt" "target-abi"="gnu" }
+...
+---
+name: invalid_dsp_state
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    $a0 = IMPLICIT_DEF
+    RTE_RETURN implicit-def dead $r15, implicit-def dead $sr, implicit-def dead $sbit, implicit-def dead $mbit, implicit-def dead $qbit, implicit-def dead $tbit, implicit $r15
+...
+
+#--- fpul.mir
+--- |
+  define void @invalid_fpul_state() #0 { ret void }
+  attributes #0 = { "sh-interrupt-handler"="interrupt" "target-abi"="gnu" }
+...
+---
+name: invalid_fpul_state
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    $fpul = IMPLICIT_DEF
+    RTE_RETURN implicit-def dead $r15, implicit-def dead $sr, implicit-def dead $sbit, implicit-def dead $mbit, implicit-def dead $qbit, implicit-def dead $tbit, implicit $r15
+...
+
+#--- fpscr.mir
+--- |
+  define void @invalid_fpscr_state() #0 { ret void }
+  attributes #0 = { "sh-interrupt-handler"="interrupt" "target-abi"="gnu" }
+...
+---
+name: invalid_fpscr_state
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    $fpscr = IMPLICIT_DEF
+    RTE_RETURN implicit-def dead $r15, implicit-def dead $sr, implicit-def dead $sbit, implicit-def dead $mbit, implicit-def dead $qbit, implicit-def dead $tbit, implicit $r15
+...

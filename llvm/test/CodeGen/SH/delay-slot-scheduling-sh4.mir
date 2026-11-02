@@ -1,0 +1,97 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh4 -mattr=-sh4-debug-state -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s
+
+--- |
+  define void @mova_sh4() { ret void }
+  define void @fpul_dependency(i32 %target, i32 %value) { ret void }
+  define void @fpscr_dependency(i32 %target, i32 %value) { ret void }
+  define void @fr_dr_overlap(i32 %target) { ret void }
+...
+---
+name:            mova_sh4
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+
+    $r0 = MOVA <mcsymbol .LCPI0_0_0>
+    BRA %bb.1
+
+  bb.1:
+...
+
+# CHECK-LABEL: name:            mova_sh4
+# CHECK: $r0 = MOVA <mcsymbol .LCPI0_0_0>
+# CHECK-NEXT: BRA %bb.1 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            fpul_dependency
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $fpul, $r4, $r5
+
+    $r0 = STS_FPUL implicit $fpul
+    LDS_FPUL $r5, implicit-def $fpul, implicit-def $r4
+    JMP $r4
+
+  bb.1:
+...
+
+# CHECK-LABEL: name:            fpul_dependency
+# CHECK: $r0 = STS_FPUL implicit $fpul
+# CHECK-NEXT: LDS_FPUL $r5, implicit-def $fpul, implicit-def $r4
+# CHECK-NEXT: JMP $r4 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            fpscr_dependency
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $fpscr, $r4, $r5
+
+    $r0 = STS_FPSCR implicit $fpscr
+    LDS_FPSCR $r5, implicit-def $fpscr, implicit-def $r4
+    JMP $r4
+
+  bb.1:
+...
+
+# CHECK-LABEL: name:            fpscr_dependency
+# CHECK: $r0 = STS_FPSCR implicit $fpscr
+# CHECK-NEXT: LDS_FPSCR $r5, implicit-def $fpscr, implicit-def $r4
+# CHECK-NEXT: JMP $r4 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name:            fr_dr_overlap
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $dr0, $dr2, $fpscr, $r4
+
+    $fr0 = FLDI0 implicit $fpscr
+    $dr0 = FADD_DR $dr0, $dr2, implicit-def $fpscr, implicit $fpscr, implicit-def $r4
+    JMP $r4
+
+  bb.1:
+...
+
+# CHECK-LABEL: name:            fr_dr_overlap
+# CHECK: $fr0 = FLDI0 implicit $fpscr
+# CHECK-NEXT: $dr0 = FADD_DR $dr0, $dr2, implicit-def $fpscr, implicit $fpscr, implicit-def $r4
+# CHECK-NEXT: JMP $r4 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }

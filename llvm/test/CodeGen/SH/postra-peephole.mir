@@ -1,0 +1,484 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-postra-peephole %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=sh-postra-peephole %s -o - | FileCheck %s
+
+--- |
+  define void @fold_compare() { ret void }
+  define void @keep_live_constant() { ret void }
+  define void @keep_constant_in_r0() { ret void }
+  define void @fold_logic() { ret void }
+  define void @keep_negative_logic() { ret void }
+  define void @fold_masked_zero_test() { ret void }
+  define void @fold_masked_zero_test_via_r0() { ret void }
+  define void @keep_live_masked_result() { ret void }
+  define void @fold_dead_extension_masked_zero_test() { ret void }
+  define void @keep_live_extension_masked_zero_test() { ret void }
+  define void @cancel_adjacent_adds() { ret void }
+  define void @fold_adjacent_adds() { ret void }
+  define void @fold_vector_pointer_adds() { ret void }
+  define void @keep_observed_pointer_adds() { ret void }
+  define void @keep_large_adjacent_adds() { ret void }
+  define void @fold_predecrement_store_live(ptr %p) { ret void }
+  define void @fold_predecrement_store_dead(ptr %p) { ret void }
+  define void @fold_predecrement_byte_store(ptr %p) { ret void }
+  define void @fold_predecrement_word_store(ptr %p) { ret void }
+  define void @keep_predecrement_store_same_register(ptr %p) { ret void }
+  define void @keep_predecrement_store_stack_pointer(ptr %p) { ret void }
+  define void @keep_predecrement_store_frame_setup(ptr %p) { ret void }
+  define void @keep_predecrement_store_frame_destroy(ptr %p) { ret void }
+  define void @keep_predecrement_store_wrong_offset(ptr %p) { ret void }
+  define void @keep_predecrement_store_nonadjacent(ptr %p) { ret void }
+...
+---
+name:            fold_compare
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    liveins: $r0
+
+    $r1 = MOVri 37
+    CMP_EQ killed $r1, $r0, implicit-def $tbit
+    BT %bb.1, implicit killed $tbit
+
+  bb.2:
+    successors: %bb.1(0x80000000)
+    BRA %bb.1
+
+  bb.1:
+...
+
+# CHECK-LABEL: name:            fold_compare
+# CHECK-NOT: $r1 = MOVri 37
+# CHECK: CMP_EQri 37, implicit-def $tbit, implicit $r0
+
+---
+name:            keep_live_constant
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0
+
+    $r1 = MOVri 37
+    CMP_EQ $r1, $r0, implicit-def dead $tbit
+    $r2 = MOVrr killed $r1
+...
+
+# CHECK-LABEL: name:            keep_live_constant
+# CHECK: $r1 = MOVri 37
+# CHECK-NEXT: CMP_EQ $r1, $r0, implicit-def dead $tbit
+
+---
+name:            keep_constant_in_r0
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r2
+
+    $r0 = MOVri 37
+    CMP_EQ killed $r0, $r2, implicit-def dead $tbit
+...
+
+# CHECK-LABEL: name:            keep_constant_in_r0
+# CHECK: $r0 = MOVri 37
+# CHECK-NEXT: CMP_EQ killed $r0, $r2, implicit-def dead $tbit
+
+---
+name:            fold_logic
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0
+
+    $r1 = MOVri 37
+    $r0 = ANDrr $r0, killed $r1
+    $r2 = MOVri 11
+    $r0 = ORrr $r0, killed $r2
+    $r3 = MOVri 91
+    dead $r0 = XORrr killed $r0, killed $r3
+...
+
+# CHECK-LABEL: name:            fold_logic
+# CHECK-NOT: MOVri
+# CHECK: ANDri 37, implicit-def $r0, implicit $r0
+# CHECK-NEXT: ORri 11, implicit-def $r0, implicit $r0
+# CHECK-NEXT: XORri 91, implicit-def dead $r0, implicit killed $r0
+
+---
+name:            keep_negative_logic
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0
+
+    $r1 = MOVri -1
+    $r0 = ANDrr $r0, killed $r1
+...
+
+# CHECK-LABEL: name:            keep_negative_logic
+# CHECK: $r1 = MOVri -1
+# CHECK-NEXT: $r0 = ANDrr $r0, killed $r1
+
+---
+name:            fold_masked_zero_test
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0
+
+    $r1 = MOVri 37
+    $r1 = ANDrr $r1, killed $r0
+    TST killed $r1, $r1, implicit-def $tbit
+...
+
+# CHECK-LABEL: name:            fold_masked_zero_test
+# CHECK-NOT: MOVri
+# CHECK-NOT: ANDrr
+# CHECK: TSTri 37, implicit-def $tbit, implicit killed $r0
+
+---
+name:            fold_masked_zero_test_via_r0
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r2
+
+    $r0 = MOVri 11
+    $r0 = ANDrr $r0, killed $r2
+    TST killed $r0, $r0, implicit-def dead $tbit
+...
+
+# CHECK-LABEL: name:            fold_masked_zero_test_via_r0
+# CHECK-NOT: MOVri
+# CHECK-NOT: ANDrr
+# CHECK: $r0 = MOVrr killed $r2
+# CHECK-NEXT: TSTri 11, implicit-def dead $tbit, implicit $r0
+
+---
+name:            keep_live_masked_result
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0
+
+    $r1 = MOVri 37
+    $r1 = ANDrr $r1, $r0
+    TST $r1, $r1, implicit-def dead $tbit
+    $r2 = MOVrr killed $r1
+...
+
+# CHECK-LABEL: name:            keep_live_masked_result
+# CHECK: $r1 = MOVri 37
+# CHECK-NEXT: $r1 = ANDrr $r1, $r0
+# CHECK-NEXT: TST $r1, $r1, implicit-def dead $tbit
+
+---
+name:            fold_dead_extension_masked_zero_test
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0
+
+    $r0 = EXTUB killed $r0
+    $r1 = MOVri 37
+    $r1 = ANDrr $r1, killed $r0
+    TST killed $r1, $r1, implicit-def $tbit
+...
+
+# CHECK-LABEL: name:            fold_dead_extension_masked_zero_test
+# CHECK-NOT: EXTUB
+# CHECK-NOT: MOVri
+# CHECK-NOT: ANDrr
+# CHECK: TSTri 37, implicit-def $tbit, implicit killed $r0
+
+---
+name:            keep_live_extension_masked_zero_test
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0
+
+    $r0 = EXTUB killed $r0
+    $r1 = MOVri 37
+    $r1 = ANDrr $r1, $r0
+    TST killed $r1, $r1, implicit-def $tbit
+    $r2 = MOVrr killed $r0
+...
+
+# CHECK-LABEL: name:            keep_live_extension_masked_zero_test
+# CHECK: $r0 = EXTUB killed $r0
+# CHECK-NOT: MOVri
+# CHECK-NOT: ANDrr
+# CHECK: TSTri 37, implicit-def $tbit, implicit $r0
+# CHECK-NEXT: $r2 = MOVrr killed $r0
+
+---
+name:            cancel_adjacent_adds
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r15
+
+    $r15 = ADDri $r15, 20
+    $r15 = ADDri $r15, -20
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            cancel_adjacent_adds
+# CHECK-NOT: ADDri
+# CHECK: RTS
+
+---
+name:            fold_adjacent_adds
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r15
+
+    $r15 = ADDri $r15, 64
+    $r15 = ADDri $r15, -20
+    $r0 = MOVrr $r15
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            fold_adjacent_adds
+# CHECK: $r15 = ADDri $r15, 44
+# CHECK-NEXT: $r0 = MOVrr $r15
+
+---
+name:            fold_vector_pointer_adds
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r4, $pr
+    $r4 = ADDri $r4, 16
+    $r4 = ADDri $r4, 16
+    $r0 = MOVrr killed $r4
+    RTS implicit $pr, implicit $r0
+...
+# CHECK-LABEL: name:            fold_vector_pointer_adds
+# CHECK: $r4 = ADDri $r4, 32
+# CHECK-NEXT: $r0 = MOVrr killed $r4
+
+---
+name:            keep_observed_pointer_adds
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r4, $r5, $pr
+    $r4 = ADDri $r4, 16
+    MOVL_store_reg $r5, $r4
+    $r4 = ADDri $r4, 16
+    $r0 = MOVrr killed $r4
+    RTS implicit $pr, implicit $r0
+...
+# CHECK-LABEL: name:            keep_observed_pointer_adds
+# CHECK: $r4 = ADDri $r4, 16
+# CHECK-NEXT: MOVL_store_reg $r5, $r4
+# CHECK-NEXT: $r4 = ADDri $r4, 16
+
+---
+name:            keep_large_adjacent_adds
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r15
+
+    $r15 = ADDri $r15, 127
+    $r15 = ADDri $r15, 1
+    $r0 = MOVrr $r15
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            keep_large_adjacent_adds
+# CHECK: $r15 = ADDri $r15, 127
+# CHECK-NEXT: $r15 = ADDri $r15, 1
+
+---
+name:            fold_predecrement_store_live
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r1, $r2
+
+    $r1 = ADDri $r1, -4
+    MOVL_store_reg killed $r2, $r1 :: (volatile store (s32) into %ir.p)
+    $r0 = MOVrr killed $r1
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            fold_predecrement_store_live
+# CHECK-NOT: ADDri
+# CHECK: early-clobber $r1 = MOVL_store_predec killed $r2, $r1 :: (volatile store (s32) into %ir.p)
+# CHECK-NEXT: $r0 = MOVrr killed $r1
+
+---
+name:            fold_predecrement_store_dead
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r1, $r2
+
+    $r1 = ADDri $r1, -4
+    MOVL_store_reg killed $r2, killed $r1 :: (store (s32) into %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            fold_predecrement_store_dead
+# CHECK-NOT: ADDri
+# CHECK: dead early-clobber $r1 = MOVL_store_predec killed $r2, $r1 :: (store (s32) into %ir.p)
+
+---
+name:            fold_predecrement_byte_store
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r1, $r2
+
+    $r1 = ADDri $r1, -1
+    MOVB_store_reg killed $r2, killed $r1 :: (store (s8) into %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            fold_predecrement_byte_store
+# CHECK-NOT: ADDri
+# CHECK: dead early-clobber $r1 = MOVB_store_predec killed $r2, $r1 :: (store (s8) into %ir.p)
+
+---
+name:            fold_predecrement_word_store
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r1, $r2
+
+    $r1 = ADDri $r1, -2
+    MOVW_store_reg killed $r2, killed $r1 :: (store (s16) into %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            fold_predecrement_word_store
+# CHECK-NOT: ADDri
+# CHECK: dead early-clobber $r1 = MOVW_store_predec killed $r2, $r1 :: (store (s16) into %ir.p)
+
+---
+name:            keep_predecrement_store_same_register
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r1
+
+    $r1 = ADDri $r1, -4
+    MOVL_store_reg killed $r1, killed $r1 :: (store (s32) into %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            keep_predecrement_store_same_register
+# CHECK: $r1 = ADDri $r1, -4
+# CHECK-NEXT: MOVL_store_reg killed $r1, killed $r1
+
+---
+name:            keep_predecrement_store_stack_pointer
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r2, $r15
+
+    $r15 = ADDri $r15, -4
+    MOVL_store_reg killed $r2, $r15 :: (store (s32) into %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            keep_predecrement_store_stack_pointer
+# CHECK: $r15 = ADDri $r15, -4
+# CHECK-NEXT: MOVL_store_reg killed $r2, $r15
+
+---
+name:            keep_predecrement_store_frame_setup
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r1, $r2
+
+    $r1 = frame-setup ADDri $r1, -4
+    MOVL_store_reg killed $r2, $r1 :: (store (s32) into %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            keep_predecrement_store_frame_setup
+# CHECK: $r1 = frame-setup ADDri $r1, -4
+# CHECK-NEXT: MOVL_store_reg killed $r2, $r1
+
+---
+name:            keep_predecrement_store_frame_destroy
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r1, $r2
+
+    $r1 = ADDri $r1, -4
+    frame-destroy MOVL_store_reg killed $r2, $r1 :: (store (s32) into %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            keep_predecrement_store_frame_destroy
+# CHECK: $r1 = ADDri $r1, -4
+# CHECK-NEXT: frame-destroy MOVL_store_reg killed $r2, $r1
+
+---
+name:            keep_predecrement_store_wrong_offset
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r1, $r2
+
+    $r1 = ADDri $r1, -8
+    MOVL_store_reg killed $r2, $r1 :: (store (s32) into %ir.p)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            keep_predecrement_store_wrong_offset
+# CHECK: $r1 = ADDri $r1, -8
+# CHECK-NEXT: MOVL_store_reg killed $r2, $r1
+
+---
+name:            keep_predecrement_store_nonadjacent
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r1, $r2, $r3
+
+    $r1 = ADDri $r1, -4
+    $r3 = MOVri 7
+    MOVL_store_reg killed $r2, $r1 :: (store (s32) into %ir.p)
+    $r0 = MOVrr killed $r3
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            keep_predecrement_store_nonadjacent
+# CHECK: $r1 = ADDri $r1, -4
+# CHECK-NEXT: $r3 = MOVri 7
+# CHECK-NEXT: MOVL_store_reg killed $r2, $r1

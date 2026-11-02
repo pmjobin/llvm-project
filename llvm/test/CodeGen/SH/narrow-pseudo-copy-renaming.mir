@@ -1,0 +1,235 @@
+# Narrow pseudo expansion must preserve allocated operand provenance when it
+# creates ordinary copies. The fixed R0 operand and conservative original
+# operands remain fixed. Native copy propagation owns the resulting folds.
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=post-ra-pseudos %s -o - | FileCheck %s --check-prefix=EXPAND
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=post-ra-pseudos %s -o - | FileCheck %s --check-prefix=EXPAND
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=post-ra-pseudos,machine-cp -mcp-use-is-copy-instr %s -o - | FileCheck %s --check-prefix=PROP
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=post-ra-pseudos,machine-cp -mcp-use-is-copy-instr %s -o - | FileCheck %s --check-prefix=PROP
+
+--- |
+  define void @allocated_byte_source(ptr %p, ptr %q) { ret void }
+  define void @allocated_word_source(ptr %p, ptr %q) { ret void }
+  define void @fixed_source(ptr %p, ptr %q) { ret void }
+  define void @live_source(ptr %p, ptr %q) { ret void }
+  define void @live_implicit_index(ptr %p, ptr %q) { ret void }
+  define void @call_clobbers_destination(ptr %p, ptr %q) { ret void }
+  define void @source_is_store_base(ptr %p, ptr %q) { ret void }
+  define void @stack_pointer_base(ptr %p, ptr %q) { ret void }
+  define void @fixed_stack_pointer_source(ptr %q) { ret void }
+  define void @undef_source(ptr %q) { ret void }
+  define void @allocated_load_destination(ptr %p) { ret void }
+  define void @fixed_load_destination(ptr %p) { ret void }
+...
+---
+name: allocated_byte_source
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r6, $r2, $pr
+
+    ; EXPAND-LABEL: name: allocated_byte_source
+    ; EXPAND: $r0 = MOVrr killed renamable $r7
+    ; EXPAND-NEXT: MOVB_store_disp killed $r0, $r2, 1 :: (store (s8) into %ir.q)
+    ; PROP-LABEL: name: allocated_byte_source
+    ; PROP: $r0 = MOVB_load_indexed $r6, implicit killed $r0 :: (load (s8) from %ir.p)
+    ; PROP-NEXT: MOVB_store_disp killed $r0, $r2, 1 :: (store (s8) into %ir.q)
+    ; PROP-NEXT: RTS
+    renamable $r7 = MOVB_load_indexed $r6, implicit killed $r0 :: (load (s8) from %ir.p)
+    MOVB_store_frame killed renamable $r7, $r2, 1, implicit-def dead early-clobber $r0 :: (store (s8) into %ir.q)
+    RTS implicit $pr
+...
+---
+name: allocated_word_source
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r6, $r2, $pr
+
+    ; PROP-LABEL: name: allocated_word_source
+    ; PROP: $r0 = MOVW_load_indexed $r6, implicit killed $r0 :: (volatile load (s16) from %ir.p)
+    ; PROP-NEXT: MOVW_store_disp killed $r0, $r2, 2 :: (volatile store (s16) into %ir.q)
+    ; PROP-NEXT: RTS
+    renamable $r7 = MOVW_load_indexed $r6, implicit killed $r0 :: (volatile load (s16) from %ir.p)
+    MOVW_store_frame killed renamable $r7, $r2, 2, implicit-def dead early-clobber $r0 :: (volatile store (s16) into %ir.q)
+    RTS implicit $pr
+...
+---
+name: fixed_source
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r6, $r2, $pr
+
+    ; PROP-LABEL: name: fixed_source
+    ; PROP: renamable $r7 = MOVB_load_indexed $r6, implicit killed $r0
+    ; PROP-NEXT: $r0 = MOVrr killed $r7
+    ; PROP-NEXT: MOVB_store_disp killed $r0, $r2, 1
+    renamable $r7 = MOVB_load_indexed $r6, implicit killed $r0 :: (load (s8) from %ir.p)
+    MOVB_store_frame killed $r7, $r2, 1, implicit-def dead early-clobber $r0 :: (store (s8) into %ir.q)
+    RTS implicit $pr
+...
+---
+name: live_source
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r6, $r2, $r4, $pr
+
+    ; PROP-LABEL: name: live_source
+    ; PROP: renamable $r7 = MOVB_load_indexed $r6, implicit killed $r0
+    ; PROP-NEXT: $r0 = MOVrr renamable $r7
+    ; PROP-NEXT: MOVB_store_disp killed $r0, $r2, 1
+    ; PROP-NEXT: MOVL_store_reg killed $r7, $r4
+    renamable $r7 = MOVB_load_indexed $r6, implicit killed $r0 :: (load (s8) from %ir.p)
+    MOVB_store_frame renamable $r7, $r2, 1, implicit-def dead early-clobber $r0 :: (store (s8) into %ir.q)
+    MOVL_store_reg killed $r7, $r4 :: (store (s32) into %ir.q)
+    RTS implicit $pr
+...
+---
+name: live_implicit_index
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r6, $r2, $r3, $pr
+
+    ; PROP-LABEL: name: live_implicit_index
+    ; PROP: renamable $r7 = MOVB_load_indexed $r6, implicit $r0
+    ; PROP-NEXT: MOVB_store_indexed $r3, $r6, implicit killed $r0
+    ; PROP-NEXT: $r0 = MOVrr killed renamable $r7
+    ; PROP-NEXT: MOVB_store_disp killed $r0, $r2, 1
+    renamable $r7 = MOVB_load_indexed $r6, implicit $r0 :: (load (s8) from %ir.p)
+    MOVB_store_indexed $r3, $r6, implicit killed $r0 :: (store (s8) into %ir.q)
+    MOVB_store_frame killed renamable $r7, $r2, 1, implicit-def dead early-clobber $r0 :: (store (s8) into %ir.q)
+    RTS implicit $pr
+...
+---
+name: call_clobbers_destination
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r0, $r6, $r9, $r1
+
+    ; PROP-LABEL: name: call_clobbers_destination
+    ; PROP: renamable $r8 = MOVB_load_indexed $r6, implicit killed $r0
+    ; PROP-NEXT: JSR killed $r1, csr_sh, implicit-def $pr, implicit-def $r0
+    ; PROP-NEXT: $r0 = MOVrr killed renamable $r8
+    ; PROP-NEXT: MOVB_store_disp killed $r0, $r9, 1
+    renamable $r8 = MOVB_load_indexed $r6, implicit killed $r0 :: (load (s8) from %ir.p)
+    JSR killed $r1, csr_sh, implicit-def $pr, implicit-def $r0
+    MOVB_store_frame killed renamable $r8, $r9, 1, implicit-def dead early-clobber $r0 :: (store (s8) into %ir.q)
+    RTS implicit $pr
+...
+---
+name: source_is_store_base
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r6, $pr
+
+    ; The pseudo's source kill is after the entire instruction. Its expansion
+    ; must keep the address value live through the later store.
+    ; EXPAND-LABEL: name: source_is_store_base
+    ; EXPAND: $r0 = MOVrr renamable $r7
+    ; EXPAND-NEXT: MOVB_store_disp killed $r0, $r7, 1
+    ; PROP-LABEL: name: source_is_store_base
+    ; PROP: renamable $r7 = MOVL_load_reg $r6
+    ; PROP-NEXT: $r0 = MOVrr renamable $r7
+    ; PROP-NEXT: MOVB_store_disp killed $r0, $r7, 1
+    renamable $r7 = MOVL_load_reg $r6 :: (load (s32) from %ir.p)
+    MOVB_store_frame killed renamable $r7, $r7, 1, implicit-def dead early-clobber $r0 :: (store (s8) into %ir.q)
+    RTS implicit $pr
+...
+---
+name: stack_pointer_base
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r6, $r15, $pr
+
+    ; PROP-LABEL: name: stack_pointer_base
+    ; PROP: $r0 = MOVB_load_reg $r6
+    ; PROP-NEXT: MOVB_store_disp killed $r0, $r15, 15
+    renamable $r7 = MOVB_load_reg $r6 :: (load (s8) from %ir.p)
+    MOVB_store_frame killed renamable $r7, $r15, 15, implicit-def dead early-clobber $r0 :: (store (s8) into %ir.q)
+    RTS implicit $pr
+...
+---
+name: fixed_stack_pointer_source
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r15, $r2, $pr
+
+    ; PROP-LABEL: name: fixed_stack_pointer_source
+    ; PROP: $r0 = MOVrr $r15
+    ; PROP-NEXT: MOVB_store_disp killed $r0, $r2, 1
+    MOVB_store_frame $r15, $r2, 1, implicit-def dead early-clobber $r0 :: (store (s8) into %ir.q)
+    RTS implicit $pr
+...
+---
+name: undef_source
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r2, $pr
+
+    ; No incoming R7 value is required for the original undef source.
+    ; EXPAND-LABEL: name: undef_source
+    ; EXPAND: $r0 = MOVrr undef renamable $r7
+    ; EXPAND-NEXT: MOVB_store_disp killed $r0, $r2, 1
+    ; PROP-LABEL: name: undef_source
+    ; PROP: $r0 = MOVrr undef renamable $r7
+    ; PROP-NEXT: MOVB_store_disp killed $r0, $r2, 1
+    MOVB_store_frame undef renamable $r7, $r2, 1, implicit-def dead early-clobber $r0 :: (store (s8) into %ir.q)
+    RTS implicit $pr
+...
+---
+name: allocated_load_destination
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r6, $pr
+
+    ; The ABI-style implicit use keeps the output register fixed even though
+    ; the ordinary copy retains the allocated destination's provenance.
+    ; EXPAND-LABEL: name: allocated_load_destination
+    ; EXPAND: $r0 = MOVB_load_disp $r6, 1 :: (volatile load (s8) from %ir.p)
+    ; EXPAND-NEXT: renamable $r7 = MOVrr killed $r0
+    ; EXPAND-NEXT: RTS implicit $pr, implicit $r7
+    ; PROP-LABEL: name: allocated_load_destination
+    ; PROP: $r0 = MOVB_load_disp $r6, 1 :: (volatile load (s8) from %ir.p)
+    ; PROP-NEXT: renamable $r7 = MOVrr killed $r0
+    ; PROP-NEXT: RTS implicit $pr, implicit $r7
+    renamable $r7 = MOVB_load_frame $r6, 1, implicit-def dead $r0 :: (volatile load (s8) from %ir.p)
+    RTS implicit $pr, implicit $r7
+...
+---
+name: fixed_load_destination
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r6, $pr
+
+    ; EXPAND-LABEL: name: fixed_load_destination
+    ; EXPAND: $r0 = MOVW_load_disp $r6, 2 :: (load (s16) from %ir.p)
+    ; EXPAND-NEXT: $r7 = MOVrr killed $r0
+    ; EXPAND-NEXT: RTS implicit $pr, implicit $r7
+    ; PROP-LABEL: name: fixed_load_destination
+    ; PROP: $r0 = MOVW_load_disp $r6, 2 :: (load (s16) from %ir.p)
+    ; PROP-NEXT: $r7 = MOVrr killed $r0
+    ; PROP-NEXT: RTS implicit $pr, implicit $r7
+    $r7 = MOVW_load_frame $r6, 2, implicit-def dead $r0 :: (load (s16) from %ir.p)
+    RTS implicit $pr, implicit $r7
+...

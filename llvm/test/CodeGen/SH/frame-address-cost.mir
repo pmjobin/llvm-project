@@ -1,0 +1,33 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh3 -verify-machineinstrs -run-pass=prolog-epilog %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=prolog-epilog %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o %t.mir
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -start-after=prolog-epilog -filetype=obj %t.mir -o /dev/null
+
+--- |
+  define ptr @frame_address_287() optsize {
+    ret ptr null
+  }
+...
+---
+name:            frame_address_287
+tracksRegLiveness: true
+stack:
+  - { id: 0, name: '', type: default, offset: 0, size: 287, alignment: 1,
+      stack-id: default, callee-saved-register: '', callee-saved-restored: true,
+      debug-info-variable: '', debug-info-expression: '',
+      debug-info-location: '' }
+body:             |
+  bb.0:
+    $r0 = LEA_FI %stack.0, 286
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            frame_address_287
+# CHECK: stackSize:       288
+# CHECK-LABEL: body:
+# A word literal and one register add cost less than a base-register copy and
+# three immediate adds.
+# CHECK: $r0 = MOVW_load_pc_island %const.{{[0-9]+}}, -1
+# CHECK-NEXT: $r0 = ADDrr $r0, $r15
+# CHECK-NOT: $r0 = ADDri $r0, 127

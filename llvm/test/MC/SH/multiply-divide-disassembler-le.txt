@@ -1,0 +1,13 @@
+# RUN: llvm-mc -triple=shle-unknown-elf -disassemble %s | FileCheck %s
+
+[0x57,0x04,0x1a,0x04,0x19,0x00,0x57,0x24]
+[0x54,0x34,0x24,0x44,0x5e,0x34,0x5a,0x34]
+
+# CHECK: mul.l	r5,r4
+# CHECK-NEXT: sts	macl,r4
+# CHECK-NEXT: div0u
+# CHECK-NEXT: div0s	r5,r4
+# CHECK-NEXT: div1	r5,r4
+# CHECK-NEXT: rotcl	r4
+# CHECK-NEXT: addc	r5,r4
+# CHECK-NEXT: subc	r5,r4

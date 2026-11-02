@@ -1,0 +1,329 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o %t.sh.mir
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -start-after=prolog-epilog -filetype=obj %t.sh.mir -o /dev/null
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o %t.shle.mir
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -start-after=prolog-epilog -filetype=obj %t.shle.mir -o /dev/null
+
+--- |
+  define void @frame_252() { ret void }
+  define void @frame_256() { ret void }
+  define void @frame_260() { ret void }
+  define void @frame_384() { ret void }
+  define void @frame_512() { ret void }
+  define void @frame_768() { ret void }
+  define void @frame_1024() { ret void }
+  define void @frame_1536() { ret void }
+  define void @frame_2048() { ret void }
+  define void @frame_4096() { ret void }
+  define void @frame_8192() { ret void }
+  define void @frame_16384() { ret void }
+  define void @frame_32768() { ret void }
+  define void @frame_65536() { ret void }
+  define void @frame_65540() { ret void }
+  define void @frame_131072() { ret void }
+  define void @frame_262144() { ret void }
+  define void @frame_4294967292() { ret void }
+...
+---
+name: frame_252
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 252, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_256
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 256, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_260
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 260, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_384
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 384, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_512
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 512, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_768
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 768, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_1024
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 1024, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_1536
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 1536, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_2048
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 2048, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_4096
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 4096, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_8192
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 8192, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_16384
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 16384, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_32768
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 32768, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_65536
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 65536, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_65540
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 65540, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_131072
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 131072, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_262144
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 262144, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+---
+name: frame_4294967292
+tracksRegLiveness: true
+noVRegs: true
+stack:
+  - { id: 0, type: default, size: 4294967292, alignment: 4 }
+body: |
+  bb.0:
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            frame_252
+# CHECK: stackSize:       252
+# CHECK: $r15 = frame-setup ADDri $r15, -128
+# CHECK-NEXT: frame-setup CFI_INSTRUCTION def_cfa_offset 128
+# CHECK-NEXT: $r15 = frame-setup ADDri $r15, -124
+# CHECK-NEXT: frame-setup CFI_INSTRUCTION def_cfa_offset 252
+# CHECK: $r15 = frame-destroy ADDri $r15, 127
+# CHECK: $r15 = frame-destroy ADDri $r15, 125
+
+# CHECK-LABEL: name:            frame_256
+# CHECK: stackSize:       256
+# CHECK: $r15 = frame-setup ADDri $r15, -128
+# CHECK: $r15 = frame-setup ADDri $r15, -128
+# CHECK: $r15 = frame-destroy ADDri $r15, 127
+# CHECK: $r15 = frame-destroy ADDri $r15, 127
+# CHECK: $r15 = frame-destroy ADDri $r15, 2
+
+# CHECK-LABEL: name:            frame_260
+# CHECK: stackSize:       260
+# CHECK: $r3 = frame-setup MOVri 1
+# CHECK-NEXT: $r3 = frame-setup SHLL8 $r3
+# CHECK-NEXT: $r3 = frame-setup ADDri $r3, 4
+# CHECK-NEXT: $r15 = frame-setup SUBrr $r15, killed $r3
+# CHECK-NEXT: frame-setup CFI_INSTRUCTION def_cfa_offset 260
+# CHECK: $r3 = frame-destroy MOVri 1
+# CHECK-NEXT: $r3 = frame-destroy SHLL8 $r3
+# CHECK-NEXT: $r3 = frame-destroy ADDri $r3, 4
+# CHECK-NEXT: $r15 = frame-destroy ADDrr $r15, killed $r3
+# CHECK-NEXT: frame-destroy CFI_INSTRUCTION def_cfa_offset 0
+
+# CHECK-LABEL: name:            frame_384
+# CHECK: stackSize:       384
+# CHECK: $r15 = frame-setup SUBrr $r15, killed $r3
+# CHECK: $r15 = frame-destroy ADDrr $r15, killed $r3
+
+# CHECK-LABEL: name:            frame_512
+# CHECK: stackSize:       512
+# CHECK: $r15 = frame-setup SUBrr $r15, killed $r3
+# CHECK: $r15 = frame-destroy ADDrr $r15, killed $r3
+
+# CHECK-LABEL: name:            frame_768
+# CHECK: stackSize:       768
+# CHECK: $r15 = frame-setup SUBrr $r15, killed $r3
+# CHECK: $r15 = frame-destroy ADDrr $r15, killed $r3
+
+# CHECK-LABEL: name:            frame_1024
+# CHECK: stackSize:       1024
+# CHECK: $r15 = frame-setup SUBrr $r15, killed $r3
+# CHECK: $r15 = frame-destroy ADDrr $r15, killed $r3
+
+# CHECK-LABEL: name:            frame_1536
+# CHECK: stackSize:       1536
+# CHECK: $r15 = frame-setup SUBrr $r15, killed $r3
+# CHECK: $r15 = frame-destroy ADDrr $r15, killed $r3
+
+# CHECK-LABEL: name:            frame_2048
+# CHECK: stackSize:       2048
+# CHECK: $r15 = frame-setup SUBrr $r15, killed $r3
+# CHECK: $r15 = frame-destroy ADDrr $r15, killed $r3
+
+# CHECK-LABEL: name:            frame_4096
+# CHECK: stackSize:       4096
+# CHECK: $r15 = frame-setup SUBrr $r15, killed $r3
+# CHECK: $r15 = frame-destroy ADDrr $r15, killed $r3
+
+# CHECK-LABEL: name:            frame_8192
+# CHECK: stackSize:       8192
+# CHECK: $r15 = frame-setup SUBrr $r15, killed $r3
+# CHECK: $r15 = frame-destroy ADDrr $r15, killed $r3
+
+# CHECK-LABEL: name:            frame_16384
+# CHECK: stackSize:       16384
+# CHECK: $r15 = frame-setup SUBrr $r15, killed $r3
+# CHECK: $r15 = frame-destroy ADDrr $r15, killed $r3
+
+# CHECK-LABEL: name:            frame_32768
+# CHECK: stackSize:       32768
+# CHECK: $r3 = frame-setup MOVri -128
+# CHECK-NEXT: $r3 = frame-setup SHLL8 $r3
+# CHECK-NEXT: $r3 = frame-setup EXTUW $r3
+# CHECK-NEXT: $r15 = frame-setup SUBrr $r15, killed $r3
+# CHECK: $r15 = frame-destroy ADDrr $r15, killed $r3
+
+# CHECK-LABEL: name:            frame_65536
+# CHECK: stackSize:       65536
+# CHECK: $r3 = frame-setup MOVri 1
+# CHECK-NEXT: $r3 = frame-setup SHLL16 $r3
+# CHECK-NEXT: $r15 = frame-setup SUBrr $r15, killed $r3
+# CHECK-NEXT: frame-setup CFI_INSTRUCTION def_cfa_offset 65536
+# CHECK: $r3 = frame-destroy MOVri 1
+# CHECK-NEXT: $r3 = frame-destroy SHLL16 $r3
+# CHECK-NEXT: $r15 = frame-destroy ADDrr $r15, killed $r3
+# CHECK-NEXT: frame-destroy CFI_INSTRUCTION def_cfa_offset 0
+
+# CHECK-LABEL: name:            frame_65540
+# CHECK: stackSize:       65540
+# CHECK: $r15 = frame-setup SUBrr $r15, killed $r3
+# CHECK: frame-setup CFI_INSTRUCTION def_cfa_offset 65540
+# CHECK: $r15 = frame-destroy ADDrr $r15, killed $r3
+# CHECK: frame-destroy CFI_INSTRUCTION def_cfa_offset 0
+
+# CHECK-LABEL: name:            frame_131072
+# CHECK: stackSize:       131072
+# CHECK: $r15 = frame-setup SUBrr $r15, killed $r3
+# CHECK: frame-setup CFI_INSTRUCTION def_cfa_offset 131072
+# CHECK: $r15 = frame-destroy ADDrr $r15, killed $r3
+# CHECK: frame-destroy CFI_INSTRUCTION def_cfa_offset 0
+
+# CHECK-LABEL: name:            frame_262144
+# CHECK: stackSize:       262144
+# CHECK: $r15 = frame-setup SUBrr $r15, killed $r3
+# CHECK: frame-setup CFI_INSTRUCTION def_cfa_offset 262144
+# CHECK: $r15 = frame-destroy ADDrr $r15, killed $r3
+# CHECK: frame-destroy CFI_INSTRUCTION def_cfa_offset 0
+
+# CHECK-LABEL: name:            frame_4294967292
+# CHECK: stackSize:       4294967292
+# CHECK: $r15 = frame-setup SUBrr $r15, killed $r3
+# CHECK: frame-setup CFI_INSTRUCTION def_cfa_offset 4294967292
+# CHECK: $r15 = frame-destroy ADDrr $r15, killed $r3
+# CHECK: frame-destroy CFI_INSTRUCTION def_cfa_offset 0

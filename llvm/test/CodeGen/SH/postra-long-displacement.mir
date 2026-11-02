@@ -1,0 +1,169 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-postra-peephole %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=sh-postra-peephole %s -o - | FileCheck %s
+
+--- |
+  define void @fold_overwritten_address(ptr %p) { ret void }
+  define void @fold_killed_load_address(ptr %p) { ret void }
+  define void @fold_store_address(ptr %p) { ret void }
+  define void @fold_copied_address(ptr %p) { ret void }
+  define void @keep_live_address(ptr %p) { ret void }
+  define void @keep_store_value_address(ptr %p) { ret void }
+  define void @keep_stack_pointer(ptr %p) { ret void }
+  define void @keep_illegal_displacements(ptr %p) { ret void }
+  define void @keep_frame_flag(ptr %p) { ret void }
+...
+---
+name:            fold_overwritten_address
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r2
+
+    $r2 = ADDri $r2, 60
+    dead $r2 = MOVL_load_reg $r2 :: (volatile load (s32) from %ir.p)
+...
+
+# CHECK-LABEL: name:            fold_overwritten_address
+# CHECK-NOT: ADDri
+# CHECK: dead $r2 = MOVL_load_disp $r2, 60 :: (volatile load (s32) from %ir.p)
+
+---
+name:            fold_killed_load_address
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r2
+
+    $r2 = ADDri $r2, 4
+    $r3 = MOVL_load_reg killed $r2 :: (load (s32) from %ir.p)
+    RTS implicit $pr, implicit $r3
+...
+
+# CHECK-LABEL: name:            fold_killed_load_address
+# CHECK-NOT: ADDri
+# CHECK: $r3 = MOVL_load_disp killed $r2, 4 :: (load (s32) from %ir.p)
+
+---
+name:            fold_store_address
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r1, $r2
+
+    $r2 = ADDri $r2, 8
+    MOVL_store_reg killed $r1, killed $r2 :: (store (s32) into %ir.p)
+...
+
+# CHECK-LABEL: name:            fold_store_address
+# CHECK-NOT: ADDri
+# CHECK: MOVL_store_disp killed $r1, killed $r2, 8 :: (store (s32) into %ir.p)
+
+---
+name:            fold_copied_address
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r1
+
+    $r2 = COPY killed $r1
+    $r2 = nuw ADDri $r2, 12
+    dead $r3 = MOVL_load_reg killed $r2 :: (load (s32) from %ir.p)
+...
+
+# CHECK-LABEL: name:            fold_copied_address
+# CHECK-NOT: COPY
+# CHECK-NOT: ADDri
+# CHECK: dead $r3 = MOVL_load_disp killed $r1, 12 :: (load (s32) from %ir.p)
+
+---
+name:            keep_live_address
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r2
+
+    $r2 = ADDri $r2, 16
+    dead $r3 = MOVL_load_reg $r2 :: (load (s32) from %ir.p)
+    $r0 = MOVrr killed $r2
+...
+
+# CHECK-LABEL: name:            keep_live_address
+# CHECK: $r2 = ADDri $r2, 16
+# CHECK-NEXT: dead $r3 = MOVL_load_reg $r2
+
+---
+name:            keep_store_value_address
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r2
+
+    $r2 = ADDri $r2, 20
+    MOVL_store_reg killed $r2, killed $r2 :: (store (s32) into %ir.p)
+...
+
+# CHECK-LABEL: name:            keep_store_value_address
+# CHECK: $r2 = ADDri $r2, 20
+# CHECK-NEXT: MOVL_store_reg killed $r2, killed $r2
+
+---
+name:            keep_stack_pointer
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r1, $r15
+
+    $r15 = ADDri $r15, 24
+    dead $r1 = MOVL_load_reg killed $r15 :: (load (s32) from %ir.p)
+...
+
+# CHECK-LABEL: name:            keep_stack_pointer
+# CHECK: $r15 = ADDri $r15, 24
+# CHECK-NEXT: dead $r1 = MOVL_load_reg killed $r15
+
+---
+name:            keep_illegal_displacements
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r1, $r2, $r3
+
+    $r1 = ADDri $r1, -4
+    dead $r0 = MOVL_load_reg killed $r1 :: (load (s32) from %ir.p)
+    $r2 = ADDri $r2, 6
+    dead $r0 = MOVL_load_reg killed $r2 :: (load (s32) from %ir.p)
+    $r3 = ADDri $r3, 64
+    dead $r0 = MOVL_load_reg killed $r3 :: (load (s32) from %ir.p)
+...
+
+# CHECK-LABEL: name:            keep_illegal_displacements
+# CHECK: $r1 = ADDri $r1, -4
+# CHECK-NEXT: dead $r0 = MOVL_load_reg killed $r1
+# CHECK-NEXT: $r2 = ADDri $r2, 6
+# CHECK-NEXT: dead $r0 = MOVL_load_reg killed $r2
+# CHECK-NEXT: $r3 = ADDri $r3, 64
+# CHECK-NEXT: dead $r0 = MOVL_load_reg killed $r3
+
+---
+name:            keep_frame_flag
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r1, $r2
+
+    $r2 = frame-setup ADDri $r2, 28
+    MOVL_store_reg killed $r1, killed $r2 :: (store (s32) into %ir.p)
+...
+
+# CHECK-LABEL: name:            keep_frame_flag
+# CHECK: $r2 = frame-setup ADDri $r2, 28
+# CHECK-NEXT: MOVL_store_reg killed $r1, killed $r2

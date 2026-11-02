@@ -1,0 +1,146 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-postra-peephole %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=sh-postra-peephole %s -o - | FileCheck %s
+
+--- |
+  define void @fold_positive() { ret void }
+  define void @fold_nonnegative() { ret void }
+  define void @keep_live_constant() { ret void }
+  define void @keep_other_thresholds() { ret void }
+  define void @keep_same_register() { ret void }
+  define void @keep_frame_flags() { ret void }
+  define void @keep_nonadjacent() { ret void }
+...
+---
+name:            fold_positive
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    liveins: $r2
+
+    $r1 = MOVri 1
+    CMP_GE killed $r1, killed $r2, implicit-def $tbit
+    BT %bb.1, implicit killed $tbit
+
+  bb.2:
+    successors: %bb.1(0x80000000)
+    BRA %bb.1
+
+  bb.1:
+...
+
+# CHECK-LABEL: name:            fold_positive
+# CHECK-NOT: MOVri
+# CHECK: CMP_PL killed $r2, implicit-def $tbit
+# CHECK-NEXT: BT %bb.{{[0-9]+}}, implicit killed $tbit
+
+name:            fold_nonnegative
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r3
+
+    $r0 = MOVri -1
+    CMP_GT killed $r0, killed $r3, implicit-def dead $tbit
+...
+
+# CHECK-LABEL: name:            fold_nonnegative
+# CHECK-NOT: MOVri
+# CHECK: CMP_PZ killed $r3, implicit-def dead $tbit
+
+---
+name:            keep_live_constant
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r2
+
+    $r1 = MOVri 1
+    CMP_GE $r1, killed $r2, implicit-def dead $tbit
+    $r0 = MOVrr killed $r1
+...
+
+# CHECK-LABEL: name:            keep_live_constant
+# CHECK: $r1 = MOVri 1
+# CHECK-NEXT: CMP_GE $r1, killed $r2, implicit-def dead $tbit
+# CHECK-NEXT: $r0 = MOVrr killed $r1
+
+---
+name:            keep_other_thresholds
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r4, $r5, $r6
+
+    $r1 = MOVri 0
+    CMP_GE killed $r1, killed $r4, implicit-def dead $tbit
+    $r2 = MOVri 1
+    CMP_GT killed $r2, killed $r5, implicit-def dead $tbit
+    $r3 = MOVri -1
+    CMP_GE killed $r3, killed $r6, implicit-def dead $tbit
+...
+
+# CHECK-LABEL: name:            keep_other_thresholds
+# CHECK: $r1 = MOVri 0
+# CHECK-NEXT: CMP_GE killed $r1, killed $r4, implicit-def dead $tbit
+# CHECK-NEXT: $r2 = MOVri 1
+# CHECK-NEXT: CMP_GT killed $r2, killed $r5, implicit-def dead $tbit
+# CHECK-NEXT: $r3 = MOVri -1
+# CHECK-NEXT: CMP_GE killed $r3, killed $r6, implicit-def dead $tbit
+
+---
+name:            keep_same_register
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+
+    $r1 = MOVri 1
+    CMP_GE killed $r1, $r1, implicit-def dead $tbit
+...
+
+# CHECK-LABEL: name:            keep_same_register
+# CHECK: $r1 = MOVri 1
+# CHECK-NEXT: CMP_GE killed $r1, $r1, implicit-def dead $tbit
+
+---
+name:            keep_frame_flags
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r2, $r4
+
+    $r1 = frame-setup MOVri 1
+    CMP_GE killed $r1, killed $r2, implicit-def dead $tbit
+    $r3 = MOVri -1
+    frame-destroy CMP_GT killed $r3, killed $r4, implicit-def dead $tbit
+...
+
+# CHECK-LABEL: name:            keep_frame_flags
+# CHECK: $r1 = frame-setup MOVri 1
+# CHECK-NEXT: CMP_GE killed $r1, killed $r2, implicit-def dead $tbit
+# CHECK-NEXT: $r3 = MOVri -1
+# CHECK-NEXT: frame-destroy CMP_GT killed $r3, killed $r4, implicit-def dead $tbit
+
+---
+name:            keep_nonadjacent
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r2, $r4
+
+    $r1 = MOVri 1
+    $r3 = MOVrr killed $r4
+    CMP_GE killed $r1, killed $r2, implicit-def dead $tbit
+...
+
+# CHECK-LABEL: name:            keep_nonadjacent
+# CHECK: $r1 = MOVri 1
+# CHECK-NEXT: $r3 = MOVrr killed $r4
+# CHECK-NEXT: CMP_GE killed $r1, killed $r2, implicit-def dead $tbit

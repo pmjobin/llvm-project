@@ -1,0 +1,118 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -run-pass=peephole-opt -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh1 -run-pass=peephole-opt -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=SH1
+
+--- |
+  define i32 @compare_t_to_one(i32 %value) {
+    ret i32 %value
+  }
+
+  define i32 @compare_inverted_t_to_one(i32 %value) {
+    ret i32 %value
+  }
+
+  define i32 @compare_t_to_two(i32 %value) {
+    ret i32 %value
+  }
+
+  define i32 @compare_t_after_clobber(i32 %value) {
+    ret i32 %value
+  }
+...
+---
+name:            compare_t_to_one
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    successors: %bb.0(0x40000000), %bb.1(0x40000000)
+    liveins: $r4
+
+    %0:gpr = COPY $r4
+    CMP_EQ %0, %0, implicit-def $tbit
+    %1:gpr = MOVT implicit $tbit
+    CMP_EQri_VALUE_PSEUDO %1, 1, implicit-def $tbit, implicit-def dead $r0
+    BT %bb.0, implicit $tbit
+
+  bb.1:
+    $r0 = COPY %1
+    RTS implicit $pr, implicit $r0
+...
+---
+name:            compare_inverted_t_to_one
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    successors: %bb.0(0x40000000), %bb.1(0x40000000)
+    liveins: $r4
+
+    %0:gpr = COPY $r4
+    CMP_EQ %0, %0, implicit-def $tbit
+    %1:gpr = MOVT implicit $tbit
+    %2:gpr = MOVri 1
+    %3:gpr = XORrr %1, %2
+    CMP_EQri_VALUE_PSEUDO %3, 1, implicit-def $tbit, implicit-def dead $r0
+    BT %bb.0, implicit $tbit
+
+  bb.1:
+    $r0 = COPY %3
+    RTS implicit $pr, implicit $r0
+...
+---
+name:            compare_t_to_two
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    successors: %bb.0(0x40000000), %bb.1(0x40000000)
+    liveins: $r4
+
+    %0:gpr = COPY $r4
+    CMP_EQ %0, %0, implicit-def $tbit
+    %1:gpr = MOVT implicit $tbit
+    CMP_EQri_VALUE_PSEUDO %1, 2, implicit-def $tbit, implicit-def dead $r0
+    BT %bb.0, implicit $tbit
+
+  bb.1:
+    $r0 = COPY %1
+    RTS implicit $pr, implicit $r0
+...
+---
+name:            compare_t_after_clobber
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    successors: %bb.0(0x40000000), %bb.1(0x40000000)
+    liveins: $r4
+
+    %0:gpr = COPY $r4
+    CMP_EQ %0, %0, implicit-def $tbit
+    %1:gpr = MOVT implicit $tbit
+    CMP_EQ %0, %0, implicit-def $tbit
+    CMP_EQri_VALUE_PSEUDO %1, 1, implicit-def $tbit, implicit-def dead $r0
+    BT %bb.0, implicit $tbit
+
+  bb.1:
+    $r0 = COPY %1
+    RTS implicit $pr, implicit $r0
+...
+
+# CHECK-LABEL: name:            compare_t_to_one
+# CHECK: %1:gpr = MOVT implicit $tbit
+# CHECK-NEXT: BT %bb.0, implicit $tbit
+# CHECK-NOT: CMP_EQri_VALUE_PSEUDO
+
+# CHECK-LABEL: name:            compare_inverted_t_to_one
+# CHECK: %3:gpr = XORrr %1, %2
+# CHECK-NEXT: BF %bb.0, implicit $tbit
+# CHECK-NOT: CMP_EQri_VALUE_PSEUDO
+
+# CHECK-LABEL: name:            compare_t_to_two
+# CHECK: %1:gpr = MOVT implicit $tbit
+# CHECK-NEXT: CMP_EQri_VALUE_PSEUDO %1, 2, implicit-def $tbit, implicit-def dead $r0
+
+# CHECK-LABEL: name:            compare_t_after_clobber
+# CHECK: %1:gpr = MOVT implicit $tbit
+# CHECK-NEXT: CMP_EQ %0, %0, implicit-def $tbit
+# CHECK-NEXT: CMP_EQri_VALUE_PSEUDO %1, 1, implicit-def $tbit, implicit-def dead $r0
+
+# SH1-LABEL: name:            compare_t_to_one
+# SH1: %1:gpr = MOVT implicit $tbit
+# SH1-NEXT: CMP_EQri_VALUE_PSEUDO %1, 1, implicit-def $tbit, implicit-def dead $r0

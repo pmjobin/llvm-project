@@ -1,0 +1,71 @@
+# RUN: llc -mtriple=x86_64-unknown-linux-gnu -run-pass=machine-cp -mcp-use-is-copy-instr=true -verify-machineinstrs %s -o - | FileCheck %s --check-prefixes=COMMON,TARGET
+# RUN: llc -mtriple=x86_64-unknown-linux-gnu -run-pass=machine-cp -mcp-use-is-copy-instr=false -verify-machineinstrs %s -o - | FileCheck %s --check-prefixes=COMMON,DEFAULT
+
+# Recognized target copies follow the same forward-only copy-to-copy rule as
+# generic COPY. Backward-renaming the first move's destination would create
+# MOV32rr EAX, EAX instead of removing the roundtrip. The default mode continues
+# to leave target instructions alone; ordinary load-result propagation remains
+# available in the mode that recognizes target copies.
+
+--- |
+  define i32 @target_roundtrip() { ret i32 0 }
+  define i32 @canonical_roundtrip() { ret i32 0 }
+  define i32 @load_result(ptr %p) { ret i32 0 }
+...
+---
+name: target_roundtrip
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $eax
+
+    renamable $ecx = MOV32rr $eax
+    $eax = MOV32rr killed renamable $ecx
+    RET64 implicit $eax
+...
+
+# COMMON-LABEL: name: target_roundtrip
+# COMMON: liveins: $eax
+# TARGET-NOT: MOV32rr
+# DEFAULT: renamable $ecx = MOV32rr $eax
+# DEFAULT-NEXT: $eax = MOV32rr killed renamable $ecx
+# COMMON: RET64 implicit $eax
+
+---
+name: canonical_roundtrip
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $eax
+
+    renamable $ecx = COPY $eax
+    $eax = COPY killed renamable $ecx
+    RET64 implicit $eax
+...
+
+# COMMON-LABEL: name: canonical_roundtrip
+# COMMON: liveins: $eax
+# COMMON-NOT: COPY
+# COMMON: RET64 implicit $eax
+
+---
+name: load_result
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $rdi
+
+    renamable $ecx = MOV32rm $rdi, 1, $noreg, 0, $noreg :: (volatile load (s32) from %ir.p)
+    $eax = MOV32rr killed renamable $ecx
+    RET64 implicit $eax
+...
+
+# COMMON-LABEL: name: load_result
+# TARGET: $eax = MOV32rm $rdi, 1, $noreg, 0, $noreg :: (volatile load (s32) from %ir.p)
+# TARGET-NEXT: RET64 implicit $eax
+# DEFAULT: renamable $ecx = MOV32rm $rdi, 1, $noreg, 0, $noreg :: (volatile load (s32) from %ir.p)
+# DEFAULT-NEXT: $eax = MOV32rr killed renamable $ecx
+# DEFAULT-NEXT: RET64 implicit $eax

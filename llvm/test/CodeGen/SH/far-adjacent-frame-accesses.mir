@@ -1,0 +1,110 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh3 -verify-machineinstrs -run-pass=prolog-epilog %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=prolog-epilog %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=prolog-epilog %s -o %t.mir
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -start-after=prolog-epilog -filetype=obj %t.mir -o /dev/null
+
+--- |
+  define void @far_loads() optsize { ret void }
+  define void @far_stores() optsize { ret void }
+  define void @far_mixed() optsize { ret void }
+  define void @speed_far_loads() { ret void }
+...
+---
+name:            far_loads
+tracksRegLiveness: true
+noVRegs:         true
+fixedStack:
+  - { id: 0, type: default, offset: 1000, size: 4, alignment: 4,
+      isImmutable: true }
+  - { id: 1, type: default, offset: 1004, size: 4, alignment: 4,
+      isImmutable: true }
+body:             |
+  bb.0:
+    dead $r1 = MOVL_load_disp %fixed-stack.0, 0 :: (load (s32) from %fixed-stack.0)
+    dead $r2 = MOVL_load_disp %fixed-stack.1, 0 :: (load (s32) from %fixed-stack.1)
+    RTS implicit $pr
+...
+---
+name:            far_stores
+tracksRegLiveness: true
+noVRegs:         true
+fixedStack:
+  - { id: 0, type: default, offset: 1004, size: 4, alignment: 4,
+      isImmutable: false }
+  - { id: 1, type: default, offset: 1000, size: 4, alignment: 4,
+      isImmutable: false }
+body:             |
+  bb.0:
+    liveins: $r8, $r9
+
+    MOVL_store_disp $r8, %fixed-stack.0, 0 :: (store (s32) into %fixed-stack.0)
+    MOVL_store_disp $r9, %fixed-stack.1, 0 :: (store (s32) into %fixed-stack.1)
+    RTS implicit $pr
+...
+---
+name:            far_mixed
+tracksRegLiveness: true
+noVRegs:         true
+fixedStack:
+  - { id: 0, type: default, offset: 1000, size: 4, alignment: 4,
+      isImmutable: true }
+  - { id: 1, type: default, offset: 1004, size: 4, alignment: 4,
+      isImmutable: false }
+body:             |
+  bb.0:
+    liveins: $r8
+
+    dead $r1 = MOVL_load_disp %fixed-stack.0, 0 :: (load (s32) from %fixed-stack.0)
+    MOVL_store_disp $r8, %fixed-stack.1, 0 :: (store (s32) into %fixed-stack.1)
+    RTS implicit $pr
+...
+---
+name:            speed_far_loads
+tracksRegLiveness: true
+noVRegs:         true
+fixedStack:
+  - { id: 0, type: default, offset: 1000, size: 4, alignment: 4,
+      isImmutable: true }
+  - { id: 1, type: default, offset: 1004, size: 4, alignment: 4,
+      isImmutable: true }
+body:             |
+  bb.0:
+    dead $r1 = MOVL_load_disp %fixed-stack.0, 0 :: (load (s32) from %fixed-stack.0)
+    dead $r2 = MOVL_load_disp %fixed-stack.1, 0 :: (load (s32) from %fixed-stack.1)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            far_loads
+# CHECK-LABEL: body:
+# CHECK: [[LOAD_ADDRESS:\$r[0-9]+]] = MOVW_load_pc_island %const.{{[0-9]+}}, -1
+# CHECK-NEXT: [[LOAD_ADDRESS]] = ADDrr [[LOAD_ADDRESS]], $r15
+# CHECK-NEXT: dead early-clobber $r1, [[LOAD_ADDRESS]] = MOVL_load_postinc killed [[LOAD_ADDRESS]]
+# CHECK-NEXT: dead $r2 = MOVL_load_reg killed [[LOAD_ADDRESS]]
+
+# CHECK-LABEL: name:            far_stores
+# CHECK-LABEL: body:
+# CHECK: [[STORE_ADDRESS:\$r[0-9]+]] = MOVW_load_pc_island %const.{{[0-9]+}}, -1
+# CHECK-NEXT: [[STORE_ADDRESS]] = ADDrr [[STORE_ADDRESS]], $r15
+# CHECK-NEXT: MOVL_store_reg $r8, [[STORE_ADDRESS]]
+# CHECK-NEXT: [[STORE_ADDRESS]] = ADDri [[STORE_ADDRESS]], -4
+# CHECK-NEXT: MOVL_store_reg $r9, killed [[STORE_ADDRESS]]
+
+# CHECK-LABEL: name:            far_mixed
+# CHECK-LABEL: body:
+# CHECK: [[MIXED_ADDRESS:\$r[0-9]+]] = MOVW_load_pc_island %const.{{[0-9]+}}, -1
+# CHECK-NEXT: [[MIXED_ADDRESS]] = ADDrr [[MIXED_ADDRESS]], $r15
+# CHECK-NEXT: dead early-clobber $r1, [[MIXED_ADDRESS]] = MOVL_load_postinc killed [[MIXED_ADDRESS]]
+# CHECK-NEXT: MOVL_store_reg $r8, killed [[MIXED_ADDRESS]]
+
+# CHECK-LABEL: name:            speed_far_loads
+# CHECK-LABEL: body:
+# CHECK-NOT: MOVL_load_postinc
+# CHECK: $r0 = MOVri 4
+# CHECK-NEXT: $r0 = SHLL8 $r0
+# CHECK-NEXT: $r0 = ADDri $r0, -24
+# CHECK-NEXT: dead $r1 = MOVL_load_indexed $r15, implicit killed $r0
+# CHECK: $r0 = MOVri 4
+# CHECK-NEXT: $r0 = SHLL8 $r0
+# CHECK-NEXT: $r0 = ADDri $r0, -20
+# CHECK-NEXT: dead $r2 = MOVL_load_indexed $r15, implicit killed $r0

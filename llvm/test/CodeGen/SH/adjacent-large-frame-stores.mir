@@ -1,0 +1,92 @@
+# RUN: llc -mtriple=sh-unknown-none-elf -mcpu=sh2 -O2 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s --check-prefixes=OPT,ADJACENT
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh2 -O2 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s --check-prefixes=OPT,ADJACENT
+# RUN: llc -mtriple=sh-unknown-none-elf -mcpu=sh3 -O2 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s --check-prefixes=OPT,ADJACENT
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh3 -O2 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s --check-prefixes=OPT,ADJACENT
+# RUN: llc -mtriple=sh-unknown-none-elf -mcpu=sh4 -O2 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s --check-prefixes=OPT,ADJACENT
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -O2 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s --check-prefixes=OPT,ADJACENT
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh2 -O0 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s --check-prefixes=O0,ADJACENT
+
+--- |
+  define void @adjacent_stores() { ret void }
+  define void @interrupted_stores() { ret void }
+  define void @optnone_stores() noinline optnone { ret void }
+...
+---
+name: adjacent_stores
+tracksRegLiveness: true
+noVRegs: true
+fixedStack:
+  - { id: 0, type: default, offset: 72, size: 4, alignment: 4, isImmutable: false }
+  - { id: 1, type: default, offset: 68, size: 4, alignment: 4, isImmutable: false }
+  - { id: 2, type: default, offset: 64, size: 4, alignment: 4, isImmutable: false }
+body: |
+  bb.0:
+    liveins: $r8, $r9, $r10
+
+    MOVL_store_disp $r8, %fixed-stack.0, 0 :: (store (s32) into %fixed-stack.0)
+    MOVL_store_disp $r9, %fixed-stack.1, 0 :: (store (s32) into %fixed-stack.1)
+    MOVL_store_disp $r10, %fixed-stack.2, 0 :: (store (s32) into %fixed-stack.2)
+    RTS implicit $pr
+...
+---
+name: interrupted_stores
+tracksRegLiveness: true
+noVRegs: true
+fixedStack:
+  - { id: 0, type: default, offset: 72, size: 4, alignment: 4, isImmutable: false }
+  - { id: 1, type: default, offset: 68, size: 4, alignment: 4, isImmutable: false }
+body: |
+  bb.0:
+    liveins: $r8, $r9
+
+    MOVL_store_disp $r8, %fixed-stack.0, 0 :: (volatile store (s32) into %fixed-stack.0)
+    NOP
+    MOVL_store_disp $r9, %fixed-stack.1, 0 :: (volatile store (s32) into %fixed-stack.1)
+    RTS implicit $pr
+...
+---
+name: optnone_stores
+tracksRegLiveness: true
+noVRegs: true
+fixedStack:
+  - { id: 0, type: default, offset: 72, size: 4, alignment: 4, isImmutable: false }
+  - { id: 1, type: default, offset: 68, size: 4, alignment: 4, isImmutable: false }
+body: |
+  bb.0:
+    liveins: $r8, $r9
+
+    MOVL_store_disp $r8, %fixed-stack.0, 0 :: (store (s32) into %fixed-stack.0)
+    MOVL_store_disp $r9, %fixed-stack.1, 0 :: (store (s32) into %fixed-stack.1)
+    RTS implicit $pr
+...
+
+# ADJACENT-LABEL: name:            adjacent_stores
+# ADJACENT-LABEL: body:
+# OPT: [[ADDRESS:\$r[0-9]+]] = MOVrr $r15
+# OPT-NEXT: [[ADDRESS]] = ADDri [[ADDRESS]], 72
+# OPT-NEXT: MOVL_store_reg $r8, [[ADDRESS]]
+# OPT-NEXT: [[ADDRESS]] = ADDri [[ADDRESS]], -4
+# OPT-NEXT: MOVL_store_reg $r9, [[ADDRESS]]
+# OPT-NEXT: [[ADDRESS]] = ADDri [[ADDRESS]], -4
+# OPT-NEXT: MOVL_store_reg $r10, killed [[ADDRESS]]
+# O0: $r0 = MOVri 72
+# O0-NEXT: MOVL_store_indexed $r8, $r15, implicit killed $r0
+# O0-NEXT: $r0 = MOVri 68
+# O0-NEXT: MOVL_store_indexed $r9, $r15, implicit killed $r0
+# O0-NEXT: $r0 = MOVri 64
+# O0-NEXT: MOVL_store_indexed $r10, $r15, implicit killed $r0
+
+# ADJACENT-LABEL: name:            interrupted_stores
+# ADJACENT-LABEL: body:
+# ADJACENT: $r0 = MOVri 72
+# ADJACENT-NEXT: MOVL_store_indexed $r8, $r15, implicit killed $r0
+# ADJACENT-NEXT: NOP
+# ADJACENT-NEXT: $r0 = MOVri 68
+# ADJACENT-NEXT: MOVL_store_indexed $r9, $r15, implicit killed $r0
+
+# ADJACENT-LABEL: name:            optnone_stores
+# ADJACENT-LABEL: body:
+# ADJACENT: $r0 = MOVri 72
+# ADJACENT-NEXT: MOVL_store_indexed $r8, $r15, implicit killed $r0
+# ADJACENT-NEXT: $r0 = MOVri 68
+# ADJACENT-NEXT: MOVL_store_indexed $r9, $r15, implicit killed $r0

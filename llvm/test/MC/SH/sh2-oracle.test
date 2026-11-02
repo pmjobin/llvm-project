@@ -1,0 +1,1 @@
+# RUN: %python %S/sh2-oracle.py %t

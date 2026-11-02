@@ -1,0 +1,40 @@
+# RUN: llc -mtriple=shle -mcpu=sh4 -verify-machineinstrs -run-pass=post-ra-pseudos %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh -mcpu=sh4 -verify-machineinstrs -run-pass=post-ra-pseudos %s -o /dev/null
+# Full 64-byte load and store use the same internal owner as the preserved
+# tail. Distinct words retain ascending lane order in either endian mode.
+--- |
+  define void @matrix_roundtrip(ptr %src, ptr %dst, ptr %save) "target-abi"="gnu-hard-float" { ret void }
+...
+---
+name: matrix_roundtrip
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r4, $r5, $r6, $xmtrx, $fpscr, $pr
+    $r6 = XMTRX_STORE $r6, 6, 2, implicit $xmtrx, implicit $fpscr :: (store (s128), align 8)
+    $r4 = XMTRX_LOAD $r4, 0, 8, implicit-def $xmtrx, implicit $xmtrx, implicit $fpscr :: (load (s512), align 8)
+    $r5 = XMTRX_STORE $r5, 0, 8, implicit $xmtrx, implicit $fpscr :: (store (s512), align 8)
+    $r6 = XMTRX_LOAD $r6, 6, 2, implicit-def $xmtrx, implicit $xmtrx, implicit $fpscr :: (load (s128), align 8)
+    RTS implicit $pr
+...
+# CHECK: FMOV_P_STORE_XD $xd14
+# CHECK: FMOV_P_STORE_XD $xd12
+# CHECK: $xd0, $r4 = FMOV_P_LOAD_XD
+# CHECK: $xd2, $r4 = FMOV_P_LOAD_XD
+# CHECK: $xd4, $r4 = FMOV_P_LOAD_XD
+# CHECK: $xd6, $r4 = FMOV_P_LOAD_XD
+# CHECK: $xd8, $r4 = FMOV_P_LOAD_XD
+# CHECK: $xd10, $r4 = FMOV_P_LOAD_XD
+# CHECK: $xd12, $r4 = FMOV_P_LOAD_XD
+# CHECK: $xd14, $r4 = FMOV_P_LOAD_XD
+# CHECK: FMOV_P_STORE_XD $xd14
+# CHECK: FMOV_P_STORE_XD $xd12
+# CHECK: FMOV_P_STORE_XD $xd10
+# CHECK: FMOV_P_STORE_XD $xd8
+# CHECK: FMOV_P_STORE_XD $xd6
+# CHECK: FMOV_P_STORE_XD $xd4
+# CHECK: FMOV_P_STORE_XD $xd2
+# CHECK: FMOV_P_STORE_XD $xd0
+# CHECK: $xd12, $r6 = FMOV_P_LOAD_XD
+# CHECK: $xd14, $r6 = FMOV_P_LOAD_XD

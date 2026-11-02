@@ -1,0 +1,130 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-postra-peephole %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=sh-postra-peephole %s -o - | FileCheck %s
+
+--- |
+  define void @fold_load(ptr %p) { ret void }
+  define void @fold_store(ptr %p) { ret void }
+  define void @fold_copied_base_load(ptr %p) { ret void }
+  define void @fold_copied_base_self_load(ptr %p) { ret void }
+  define void @fold_copied_base_store(ptr %p) { ret void }
+  define void @keep_live_address(ptr %p) { ret void }
+  define void @keep_stored_address(ptr %p) { ret void }
+...
+---
+name:            fold_load
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r2
+
+    $r2 = ADDrr killed $r2, killed $r0
+    dead $r3 = MOVL_load_reg killed $r2 :: (load (s32) from %ir.p)
+...
+
+# CHECK-LABEL: name:            fold_load
+# CHECK-NOT: ADDrr
+# CHECK: dead $r3 = MOVL_load_indexed killed $r2, implicit killed $r0
+
+---
+name:            fold_store
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r2, $r3
+
+    $r2 = ADDrr killed $r2, killed $r0
+    MOVL_store_reg killed $r3, killed $r2 :: (store (s32) into %ir.p)
+...
+
+# CHECK-LABEL: name:            fold_store
+# CHECK-NOT: ADDrr
+# CHECK: MOVL_store_indexed killed $r3, killed $r2, implicit killed $r0
+
+---
+name:            fold_copied_base_load
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r2, $r3
+
+    $r2 = MOVrr killed $r3
+    $r2 = ADDrr killed $r2, killed $r0
+    dead $r4 = MOVW_load_reg killed $r2 :: (load (s16) from %ir.p)
+...
+
+# CHECK-LABEL: name:            fold_copied_base_load
+# CHECK-NOT: MOVrr
+# CHECK-NOT: ADDrr
+# CHECK: dead $r4 = MOVW_load_indexed killed $r3, implicit killed $r0
+
+---
+name:            fold_copied_base_self_load
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r2, $r3
+
+    $r2 = MOVrr killed $r3
+    $r2 = ADDrr killed $r2, killed $r0
+    dead $r3 = MOVL_load_reg killed $r2 :: (load (s32) from %ir.p)
+...
+
+# CHECK-LABEL: name:            fold_copied_base_self_load
+# CHECK-NOT: MOVrr
+# CHECK-NOT: ADDrr
+# CHECK: dead $r3 = MOVL_load_indexed killed $r3, implicit killed $r0
+
+---
+name:            fold_copied_base_store
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r2, $r3
+
+    $r2 = MOVrr $r3
+    $r2 = ADDrr killed $r2, killed $r0
+    MOVB_store_reg killed $r3, killed $r2 :: (store (s8) into %ir.p)
+...
+
+# CHECK-LABEL: name:            fold_copied_base_store
+# CHECK-NOT: MOVrr
+# CHECK-NOT: ADDrr
+# CHECK: MOVB_store_indexed killed $r3, $r3, implicit killed $r0
+
+---
+name:            keep_live_address
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r2
+
+    $r2 = ADDrr killed $r2, killed $r0
+    dead $r3 = MOVL_load_reg $r2 :: (load (s32) from %ir.p)
+    dead $r4 = MOVrr killed $r2
+...
+
+# CHECK-LABEL: name:            keep_live_address
+# CHECK: $r2 = ADDrr killed $r2, killed $r0
+# CHECK-NEXT: dead $r3 = MOVL_load_reg $r2
+
+---
+name:            keep_stored_address
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r2
+
+    $r2 = ADDrr killed $r2, killed $r0
+    MOVL_store_reg $r2, killed $r2 :: (store (s32) into %ir.p)
+...
+
+# CHECK-LABEL: name:            keep_stored_address
+# CHECK: $r2 = ADDrr killed $r2, killed $r0
+# CHECK-NEXT: MOVL_store_reg $r2, killed $r2

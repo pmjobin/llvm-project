@@ -1,0 +1,62 @@
+# RUN: llc -mtriple=sh-unknown-none-elf -mcpu=sh4 -run-pass=sh-fpu-state -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=STATE
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -run-pass=sh-fpu-state -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=STATE
+# RUN: llc -mtriple=sh-unknown-none-elf -mcpu=sh4 -run-pass=sh-fpu-state,post-ra-pseudos -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=COPY
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -run-pass=sh-fpu-state,post-ra-pseudos -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=COPY
+
+# FPR copies use scalar FMOV instructions. An incoming double-transfer mode
+# must first clear SZ while preserving double-precision arithmetic mode.
+
+# STATE-LABEL: name: fr_copy_from_double_mode
+# STATE: SET_FPSCR_MODE 2
+# STATE-NEXT: TRANSITION_FPSCR_MODE 3, 16
+# STATE-NEXT: $fr2 = COPY killed $fr0
+
+# COPY-LABEL: name: fr_copy_from_double_mode
+# COPY: $fr2 = FMOV_FR killed $fr0
+# COPY-NOT: FLDS
+# COPY-NOT: FSTS
+
+# STATE-LABEL: name: dr_copy_from_double_mode
+# STATE: SET_FPSCR_MODE 2
+# STATE-NEXT: TRANSITION_FPSCR_MODE 3, 16
+# STATE-NEXT: $dr4 = COPY killed $dr0
+
+# COPY-LABEL: name: dr_copy_from_double_mode
+# COPY: $fr4 = FMOV_FR $fr0
+# COPY-NEXT: $fr5 = FMOV_FR killed $fr1
+# COPY-NOT: FLDS
+# COPY-NOT: FSTS
+
+--- |
+  define void @fr_copy_from_double_mode() {
+    ret void
+  }
+
+  define void @dr_copy_from_double_mode() {
+    ret void
+  }
+...
+---
+name: fr_copy_from_double_mode
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $fr0, $pr, $fpscr
+
+    SET_FPSCR_MODE 2, implicit-def dead $r0, implicit-def dead $r1, implicit-def $fpscr, implicit $fpscr
+    $fr2 = COPY killed $fr0
+    RTS implicit $pr
+...
+---
+name: dr_copy_from_double_mode
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $dr0, $pr, $fpscr
+
+    SET_FPSCR_MODE 2, implicit-def dead $r0, implicit-def dead $r1, implicit-def $fpscr, implicit $fpscr
+    $dr4 = COPY killed $dr0
+    RTS implicit $pr
+...

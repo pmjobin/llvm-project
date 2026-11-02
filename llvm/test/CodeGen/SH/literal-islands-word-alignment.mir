@@ -1,0 +1,68 @@
+# RUN: llc -mtriple=sh-unknown-elf -run-pass=sh-literal-islands -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=MIR
+# RUN: llc -mtriple=shle-unknown-elf -run-pass=sh-literal-islands -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=MIR
+# RUN: llc -mtriple=sh-unknown-elf -start-before=sh-literal-islands -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=ASM
+# RUN: llc -mtriple=shle-unknown-elf -start-before=sh-literal-islands -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=ASM
+# RUN: llc -mtriple=sh-unknown-elf -start-before=sh-literal-islands -verify-machineinstrs -filetype=obj %s -o %t.be.o
+# RUN: llc -mtriple=shle-unknown-elf -start-before=sh-literal-islands -verify-machineinstrs -filetype=obj %s -o %t.le.o
+
+# MIR-LABEL: name:            word_only
+# MIR: bb.1 (align 2):
+# MIR: SH_CONSTPOOL_ENTRY %const.0, 0, 2, 2
+
+# MIR-LABEL: name:            mixed_widths
+# MIR: bb.1 (align 4):
+# MIR: SH_CONSTPOOL_ENTRY %const.1, 0, 4, 4
+# MIR-NEXT: SH_CONSTPOOL_ENTRY %const.0, 0, 2, 2
+
+# ASM-LABEL: word_only:
+# ASM: mov.w	[[WORD:.LCPI[0-9]+_0_0]],r0
+# ASM: .p2align	1
+# ASM: [[WORD]]:
+# ASM-NEXT: .short	300
+
+# ASM-LABEL: mixed_widths:
+# ASM: .p2align	2
+# ASM: .long	305419896
+# ASM: .short	300
+
+--- |
+  define i32 @word_only() {
+    ret i32 0
+  }
+
+  define i32 @mixed_widths() {
+    ret i32 0
+  }
+...
+---
+name:            word_only
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i16 300'
+    alignment:   2
+body:             |
+  bb.0:
+    $r0 = MOVW_load_pc_island %const.0, -1 :: (dereferenceable invariant load (s16) from constant-pool)
+    RTS implicit $pr, implicit $r0
+...
+---
+name:            mixed_widths
+alignment:       4
+tracksRegLiveness: true
+noVRegs:         true
+constants:
+  - id:          0
+    value:       'i16 300'
+    alignment:   2
+  - id:          1
+    value:       'i32 305419896'
+    alignment:   4
+body:             |
+  bb.0:
+    $r1 = MOVL_load_pc_island %const.1, -1 :: (dereferenceable invariant load (s32) from constant-pool)
+    $r0 = MOVW_load_pc_island %const.0, -1 :: (dereferenceable invariant load (s16) from constant-pool)
+    RTS implicit $pr, implicit $r0
+...

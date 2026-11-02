@@ -1,0 +1,173 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-postra-peephole %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=sh-postra-peephole %s -o - | FileCheck %s
+
+--- |
+  define void @fold_killed_base(ptr %p) { ret void }
+  define void @fold_live_base(ptr %p) { ret void }
+  define void @fold_non_r0_destination(ptr %p) { ret void }
+  define void @keep_live_r0(ptr %p) { ret void }
+  define void @fold_stack_base(ptr %p) { ret void }
+  define void @keep_intervening_instruction(ptr %p) { ret void }
+  define void @keep_flags(ptr %p) { ret void }
+  define void @keep_load_flag(ptr %p) { ret void }
+  define void @keep_jti_dispatch(ptr %p) { ret void }
+...
+---
+name:            fold_killed_base
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r2
+
+    $r0 = nuw ADDrr killed $r0, killed $r2
+    dead $r0 = MOVL_load_reg killed $r0 :: (volatile load (s32) from %ir.p)
+...
+
+# CHECK-LABEL: name:            fold_killed_base
+# CHECK-NOT: ADDrr
+# CHECK: dead $r0 = MOVL_load_indexed killed $r2, implicit killed $r0 :: (volatile load (s32) from %ir.p)
+
+---
+name:            fold_live_base
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r3
+
+    $r0 = ADDrr killed $r0, $r3
+    $r0 = MOVL_load_reg killed $r0 :: (load (s32) from %ir.p)
+    MOVL_store_reg killed $r0, killed $r3 :: (store (s32) into %ir.p)
+...
+
+# CHECK-LABEL: name:            fold_live_base
+# CHECK-NOT: ADDrr
+# CHECK: $r0 = MOVL_load_indexed $r3, implicit killed $r0 :: (load (s32) from %ir.p)
+# CHECK-NEXT: MOVL_store_reg killed $r0, killed $r3 :: (store (s32) into %ir.p)
+
+---
+name:            fold_non_r0_destination
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r2
+
+    $r0 = ADDrr killed $r0, killed $r2
+    dead $r1 = MOVL_load_reg killed $r0 :: (load (s32) from %ir.p)
+...
+
+# CHECK-LABEL: name:            fold_non_r0_destination
+# CHECK-NOT: ADDrr
+# CHECK: dead $r1 = MOVL_load_indexed killed $r2, implicit killed $r0
+
+---
+name:            keep_live_r0
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r2
+
+    $r0 = ADDrr killed $r0, killed $r2
+    dead $r1 = MOVL_load_reg $r0 :: (load (s32) from %ir.p)
+    dead $r3 = MOVrr killed $r0
+...
+
+# CHECK-LABEL: name:            keep_live_r0
+# CHECK: $r0 = ADDrr killed $r0, killed $r2
+# CHECK-NEXT: dead $r1 = MOVL_load_reg $r0
+
+---
+name:            fold_stack_base
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r15
+
+    $r0 = ADDrr killed $r0, $r15
+    dead $r0 = MOVL_load_reg killed $r0 :: (load (s32) from %ir.p)
+...
+
+# CHECK-LABEL: name:            fold_stack_base
+# CHECK-NOT: ADDrr
+# CHECK: dead $r0 = MOVL_load_indexed $r15, implicit killed $r0
+
+---
+name:            keep_intervening_instruction
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r2
+
+    $r0 = ADDrr killed $r0, killed $r2
+    NOP
+    dead $r0 = MOVL_load_reg killed $r0 :: (load (s32) from %ir.p)
+...
+
+# CHECK-LABEL: name:            keep_intervening_instruction
+# CHECK: $r0 = ADDrr killed $r0, killed $r2
+# CHECK-NEXT: NOP
+# CHECK-NEXT: dead $r0 = MOVL_load_reg killed $r0
+
+---
+name:            keep_flags
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r2, $r3
+
+    $r0 = frame-setup ADDrr killed $r0, killed $r2
+    dead $r0 = MOVL_load_reg killed $r0 :: (load (s32) from %ir.p)
+...
+
+# CHECK-LABEL: name:            keep_flags
+# CHECK: $r0 = frame-setup ADDrr killed $r0, killed $r2
+# CHECK-NEXT: dead $r0 = MOVL_load_reg killed $r0
+
+---
+name:            keep_load_flag
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r3
+
+    $r0 = ADDrr killed $r0, killed $r3
+    dead $r0 = frame-destroy MOVL_load_reg killed $r0 :: (load (s32) from %ir.p)
+...
+
+# CHECK-LABEL: name:            keep_load_flag
+# CHECK: $r0 = ADDrr killed $r0, killed $r3
+# CHECK-NEXT: dead $r0 = frame-destroy MOVL_load_reg killed $r0
+
+---
+name:            keep_jti_dispatch
+tracksRegLiveness: true
+noVRegs:         true
+jumpTable:
+  kind:            inline
+  entries:
+    - id:              0
+      blocks:          [ '%bb.1' ]
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $r0, $r2
+
+    $r0 = ADDrr killed $r0, killed $r2
+    $r0 = MOVL_load_reg killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    JMP killed $r0, %jump-table.0
+
+  bb.1:
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            keep_jti_dispatch
+# CHECK: $r0 = ADDrr killed $r0, killed $r2
+# CHECK-NEXT: $r0 = MOVL_load_reg killed $r0
+# CHECK-NEXT: JMP killed $r0, %jump-table.0

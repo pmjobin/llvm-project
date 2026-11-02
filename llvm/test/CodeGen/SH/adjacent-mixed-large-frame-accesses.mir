@@ -1,0 +1,37 @@
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh2 -O2 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh2 -O0 -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=O0
+
+--- |
+  define void @adjacent_mixed_frame_accesses() { ret void }
+...
+---
+name: adjacent_mixed_frame_accesses
+tracksRegLiveness: true
+noVRegs: true
+fixedStack:
+  - { id: 0, type: default, offset: 64, size: 4, alignment: 4, isImmutable: true }
+  - { id: 1, type: default, offset: 68, size: 4, alignment: 4, isImmutable: false }
+  - { id: 2, type: default, offset: 72, size: 4, alignment: 4, isImmutable: true }
+body: |
+  bb.0:
+    liveins: $r8
+
+    dead $r1 = MOVL_load_disp %fixed-stack.0, 0 :: (load (s32) from %fixed-stack.0)
+    MOVL_store_disp $r8, %fixed-stack.1, 0 :: (store (s32) into %fixed-stack.1)
+    dead $r2 = MOVL_load_disp %fixed-stack.2, 0 :: (load (s32) from %fixed-stack.2)
+    RTS implicit $pr
+...
+
+# CHECK: [[ADDRESS:\$r[0-9]+]] = MOVrr $r15
+# CHECK-NEXT: [[ADDRESS]] = ADDri [[ADDRESS]], 64
+# CHECK-NEXT: dead early-clobber $r1, [[ADDRESS]] = MOVL_load_postinc killed [[ADDRESS]]
+# CHECK-NEXT: MOVL_store_reg $r8, [[ADDRESS]]
+# CHECK-NEXT: [[ADDRESS]] = ADDri [[ADDRESS]], 4
+# CHECK-NEXT: dead $r2 = MOVL_load_reg killed [[ADDRESS]]
+
+# O0: $r0 = MOVri 64
+# O0-NEXT: dead $r1 = MOVL_load_indexed $r15, implicit killed $r0
+# O0-NEXT: $r0 = MOVri 68
+# O0-NEXT: MOVL_store_indexed $r8, $r15, implicit killed $r0
+# O0-NEXT: $r0 = MOVri 72
+# O0-NEXT: dead $r2 = MOVL_load_indexed $r15, implicit killed $r0

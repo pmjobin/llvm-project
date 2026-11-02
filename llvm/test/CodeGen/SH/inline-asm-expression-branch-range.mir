@@ -1,0 +1,235 @@
+# RUN: llc -mtriple=sh-unknown-none-elf -mcpu=sh2 -verify-machineinstrs -run-pass=branch-relaxation %s -o %t-be.mir
+# RUN: FileCheck %s < %t-be.mir
+# RUN: llc -mtriple=sh-unknown-none-elf -mcpu=sh2 -verify-machineinstrs -start-after=branch-relaxation -filetype=obj %t-be.mir -o /dev/null
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh2 -verify-machineinstrs -run-pass=branch-relaxation %s -o %t-le.mir
+# RUN: FileCheck %s < %t-le.mir
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh2 -verify-machineinstrs -start-after=branch-relaxation -filetype=obj %t-le.mir -o /dev/null
+
+# CHECK-LABEL: name:            bt_forward_258_legal
+# CHECK: BT %bb.2
+# CHECK-NOT: BRA
+# CHECK-LABEL: name:            bf_forward_260_relaxes
+# CHECK: BT %bb.1
+# CHECK-NEXT: BRA %bb.2
+# CHECK-LABEL: name:            bf_backward_252_legal
+# CHECK: BF %bb.0
+# CHECK-NOT: BRA
+# CHECK-LABEL: name:            bt_backward_254_relaxes
+# CHECK: BF %bb.3
+# CHECK-NEXT: BRA %bb.0
+# CHECK-LABEL: name:            bra_forward_4098_legal
+# CHECK: BRA %bb.2
+# CHECK-NOT: SH_LONG_BRANCH
+# CHECK-LABEL: name:            bra_forward_4100_relaxes
+# CHECK: SH_REL16_BRANCH %bb.2
+# CHECK-LABEL: name:            bra_backward_4092_legal
+# CHECK: BRA %bb.0
+# CHECK-NOT: SH_LONG_BRANCH
+# CHECK-LABEL: name:            bra_backward_4094_relaxes
+# CHECK: SH_REL16_BRANCH %bb.0
+# CHECK-LABEL: name:            gnu_shift_precedence_relaxes
+# CHECK: BT %bb.1
+# CHECK-NEXT: BRA %bb.2
+# CHECK-LABEL: name:            gnu_comparison_truth_relaxes
+# CHECK: BT %bb.1
+# CHECK-NEXT: BRA %bb.2
+# CHECK-LABEL: name:            gnu_shift_long_branch_relaxes
+# CHECK: SH_REL16_BRANCH %bb.2
+# CHECK-LABEL: name:            bracket_groups_relax
+# CHECK: BT %bb.1
+# CHECK-NEXT: BRA %bb.2
+
+--- |
+  define void @bt_forward_258_legal() { ret void }
+  define void @bf_forward_260_relaxes() { ret void }
+  define void @bf_backward_252_legal() { ret void }
+  define void @bt_backward_254_relaxes() { ret void }
+  define void @bra_forward_4098_legal() { ret void }
+  define void @bra_forward_4100_relaxes() { ret void }
+  define void @bra_backward_4092_legal() { ret void }
+  define void @bra_backward_4094_relaxes() { ret void }
+  define void @gnu_shift_precedence_relaxes() { ret void }
+  define void @gnu_comparison_truth_relaxes() { ret void }
+  define void @gnu_shift_long_branch_relaxes() { ret void }
+  define void @bracket_groups_relax() { ret void }
+...
+---
+name:            bt_forward_258_legal
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $r0
+    BT %bb.2, implicit $tbit
+  bb.1:
+    successors: %bb.2
+    INLINEASM &".space (1 << 8)", sideeffect attdialect
+  bb.2:
+    RTS implicit $pr
+...
+---
+name:            bf_forward_260_relaxes
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $r0
+    BF %bb.2, implicit $tbit
+  bb.1:
+    successors: %bb.2
+    INLINEASM &".space (1 << 8) + 2", sideeffect attdialect
+  bb.2:
+    RTS implicit $pr
+...
+---
+name:            bf_backward_252_legal
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1
+    NOP
+  bb.1:
+    successors: %bb.2
+    INLINEASM &".space (1 << 8) - 6", sideeffect attdialect
+  bb.2:
+    successors: %bb.0, %bb.3
+    liveins: $r0
+    BF %bb.0, implicit $tbit
+  bb.3:
+    RTS implicit $pr
+...
+---
+name:            bt_backward_254_relaxes
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1
+    NOP
+  bb.1:
+    successors: %bb.2
+    INLINEASM &".space (1 << 8) - 4", sideeffect attdialect
+  bb.2:
+    successors: %bb.0, %bb.3
+    liveins: $r0
+    BT %bb.0, implicit $tbit
+  bb.3:
+    RTS implicit $pr
+...
+---
+name:            bra_forward_4098_legal
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.2
+    BRA %bb.2
+  bb.1:
+    successors: %bb.2
+    INLINEASM &".space (1 << 12) - 2", sideeffect attdialect
+  bb.2:
+    RTS implicit $pr
+...
+---
+name:            bra_forward_4100_relaxes
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.2
+    BRA %bb.2
+  bb.1:
+    successors: %bb.2
+    INLINEASM &".space (1 << 12)", sideeffect attdialect
+  bb.2:
+    RTS implicit $pr
+...
+---
+name:            bra_backward_4092_legal
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1
+    NOP
+  bb.1:
+    successors: %bb.2
+    INLINEASM &".space (1 << 12) - 6", sideeffect attdialect
+  bb.2:
+    successors: %bb.0
+    BRA %bb.0
+...
+---
+name:            bra_backward_4094_relaxes
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1
+    NOP
+  bb.1:
+    successors: %bb.2
+    INLINEASM &".space (1 << 12) - 4", sideeffect attdialect
+  bb.2:
+    successors: %bb.0
+    BRA %bb.0
+...
+---
+name:            gnu_shift_precedence_relaxes
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1, %bb.2
+    BF %bb.2, implicit $tbit
+  bb.1:
+    successors: %bb.2
+    INLINEASM &".space 248; .space 16 >> 1 + 2", sideeffect attdialect
+  bb.2:
+    RTS implicit $pr
+...
+---
+name:            gnu_comparison_truth_relaxes
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1, %bb.2
+    BF %bb.2, implicit $tbit
+  bb.1:
+    successors: %bb.2
+    INLINEASM &".space 256; .if (1 == 1) < 0; nop; .endif", sideeffect attdialect
+  bb.2:
+    RTS implicit $pr
+...
+---
+name:            gnu_shift_long_branch_relaxes
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.2
+    BRA %bb.2
+  bb.1:
+    successors: %bb.2
+    INLINEASM &".space 4090; .space 16 >> 1 + 2", sideeffect attdialect
+  bb.2:
+    RTS implicit $pr
+...
+---
+name:            bracket_groups_relax
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    successors: %bb.1, %bb.2
+    BF %bb.2, implicit $tbit
+  bb.1:
+    successors: %bb.2
+    INLINEASM &".space [([1 << 8]) + 2]", sideeffect attdialect
+  bb.2:
+    RTS implicit $pr
+...

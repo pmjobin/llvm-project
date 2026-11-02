@@ -1,0 +1,123 @@
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -enable-post-misched=true -verify-machineinstrs -run-pass=postmisched %s -o - | FileCheck %s --check-prefix=DEPEND
+# The per-function experimental scheduler is omitted. Default postmisched is
+# inactive; forced generic scheduling must still respect full FPSCR operands.
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -verify-machineinstrs -enable-post-misched=false -passes=postmisched %s -o - | FileCheck %s --check-prefix=OTHER
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -enable-post-misched=true -run-pass=postmisched -debug-only=machine-scheduler %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=FORCE
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -enable-post-misched=true -passes=postmisched -debug-only=machine-scheduler %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=FORCE
+# FORCE-COUNT-3: Before post-MI-sched:
+# FORCE-NOT: Before post-MI-sched:
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -verify-machineinstrs -passes=postmisched %s -o - | FileCheck %s --check-prefix=OTHER
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -verify-machineinstrs -enable-post-misched=false -run-pass=postmisched %s -o - | FileCheck %s --check-prefix=OTHER
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -verify-machineinstrs -run-pass=postmisched %s -o - | FileCheck %s --check-prefix=OTHER
+# RUN: llc -mtriple=sh-unknown-none-elf -mcpu=sh4 -verify-machineinstrs -run-pass=postmisched %s -o - | FileCheck %s --check-prefix=OTHER
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4a -verify-machineinstrs -run-pass=postmisched %s -o - | FileCheck %s --check-prefix=OTHER
+#
+# Enable the resource-aware scheduler at the target pipeline boundary. FPUL
+# writes, paired-register loads and ordered status updates remain real effects.
+# OTHER checks the model restriction; size_control checks size isolation.
+# S retains full FPSCR: the FLOAT def must precede both load uses, and
+# both FR halves must precede the consuming DR multiply. V's split-register
+# load-before-FLOAT expectation is illegal for this dependency graph.
+# SH4-LABEL: name: convert_and_load
+# SH4: $dr2 = FLOAT_DR implicit-def $fpscr, implicit $fpul, implicit $fpscr
+# SH4-NEXT: LDS_FPUL {{.*}}$r0
+# SH4-NEXT: $fr5, $r7 = FMOV_S_LOAD_POSTINC_ALIAS {{.*}}implicit $fpscr
+# SH4-NEXT: $fr4, $r7 = FMOV_S_LOAD_POSTINC_ALIAS {{.*}}implicit $fpscr
+# SH4: $dr2 = FMUL_DR
+# SH4: $dr6 = FLOAT_DR
+# SH4: $dr0 = FADD_DR
+# SH4: $r2 = STS_FPSCR
+# OTHER-LABEL: name: convert_and_load
+# OTHER: $r0 = EXTUB
+# OTHER-NEXT: LDS_FPUL $r1
+# OTHER-NEXT: $dr2 = FLOAT_DR
+# OTHER-NEXT: LDS_FPUL $r0
+# OTHER-NEXT: $fr5, $r7 = FMOV_S_LOAD_POSTINC_ALIAS
+# OTHER-NEXT: $fr4, $r7 = FMOV_S_LOAD_POSTINC_ALIAS
+--- |
+  define void @convert_and_load() { ret void }
+  define void @size_control() optsize { ret void }
+  define void @integer_control() { ret void }
+...
+---
+name: convert_and_load
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r4, $r5, $r6, $r7, $r8, $pr, $fpscr, $dr0
+    $r0 = MOVB_load_reg $r4
+    $r1 = MOVL_load_reg $r5
+    $r1 = ANDrr $r1, $r6
+    $r0 = EXTUB $r0
+    LDS_FPUL $r1, implicit-def $fpul
+    $dr2 = FLOAT_DR implicit-def $fpscr, implicit $fpul, implicit $fpscr
+    LDS_FPUL $r0, implicit-def $fpul
+    $fr5, $r7 = FMOV_S_LOAD_POSTINC_ALIAS $r7, implicit $fpscr
+    $fr4, $r7 = FMOV_S_LOAD_POSTINC_ALIAS $r7, implicit $fpscr
+    $dr2 = FMUL_DR $dr2, $dr4, implicit-def $fpscr, implicit $fpscr
+    $dr6 = FLOAT_DR implicit-def $fpscr, implicit $fpul, implicit $fpscr
+    $dr0 = FADD_DR $dr0, $dr2, implicit-def $fpscr, implicit $fpscr
+    $r2 = STS_FPSCR implicit $fpscr
+    RTS implicit $pr, implicit $dr0, implicit $dr6, implicit $r2
+...
+# SH4-LABEL: name: size_control
+# SH4: $r0 = EXTUB
+# SH4-NEXT: LDS_FPUL $r1
+# SH4-NEXT: $dr2 = FLOAT_DR
+# SH4-NEXT: LDS_FPUL $r0
+# SH4-NEXT: $fr5, $r7 = FMOV_S_LOAD_POSTINC_ALIAS
+# SH4-NEXT: $fr4, $r7 = FMOV_S_LOAD_POSTINC_ALIAS
+---
+name: size_control
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r4, $r5, $r6, $r7, $r8, $pr, $fpscr, $dr0
+    $r0 = MOVB_load_reg $r4
+    $r1 = MOVL_load_reg $r5
+    $r1 = ANDrr $r1, $r6
+    $r0 = EXTUB $r0
+    LDS_FPUL $r1, implicit-def $fpul
+    $dr2 = FLOAT_DR implicit-def $fpscr, implicit $fpul, implicit $fpscr
+    LDS_FPUL $r0, implicit-def $fpul
+    $fr5, $r7 = FMOV_S_LOAD_POSTINC_ALIAS $r7, implicit $fpscr
+    $fr4, $r7 = FMOV_S_LOAD_POSTINC_ALIAS $r7, implicit $fpscr
+    $dr2 = FMUL_DR $dr2, $dr4, implicit-def $fpscr, implicit $fpscr
+    $dr6 = FLOAT_DR implicit-def $fpscr, implicit $fpul, implicit $fpscr
+    $dr0 = FADD_DR $dr0, $dr2, implicit-def $fpscr, implicit $fpscr
+    $r2 = STS_FPSCR implicit $fpscr
+    RTS implicit $pr, implicit $dr0, implicit $dr6, implicit $r2
+...
+# SH4-LABEL: name: integer_control
+# SH4: $r0 = MOVB_load_reg
+# SH4-NEXT: $r0 = EXTUB
+# SH4-NEXT: $r1 = MOVL_load_reg
+# OTHER-LABEL: name: integer_control
+# OTHER: $r0 = MOVB_load_reg
+# OTHER-NEXT: $r0 = EXTUB
+# OTHER-NEXT: $r1 = MOVL_load_reg
+---
+name: integer_control
+tracksRegLiveness: true
+noVRegs: true
+body: |
+  bb.0:
+    liveins: $r4, $r5, $pr
+    $r0 = MOVB_load_reg $r4
+    $r0 = EXTUB $r0
+    $r1 = MOVL_load_reg $r5
+    $r0 = ADDrr $r0, $r1
+    RTS implicit $pr, implicit $r0
+...
+
+# DEPEND-LABEL: name: convert_and_load
+# DEPEND: $dr2 = FLOAT_DR
+# DEPEND: LDS_FPUL {{.*}}$r0
+# DEPEND: $fr5, $r7 = FMOV_S_LOAD_POSTINC_ALIAS
+# DEPEND: $fr4, $r7 = FMOV_S_LOAD_POSTINC_ALIAS
+# DEPEND: $dr2 = FMUL_DR
+# DEPEND: $dr6 = FLOAT_DR
+# DEPEND: $dr0 = FADD_DR
+# DEPEND: $r2 = STS_FPSCR

@@ -1,0 +1,169 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -stack-symbol-ordering=0 -verify-machineinstrs -run-pass=prolog-epilog %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -stack-symbol-ordering=0 -verify-machineinstrs -run-pass=prolog-epilog %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -stack-symbol-ordering=0 -verify-machineinstrs -run-pass=prolog-epilog %s -o %t.sh.mir
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -stack-symbol-ordering=0 -verify-machineinstrs -start-after=prolog-epilog -filetype=obj %t.sh.mir -o /dev/null
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -stack-symbol-ordering=0 -verify-machineinstrs -run-pass=prolog-epilog %s -o %t.shle.mir
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -stack-symbol-ordering=0 -verify-machineinstrs -start-after=prolog-epilog -filetype=obj %t.shle.mir -o /dev/null
+
+--- |
+  define void @high_pressure() {
+    ret void
+  }
+
+  define void @call_frame_128() {
+    ret void
+  }
+
+  define i32 @incoming_and_callee_saved(i32 %value) {
+    ret i32 %value
+  }
+
+  define void @far_widths() {
+    ret void
+  }
+...
+---
+name:            high_pressure
+tracksRegLiveness: true
+noVRegs:         true
+stack:
+  - { id: 0, name: '', type: default, offset: 0, size: 4, alignment: 4, stack-id: default,
+      callee-saved-register: '', callee-saved-restored: true, debug-info-variable: '',
+      debug-info-expression: '', debug-info-location: '' }
+  - { id: 1, name: '', type: default, offset: 0, size: 124, alignment: 4, stack-id: default,
+      callee-saved-register: '', callee-saved-restored: true, debug-info-variable: '',
+      debug-info-expression: '', debug-info-location: '' }
+body:             |
+  bb.0:
+    liveins: $r0, $r1, $r2, $r3, $r4, $r5, $r6, $r7, $r8, $r9, $r10, $r11, $r12, $r13, $r14
+
+    MOVL_store_disp $r0, %stack.0, 0 :: (store (s32) into %stack.0)
+    RTS implicit $pr, implicit $r0, implicit $r1, implicit $r2, implicit $r3, implicit $r4, implicit $r5, implicit $r6, implicit $r7, implicit $r8, implicit $r9, implicit $r10, implicit $r11, implicit $r12, implicit $r13, implicit $r14
+...
+---
+name:            call_frame_128
+tracksRegLiveness: true
+noVRegs:         true
+frameInfo:
+  adjustsStack:    true
+fixedStack:
+  - { id: 0, type: default, offset: 0, size: 4, alignment: 4, stack-id: default,
+      isImmutable: false, isAliased: false }
+body:             |
+  bb.0:
+    liveins: $r0
+
+    ADJCALLSTACKDOWN 128, 0, implicit-def dead $r15, implicit $r15
+    MOVL_store_disp $r0, %fixed-stack.0, 0 :: (store (s32) into %fixed-stack.0)
+    ADJCALLSTACKUP 128, 0, implicit-def dead $r15, implicit $r15
+    RTS implicit $pr, implicit $r0
+...
+---
+name:            incoming_and_callee_saved
+tracksRegLiveness: true
+noVRegs:         true
+fixedStack:
+  - { id: 0, type: default, offset: 124, size: 4, alignment: 4, stack-id: default,
+      isImmutable: true, isAliased: false }
+stack:
+  - { id: 0, name: '', type: default, offset: 0, size: 124, alignment: 4, stack-id: default,
+      callee-saved-register: '', callee-saved-restored: true, debug-info-variable: '',
+      debug-info-expression: '', debug-info-location: '' }
+body:             |
+  bb.0:
+    liveins: $r4, $r8
+
+    $r8 = MOVrr $r4
+    $r0 = MOVL_load_disp %fixed-stack.0, 0 :: (load (s32) from %fixed-stack.0)
+    $r0 = ADDrr $r0, killed $r8
+    RTS implicit $pr, implicit $r0
+...
+---
+name:            far_widths
+tracksRegLiveness: true
+noVRegs:         true
+stack:
+  - { id: 0, name: '', type: default, offset: 0, size: 1, alignment: 1, stack-id: default,
+      callee-saved-register: '', callee-saved-restored: true, debug-info-variable: '',
+      debug-info-expression: '', debug-info-location: '' }
+  - { id: 1, name: '', type: default, offset: 0, size: 2, alignment: 2, stack-id: default,
+      callee-saved-register: '', callee-saved-restored: true, debug-info-variable: '',
+      debug-info-expression: '', debug-info-location: '' }
+  - { id: 2, name: '', type: default, offset: 0, size: 4, alignment: 4, stack-id: default,
+      callee-saved-register: '', callee-saved-restored: true, debug-info-variable: '',
+      debug-info-expression: '', debug-info-location: '' }
+  - { id: 3, name: '', type: default, offset: 0, size: 120, alignment: 4, stack-id: default,
+      callee-saved-register: '', callee-saved-restored: true, debug-info-variable: '',
+      debug-info-expression: '', debug-info-location: '' }
+body:             |
+  bb.0:
+    liveins: $r1, $r2, $r3
+
+    MOVB_store_frame $r1, %stack.0, 0, implicit-def dead early-clobber $r0 :: (store (s8) into %stack.0)
+    MOVW_store_frame $r2, %stack.1, 0, implicit-def dead early-clobber $r0 :: (store (s16) into %stack.1)
+    MOVL_store_disp $r3, %stack.2, 0 :: (store (s32) into %stack.2)
+    dead $r4 = MOVB_load_frame %stack.0, 0, implicit-def dead $r0 :: (load (s8) from %stack.0)
+    dead $r5 = MOVW_load_frame %stack.1, 0, implicit-def dead $r0 :: (load (s16) from %stack.1)
+    dead $r6 = MOVL_load_disp %stack.2, 0 :: (load (s32) from %stack.2)
+    RTS implicit $pr
+...
+
+# CHECK-LABEL: name:            high_pressure
+# CHECK: stackSize:       132
+# CHECK: type: spill-slot, offset: -132
+# CHECK-LABEL: body:
+# CHECK-NOT: %stack.
+# CHECK: $r15 = frame-setup ADDri $r15, -128
+# CHECK: $r15 = frame-setup ADDri $r15, -4
+# CHECK: MOVL_store_reg killed $r1, $r15
+# CHECK: $r1 = MOVrr $r15
+# CHECK-NEXT: $r1 = ADDri $r1, 68
+# CHECK-NEXT: MOVL_store_disp $r0, killed $r1, 60
+# CHECK-NEXT: $r1 = MOVL_load_reg $r15
+# CHECK: $r15 = frame-destroy ADDri $r15, 127
+# CHECK: $r15 = frame-destroy ADDri $r15, 5
+
+# CHECK-LABEL: name:            call_frame_128
+# CHECK: stackSize:       4
+# CHECK-LABEL: body:
+# CHECK-NOT: %fixed-stack.
+# CHECK: $r15 = ADDri $r15, -128
+# CHECK: $r1 = MOVrr $r15
+# CHECK-NEXT: $r1 = ADDri $r1, 72
+# CHECK-NEXT: MOVL_store_disp $r0, killed $r1, 60
+# CHECK: $r15 = ADDri $r15, 127
+# CHECK-NEXT: CFI_INSTRUCTION adjust_cfa_offset -127
+# CHECK-NEXT: $r15 = ADDri $r15, 1
+# CHECK-NEXT: CFI_INSTRUCTION adjust_cfa_offset -1
+
+# CHECK-LABEL: name:            incoming_and_callee_saved
+# CHECK: stackSize:       132
+# CHECK: callee-saved-register: '$r8'
+# CHECK-LABEL: body:
+# CHECK-NOT: %fixed-stack.
+# CHECK: $r8 = MOVrr $r4
+# CHECK: $r0 = MOVri 1
+# CHECK-NEXT: $r0 = SHLL8 $r0
+# CHECK-NEXT: $r0 = MOVL_load_indexed $r15, implicit killed $r0
+# CHECK: $r8 = MOVrr $r15
+# CHECK-NEXT: $r8 = ADDri $r8, 68
+# CHECK-NEXT: $r8 = MOVL_load_disp $r8, 60
+
+# CHECK-LABEL: name:            far_widths
+# CHECK: stackSize:       132
+# CHECK-LABEL: body:
+# CHECK-NOT: %stack.
+# CHECK: [[ADDRESS:\$r[0-9]+]] = MOVrr $r15
+# CHECK-NEXT: [[ADDRESS]] = ADDri [[ADDRESS]], 127
+# CHECK-NEXT: [[ADDRESS]] = ADDri [[ADDRESS]], 4
+# CHECK-NEXT: MOVB_store_reg $r1, [[ADDRESS]]
+# CHECK-NEXT: [[ADDRESS]] = ADDri [[ADDRESS]], -3
+# CHECK-NEXT: MOVW_store_reg $r2, [[ADDRESS]]
+# CHECK-NEXT: [[ADDRESS]] = ADDri [[ADDRESS]], -4
+# CHECK-NEXT: MOVL_store_reg $r3, [[ADDRESS]]
+# CHECK-NEXT: [[ADDRESS]] = ADDri [[ADDRESS]], 7
+# CHECK-NEXT: dead $r4 = MOVB_load_reg [[ADDRESS]]
+# CHECK-NEXT: [[ADDRESS]] = ADDri [[ADDRESS]], -3
+# CHECK-NEXT: dead $r5 = MOVW_load_reg [[ADDRESS]]
+# CHECK-NEXT: [[ADDRESS]] = ADDri [[ADDRESS]], -4
+# CHECK-NEXT: dead [[ADDRESS]] = MOVL_load_reg killed [[ADDRESS]]

@@ -1,0 +1,42 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s
+
+# A generic bundle hides its branch from the ordinary instruction-header
+# layout. Keep the incoming layout when that control flow cannot be modeled.
+--- |
+  define void @bundled_branch() { ret void }
+...
+---
+name: bundled_branch
+alignment: 4
+tracksRegLiveness: true
+body: |
+  bb.0:
+    successors: %bb.1
+    liveins: $r0, $pr, $tbit
+    NOP
+    $r1 = MOVrr $r0
+    BRA %bb.1
+  bb.1:
+    successors: %bb.2, %bb.4
+    liveins: $pr, $tbit
+    BUNDLE implicit $tbit {
+      BF %bb.4, implicit $tbit
+    }
+  bb.2:
+    successors: %bb.3
+    liveins: $pr, $tbit
+    INLINEASM &".space 254", sideeffect attdialect
+  bb.3 (align 4):
+    successors: %bb.4
+    liveins: $pr, $tbit
+    NOP
+  bb.4:
+    liveins: $pr
+    RTS implicit $pr
+...
+# CHECK-LABEL: name: bundled_branch
+# CHECK: $r1 = MOVrr $r0
+# CHECK: BRA %bb.1 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }

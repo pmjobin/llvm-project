@@ -1,0 +1,117 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-postra-peephole %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=sh-postra-peephole %s -o - | FileCheck %s
+
+--- |
+  define void @fold_extended_roundtrip(ptr %destination) { ret void }
+  define void @fold_word_shift_roundtrip(ptr %destination) { ret void }
+  define void @keep_live_r0(ptr %destination) { ret void }
+  define void @keep_live_temporary(ptr %destination) { ret void }
+  define void @keep_intervening_instruction(ptr %destination) { ret void }
+...
+---
+name:            fold_extended_roundtrip
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r2, $r4
+
+    $r1 = EXTUB killed $r0
+    $r1 = ADDrr killed $r1, killed $r2
+    $r1 = ADDri killed $r1, 1
+    $r1 = SHLR killed $r1, implicit-def dead $tbit
+    $r0 = MOVrr killed $r1
+    MOVB_store_disp killed $r0, killed $r4, 1 :: (store (s8) into %ir.destination)
+...
+
+# CHECK-LABEL: name:            fold_extended_roundtrip
+# CHECK-NOT: MOVrr
+# CHECK: $r0 = EXTUB killed $r0
+# CHECK-NEXT: $r0 = ADDrr killed $r0, killed $r2
+# CHECK-NEXT: $r0 = ADDri killed $r0, 1
+# CHECK-NEXT: $r0 = SHLR killed $r0, implicit-def dead $tbit
+# CHECK-NEXT: MOVB_store_disp killed $r0, killed $r4, 1
+
+---
+name:            fold_word_shift_roundtrip
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r3, $r5
+
+    $r1 = EXTSW killed $r0
+    $r1 = ADDrr killed $r1, killed $r3
+    $r1 = ADDri killed $r1, 2
+    $r1 = SHLR2 killed $r1, implicit-def dead $tbit
+    $r0 = MOVrr killed $r1
+    MOVW_store_disp killed $r0, killed $r5, 2 :: (store (s16) into %ir.destination)
+...
+
+# CHECK-LABEL: name:            fold_word_shift_roundtrip
+# CHECK-NOT: MOVrr
+# CHECK: $r0 = EXTSW killed $r0
+# CHECK-NEXT: $r0 = ADDrr killed $r0, killed $r3
+# CHECK-NEXT: $r0 = ADDri killed $r0, 2
+# CHECK-NEXT: $r0 = SHLR2 killed $r0, implicit-def dead $tbit
+# CHECK-NEXT: MOVW_store_disp killed $r0, killed $r5, 2
+
+---
+name:            keep_live_r0
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r2, $r4
+
+    $r1 = EXTUB $r0
+    $r1 = ADDrr killed $r1, killed $r2
+    $r0 = MOVrr killed $r1
+    MOVB_store_disp killed $r0, killed $r4, 1 :: (store (s8) into %ir.destination)
+...
+
+# CHECK-LABEL: name:            keep_live_r0
+# CHECK: $r1 = EXTUB $r0
+# CHECK-NEXT: $r1 = ADDrr killed $r1, killed $r2
+# CHECK-NEXT: $r0 = MOVrr killed $r1
+
+---
+name:            keep_live_temporary
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r2, $r4
+
+    $r1 = EXTUB killed $r0
+    $r1 = ADDrr killed $r1, killed $r2
+    $r0 = MOVrr $r1
+    MOVB_store_disp killed $r0, killed $r4, 1 :: (store (s8) into %ir.destination)
+    dead $r3 = MOVrr killed $r1
+...
+
+# CHECK-LABEL: name:            keep_live_temporary
+# CHECK: $r1 = EXTUB killed $r0
+# CHECK-NEXT: $r1 = ADDrr killed $r1, killed $r2
+# CHECK-NEXT: $r0 = MOVrr $r1
+
+---
+name:            keep_intervening_instruction
+tracksRegLiveness: true
+noVRegs:         true
+body:             |
+  bb.0:
+    liveins: $r0, $r2, $r4
+
+    $r1 = EXTUB killed $r0
+    $r1 = ADDrr killed $r1, killed $r2
+    NOP
+    $r0 = MOVrr killed $r1
+    MOVB_store_disp killed $r0, killed $r4, 1 :: (store (s8) into %ir.destination)
+...
+
+# CHECK-LABEL: name:            keep_intervening_instruction
+# CHECK: $r1 = EXTUB killed $r0
+# CHECK-NEXT: $r1 = ADDrr killed $r1, killed $r2
+# CHECK-NEXT: NOP
+# CHECK-NEXT: $r0 = MOVrr killed $r1

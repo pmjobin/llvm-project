@@ -1,0 +1,172 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-compress-jump-tables %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-compress-jump-tables %s -o - | FileCheck %s
+
+# Keep the incoming table width when exact layout cannot be established.
+# Stronger block alignment needs an unknown function-start residue; generic
+# bundles hide control flow; alignment in assembly and the long-branch recipe
+# have sizes reported only as upper bounds.
+
+# CHECK-LABEL: name: unknown_alignment
+# CHECK: SHLL2
+# CHECK: MOVL_load_indexed
+# CHECK: SH_JUMPTABLE %jump-table.0, {{.*}}, 4
+
+# CHECK-LABEL: name: generic_bundle
+# CHECK: SHLL2
+# CHECK: MOVL_load_indexed
+# CHECK: SH_JUMPTABLE %jump-table.0, {{.*}}, 4
+
+# CHECK-LABEL: name: bounded_assembly
+# CHECK: SHLL2
+# CHECK: MOVL_load_indexed
+# CHECK: SH_JUMPTABLE %jump-table.0, {{.*}}, 4
+
+# CHECK-LABEL: name: long_branch
+# CHECK: SHLL2
+# CHECK: MOVL_load_indexed
+# CHECK: SH_JUMPTABLE %jump-table.0, {{.*}}, 4
+
+--- |
+  define void @unknown_alignment() { ret void }
+  define void @generic_bundle() { ret void }
+  define void @bounded_assembly() { ret void }
+  define void @long_branch() { ret void }
+...
+---
+name: unknown_alignment
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.2', '%bb.2', '%bb.2', '%bb.2', '%bb.2' ]
+body: |
+  bb.0:
+    successors: %bb.2
+    liveins: $r4, $pr
+    $r0 = MOVA <mcsymbol .Lunknown_alignment_table>
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lunknown_alignment_base>
+  bb.1 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lunknown_alignment_table>, <mcsymbol .Lunknown_alignment_base>, 4
+  bb.2:
+    successors: %bb.3, %bb.4
+    liveins: $pr
+    SETT implicit-def $tbit
+    BF %bb.4, implicit killed $tbit
+  bb.3:
+    successors: %bb.4
+    liveins: $pr
+    INLINEASM &".space 254", sideeffect attdialect
+  bb.4 (align 8):
+    liveins: $pr
+    RTS implicit $pr
+...
+---
+name: generic_bundle
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.2', '%bb.2', '%bb.2', '%bb.2', '%bb.2' ]
+body: |
+  bb.0:
+    successors: %bb.2
+    liveins: $r4, $pr
+    $r0 = MOVA <mcsymbol .Lgeneric_bundle_table>
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lgeneric_bundle_base>
+  bb.1 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lgeneric_bundle_table>, <mcsymbol .Lgeneric_bundle_base>, 4
+  bb.2:
+    successors: %bb.3, %bb.4
+    liveins: $pr
+    SETT implicit-def $tbit
+    BUNDLE implicit $tbit {
+      BF %bb.4, implicit killed $tbit
+    }
+  bb.3:
+    successors: %bb.4
+    liveins: $pr
+    INLINEASM &".space 254", sideeffect attdialect
+  bb.4 (align 4):
+    liveins: $pr
+    RTS implicit $pr
+...
+---
+name: bounded_assembly
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.2', '%bb.2', '%bb.2', '%bb.2', '%bb.2' ]
+body: |
+  bb.0:
+    successors: %bb.2
+    liveins: $r4, $pr
+    $r0 = MOVA <mcsymbol .Lbounded_assembly_table>
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Lbounded_assembly_base>
+  bb.1 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Lbounded_assembly_table>, <mcsymbol .Lbounded_assembly_base>, 4
+  bb.2:
+    successors: %bb.3, %bb.4
+    liveins: $pr
+    SETT implicit-def $tbit
+    BF %bb.4, implicit killed $tbit
+  bb.3:
+    successors: %bb.4
+    liveins: $pr
+    INLINEASM &".space 252; .p2align 2", sideeffect attdialect
+  bb.4 (align 4):
+    liveins: $pr
+    RTS implicit $pr
+...
+---
+name: long_branch
+alignment: 4
+tracksRegLiveness: true
+noVRegs: true
+jumpTable:
+  kind: inline
+  entries:
+    - id: 0
+      blocks: [ '%bb.2', '%bb.2', '%bb.2', '%bb.2', '%bb.2' ]
+body: |
+  bb.0:
+    successors: %bb.2
+    liveins: $r4, $pr
+    $r0 = MOVA <mcsymbol .Llong_branch_table>
+    $r4 = SHLL2 killed $r4
+    $r1 = MOVL_load_indexed killed $r4, implicit killed $r0 :: (dereferenceable invariant load (s32) from jump-table)
+    BRAF killed $r1, %jump-table.0, <mcsymbol .Llong_branch_base>
+  bb.1 (align 4):
+    successors:
+    SH_JUMPTABLE %jump-table.0, <mcsymbol .Llong_branch_table>, <mcsymbol .Llong_branch_base>, 4
+  bb.2:
+    successors: %bb.3, %bb.4
+    liveins: $pr
+    SETT implicit-def $tbit
+    BF %bb.4, implicit killed $tbit
+  bb.3:
+    successors: %bb.4
+    liveins: $pr
+    INLINEASM &".space 254", sideeffect attdialect
+  bb.4 (align 4):
+    liveins: $pr
+    dead $r1 = SH_LONG_BRANCH %bb.4, 0, implicit-def $r0
+...

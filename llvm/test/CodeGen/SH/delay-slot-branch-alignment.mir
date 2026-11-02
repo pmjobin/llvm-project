@@ -1,0 +1,112 @@
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -verify-machineinstrs -run-pass=sh-delay-slot-filler %s -o - | FileCheck %s
+# RUN: llc -mtriple=sh-unknown-elf -mcpu=sh2 -verify-machineinstrs -start-before=sh-delay-slot-filler -filetype=obj %s -o %t.be.o
+# RUN: llc -mtriple=shle-unknown-elf -mcpu=sh4 -verify-machineinstrs -start-before=sh-delay-slot-filler -filetype=obj %s -o %t.le.o
+
+# Each branch is at its displacement limit before filling. Shrinking bb.0
+# shifts the branch or target while the aligned block stays at its old address.
+--- |
+  define void @forward_limit() { ret void }
+  define void @backward_limit() { ret void }
+  define void @reusable_nop() { ret void }
+...
+---
+name: forward_limit
+alignment: 4
+tracksRegLiveness: true
+body: |
+  bb.0:
+    successors: %bb.1
+    liveins: $r0, $pr, $tbit
+    NOP
+    $r1 = MOVrr $r0
+    BRA %bb.1
+  bb.1:
+    successors: %bb.2, %bb.4
+    liveins: $pr, $tbit
+    BF %bb.4, implicit $tbit
+  bb.2:
+    successors: %bb.3
+    liveins: $pr, $tbit
+    INLINEASM &".space 254", sideeffect attdialect
+  bb.3 (align 4):
+    successors: %bb.4
+    liveins: $pr, $tbit
+    NOP
+  bb.4:
+    liveins: $pr
+    RTS implicit $pr
+...
+# CHECK-LABEL: name: forward_limit
+# CHECK: $r1 = MOVrr $r0
+# CHECK: BRA %bb.1 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name: backward_limit
+alignment: 4
+tracksRegLiveness: true
+body: |
+  bb.0:
+    successors: %bb.1
+    liveins: $r0, $pr, $tbit
+    NOP
+    $r1 = MOVrr $r0
+    BRA %bb.1
+  bb.1:
+    successors: %bb.2
+    liveins: $pr, $tbit
+    NOP
+  bb.2:
+    successors: %bb.3
+    liveins: $pr, $tbit
+    INLINEASM &".space 246", sideeffect attdialect
+  bb.3 (align 4):
+    successors: %bb.1, %bb.4
+    liveins: $pr, $tbit
+    NOP
+    NOP
+    BF %bb.1, implicit $tbit
+  bb.4:
+    liveins: $pr
+    RTS implicit $pr
+...
+# CHECK-LABEL: name: backward_limit
+# CHECK: $r1 = MOVrr $r0
+# CHECK: BRA %bb.1 {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+
+---
+name: reusable_nop
+alignment: 4
+tracksRegLiveness: true
+body: |
+  bb.0:
+    successors: %bb.1
+    liveins: $r0, $pr, $tbit
+    INLINEASM &"nop", sideeffect attdialect
+    JSR $r0, implicit-def $pr
+    NOP
+  bb.1:
+    successors: %bb.2, %bb.4
+    liveins: $pr, $tbit
+    BF %bb.4, implicit $tbit
+  bb.2:
+    successors: %bb.3
+    liveins: $pr, $tbit
+    INLINEASM &".space 254", sideeffect attdialect
+  bb.3 (align 4):
+    successors: %bb.4
+    liveins: $pr, $tbit
+    NOP
+  bb.4:
+    liveins: $pr
+    RTS implicit $pr
+...
+# CHECK-LABEL: name: reusable_nop
+# CHECK: JSR $r0, implicit-def $pr {
+# CHECK-NEXT: NOP
+# CHECK-NEXT: }
+# CHECK-NEXT: NOP

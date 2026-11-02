@@ -1,0 +1,19 @@
+# RUN: llvm-tblgen --dump-json -I %S/../../../include -I %S/../../../lib/Target/SH %S/../../../lib/Target/SH/SH.td > %t.json
+# RUN: %python %S/Inputs/fpscr-effects.py records %t.json
+# RUN: %python %S/Inputs/fpscr-effects.py generate %t.json > %t.mir
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -verify-machineinstrs -run-pass=post-ra-pseudos %t.mir -o %t.expanded
+# RUN: %python %S/Inputs/fpscr-effects.py expanded %t.json %t.expanded
+# RUN: llc -mtriple=sh-unknown-none-elf -mcpu=sh4 -verify-machineinstrs -post-RA-scheduler=true -run-pass=post-ra-pseudos,post-RA-sched,sh-delay-slot-filler %t.mir -o %t.scheduled
+# RUN: %python %S/Inputs/fpscr-effects.py expanded %t.json %t.scheduled
+# RUN: llc -mtriple=sh-unknown-none-elf -mcpu=sh4 -verify-machineinstrs -run-pass=post-ra-pseudos,postmisched,sh-delay-slot-filler %t.mir -o %t.machine-scheduled
+# RUN: %python %S/Inputs/fpscr-effects.py expanded %t.json %t.machine-scheduled
+# RUN: %python %S/Inputs/fpscr-effects.py generate-custom %t.json > %t.custom.mir
+# RUN: llc -mtriple=shle-unknown-none-elf -mcpu=sh4 -verify-machineinstrs -run-pass=finalize-isel %t.custom.mir -o %t.custom-le
+# RUN: %python %S/Inputs/fpscr-effects.py custom-expanded %t.json %t.custom-le
+# RUN: llc -mtriple=sh-unknown-none-elf -mcpu=sh4 -verify-machineinstrs -run-pass=finalize-isel %t.custom.mir -o %t.custom-be
+# RUN: %python %S/Inputs/fpscr-effects.py custom-expanded %t.json %t.custom-be
+
+# Guard the effect contract over generated records, independently classifying
+# architectural instructions and checking every status pseudo's replacement.
+# This intentionally has no expected opcode count. New members must supply the
+# same effects and an expansion witness if they are pseudos.
