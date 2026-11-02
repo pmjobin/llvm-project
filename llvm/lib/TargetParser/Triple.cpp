@@ -121,6 +121,10 @@ StringRef Triple::getArchTypeName(ArchType Kind) {
     return "riscv64be";
   case shave:
     return "shave";
+  case sh:
+    return "sh";
+  case shle:
+    return "shle";
   case sparc:
     return "sparc";
   case sparcel:
@@ -349,6 +353,9 @@ StringRef Triple::getArchTypePrefix(ArchType Kind) {
     return "lanai";
   case shave:
     return "shave";
+  case sh:
+  case shle:
+    return "sh";
   case wasm32:
   case wasm64:
     return "wasm";
@@ -486,6 +493,8 @@ Triple::ArchType Triple::getArchTypeForLLVMName(StringRef Name) {
       .Case("riscv64", riscv64)
       .Case("riscv32be", riscv32be)
       .Case("riscv64be", riscv64be)
+      .Case("sh", sh)
+      .Case("shle", shle)
       .Case("hexagon", hexagon)
       .Case("sparc", sparc)
       .Case("sparcel", sparcel)
@@ -640,6 +649,8 @@ Triple::ArchType Triple::parseArch(StringRef ArchName) {
           .Case("riscv64", Triple::riscv64)
           .Case("riscv32be", Triple::riscv32be)
           .Case("riscv64be", Triple::riscv64be)
+          .Cases({"sh", "shbe", "sheb", "sh2eb"}, Triple::sh)
+          .Cases({"shle", "shl", "sh2", "sh2el"}, Triple::shle)
           .Case("hexagon", Triple::hexagon)
           .Cases({"s390x", "systemz"}, Triple::systemz)
           .Case("sparc", Triple::sparc)
@@ -997,6 +1008,8 @@ static Triple::ObjectFormatType getDefaultFormat(const Triple &T) {
   case Triple::riscv64:
   case Triple::riscv32be:
   case Triple::riscv64be:
+  case Triple::sh:
+  case Triple::shle:
   case Triple::shave:
   case Triple::sparc:
   case Triple::sparcel:
@@ -1763,6 +1776,8 @@ unsigned Triple::getArchPointerBitWidth(llvm::Triple::ArchType Arch) {
   case llvm::Triple::renderscript32:
   case llvm::Triple::riscv32:
   case llvm::Triple::riscv32be:
+  case llvm::Triple::sh:
+  case llvm::Triple::shle:
   case llvm::Triple::shave:
   case llvm::Triple::sparc:
   case llvm::Triple::sparcel:
@@ -1874,6 +1889,8 @@ Triple Triple::get32BitArchVariant() const {
   case Triple::renderscript32:
   case Triple::riscv32:
   case Triple::riscv32be:
+  case Triple::sh:
+  case Triple::shle:
   case Triple::shave:
   case Triple::sparc:
   case Triple::sparcel:
@@ -1966,6 +1983,8 @@ Triple Triple::get64BitArchVariant() const {
   case Triple::m68k:
   case Triple::msp430:
   case Triple::r600:
+  case Triple::sh:
+  case Triple::shle:
   case Triple::shave:
   case Triple::sparcel:
   case Triple::tce:
@@ -2143,6 +2162,9 @@ Triple Triple::getBigEndianArchVariant() const {
   case Triple::riscv64:
     T.setArch(Triple::riscv64be);
     break;
+  case Triple::shle:
+    T.setArch(Triple::sh);
+    break;
   case Triple::sparcel:
     T.setArch(Triple::sparc);
     break;
@@ -2198,6 +2220,9 @@ Triple Triple::getLittleEndianArchVariant() const {
   case Triple::riscv64be:
     T.setArch(Triple::riscv64);
     break;
+  case Triple::sh:
+    T.setArch(Triple::shle);
+    break;
   case Triple::sparc:
     T.setArch(Triple::sparcel);
     break;
@@ -2240,6 +2265,7 @@ bool Triple::isLittleEndian() const {
   case Triple::renderscript64:
   case Triple::riscv32:
   case Triple::riscv64:
+  case Triple::shle:
   case Triple::shave:
   case Triple::sparcel:
   case Triple::spir64:
@@ -2504,6 +2530,8 @@ ExceptionHandling Triple::getDefaultExceptionHandling() const {
   case Triple::lanai:
   case Triple::m68k:
   case Triple::msp430:
+  case Triple::sh:
+  case Triple::shle:
   case Triple::systemz:
   case Triple::xcore:
   case Triple::xtensa:
@@ -2542,7 +2570,7 @@ FloatABI::ABIType Triple::getDefaultFloatABI(StringRef ABIName) const {
   if (isMIPS())
     return isOSFreeBSD() ? FloatABI::Soft : FloatABI::Hard;
 
-  if (isCSKY() || isAVR() || getArch() == msp430)
+  if (isCSKY() || isAVR() || isSH() || getArch() == msp430)
     return FloatABI::Soft;
 
   // Most targets use hard float unless soft float is explicitly requested.

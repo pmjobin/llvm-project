@@ -312,6 +312,13 @@ static std::string computeSparcDataLayout(const Triple &T) {
   return "E-m:e-p:32:32-i64:64-i128:128-f128:64-n32-S64";
 }
 
+static std::string computeSHDataLayout(const Triple &T) {
+  // GNU SH uses 32-bit pointers, integer registers and stack alignment.
+  // The optional GCC -mdalign ABI is intentionally not modeled.
+  return std::string(T.isLittleEndian() ? "e" : "E") +
+         "-m:e-p:32:32-i64:32:32-f64:32:32-a:0:32-n32-S32";
+}
+
 static std::string computeSystemZDataLayout(const Triple &TT) {
   // Big endian. The natural stack alignment is 64 bits.
   std::string Ret = "E-S64";
@@ -523,6 +530,9 @@ std::string Triple::computeDataLayout(StringRef ABIName) const {
   case Triple::sparcv9:
   case Triple::sparcel:
     return computeSparcDataLayout(*this);
+  case Triple::sh:
+  case Triple::shle:
+    return computeSHDataLayout(*this);
   case Triple::systemz:
     return computeSystemZDataLayout(*this);
   case Triple::tce:

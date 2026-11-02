@@ -80,6 +80,8 @@ public:
     riscv64,     // RISC-V (64-bit, little endian): riscv64
     riscv32be,   // RISC-V (32-bit, big endian): riscv32be
     riscv64be,   // RISC-V (64-bit, big endian): riscv64be
+    sh,          // SuperH (32-bit, big endian): sh
+    shle,        // SuperH (32-bit, little endian): shle
     sparc,       // Sparc: sparc
     sparcv9,     // Sparcv9: Sparcv9
     sparcel,     // Sparc: (endianness = little). NB: 'Sparcle' is a CPU variant
@@ -382,6 +384,7 @@ public:
     MuslSF,
     MuslX32,
     MuslWALI,
+    MuslFDPIC,
     LLVM,
 
     MSVC,
@@ -936,8 +939,11 @@ public:
            getEnvironment() == Triple::MuslSF ||
            getEnvironment() == Triple::MuslX32 ||
            getEnvironment() == Triple::MuslWALI ||
+           getEnvironment() == Triple::MuslFDPIC ||
            getEnvironment() == Triple::OpenHOS || isOSLiteOS();
   }
+
+  bool isMuslFDPIC() const { return getEnvironment() == Triple::MuslFDPIC; }
 
   /// Tests whether the target is OHOS
   /// LiteOS default enviroment is also OHOS, but omited on triple.
@@ -1136,6 +1142,11 @@ public:
 
   /// Tests whether the target is MIPS (little and big endian, 32- or 64-bit).
   bool isMIPS() const { return isMIPS32() || isMIPS64(); }
+
+  /// Tests whether the target is SuperH (big or little endian).
+  bool isSH() const {
+    return getArch() == Triple::sh || getArch() == Triple::shle;
+  }
 
   /// Tests whether the target is PowerPC (32- or 64-bit LE or BE).
   bool isPPC() const {
