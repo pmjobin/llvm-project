@@ -3694,7 +3694,9 @@ SDValue SHTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
         Negate =
             llvm::any_of(MF.getFunction(), [Positive](const BasicBlock &BB) {
               return llvm::any_of(BB, [Positive](const Instruction &I) {
-                return llvm::is_contained(I.operands(), Positive);
+                return llvm::any_of(I.operands(), [Positive](const Use &U) {
+                  return U.get() == Positive;
+                });
               });
             });
         if (Negate)
