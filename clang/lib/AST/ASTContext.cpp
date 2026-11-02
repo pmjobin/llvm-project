@@ -10060,6 +10060,28 @@ static TypedefDecl *CreateVoidPtrBuiltinVaListDecl(const ASTContext *Context) {
 }
 
 static TypedefDecl *
+CreateSHHardFloatBuiltinVaListDecl(const ASTContext *Context) {
+  RecordDecl *VaListTagDecl = Context->buildImplicitRecord("__va_list_tag");
+  VaListTagDecl->startDefinition();
+  QualType PointerTy = Context->getPointerType(Context->VoidTy);
+  const char *FieldNames[] = {"__va_next_o", "__va_next_o_limit",
+                              "__va_next_fp", "__va_next_fp_limit",
+                              "__va_next_stack"};
+  for (const char *FieldName : FieldNames) {
+    FieldDecl *Field = FieldDecl::Create(
+        *Context, VaListTagDecl, SourceLocation(), SourceLocation(),
+        &Context->Idents.get(FieldName), PointerTy, /*TInfo=*/nullptr,
+        /*BitWidth=*/nullptr, /*Mutable=*/false, ICIS_NoInit);
+    Field->setAccess(AS_public);
+    VaListTagDecl->addDecl(Field);
+  }
+  VaListTagDecl->completeDefinition();
+  Context->VaListTagDecl = VaListTagDecl;
+  CanQualType VaListTagType = Context->getCanonicalTagType(VaListTagDecl);
+  return Context->buildImplicitTypedef(VaListTagType, "__builtin_va_list");
+}
+
+static TypedefDecl *
 CreateAArch64ABIBuiltinVaListDecl(const ASTContext *Context) {
   // struct __va_list
   RecordDecl *VaListTagDecl = Context->buildImplicitRecord("__va_list");
@@ -10432,6 +10454,8 @@ static TypedefDecl *CreateVaListDecl(const ASTContext *Context,
     return CreateCharPtrBuiltinVaListDecl(Context);
   case TargetInfo::VoidPtrBuiltinVaList:
     return CreateVoidPtrBuiltinVaListDecl(Context);
+  case TargetInfo::SHHardFloatBuiltinVaList:
+    return CreateSHHardFloatBuiltinVaListDecl(Context);
   case TargetInfo::AArch64ABIBuiltinVaList:
     return CreateAArch64ABIBuiltinVaListDecl(Context);
   case TargetInfo::PowerABIBuiltinVaList:

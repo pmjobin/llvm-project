@@ -436,6 +436,16 @@ namespace clang {
   };
   }
 
+  /// SH builtins
+  namespace SH {
+  enum {
+    LastTIBuiltin = clang::Builtin::FirstTSBuiltin - 1,
+#define BUILTIN(ID, TYPE, ATTRS) BI##ID,
+#include "clang/Basic/BuiltinsSH.def"
+    LastTSBuiltin
+  };
+  } // namespace SH
+
   /// MIPS builtins
   namespace Mips {
     enum {
@@ -497,8 +507,9 @@ namespace clang {
       {ARM::LastTSBuiltin, AArch64::LastTSBuiltin, BPF::LastTSBuiltin,
        PPC::LastTSBuiltin, NVPTX::LastTSBuiltin, AMDGPU::LastTSBuiltin,
        X86::LastTSBuiltin, VE::LastTSBuiltin, RISCV::LastTSBuiltin,
-       Hexagon::LastTSBuiltin, Mips::LastTSBuiltin, XCore::LastTSBuiltin,
-       SystemZ::LastTSBuiltin, WebAssembly::LastTSBuiltin, AVR::LastTSBuiltin});
+       Hexagon::LastTSBuiltin, Mips::LastTSBuiltin, SH::LastTSBuiltin,
+       XCore::LastTSBuiltin, SystemZ::LastTSBuiltin, WebAssembly::LastTSBuiltin,
+       AVR::LastTSBuiltin});
 
 } // end namespace clang.
 

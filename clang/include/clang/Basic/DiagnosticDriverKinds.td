@@ -16,6 +16,9 @@ def err_drv_unsupported_opt_with_suggestion : Error<
   "unsupported option '%0'; did you mean '%1'?">;
 def err_drv_unsupported_opt_for_target : Error<
   "unsupported option '%0' for target '%1'">;
+def err_drv_unsupported_sh_architecture_selector : Error<
+	"unsupported SH architecture selector '%0'; supported GCC-compatible "
+	"selectors are '-m2', '-m3', and '-m4'">;
 def err_drv_unsupported_opt_for_language_mode : Error<
   "unsupported option '%0' for language mode '%1'">;
 def err_drv_unsupported_option_argument : Error<

@@ -131,6 +131,7 @@ add_clang_library(clangCodeGen
   TargetBuiltins/PPC.cpp
   TargetBuiltins/RISCV.cpp
   TargetBuiltins/SPIR.cpp
+  TargetBuiltins/SH.cpp
   TargetBuiltins/SystemZ.cpp
   TargetBuiltins/WebAssembly.cpp
   TargetBuiltins/X86.cpp
@@ -154,6 +155,7 @@ add_clang_library(clangCodeGen
   Targets/RISCV.cpp
   Targets/SPIR.cpp
   Targets/Sparc.cpp
+  Targets/SH.cpp
   Targets/SystemZ.cpp
   Targets/TCE.cpp
   Targets/VE.cpp

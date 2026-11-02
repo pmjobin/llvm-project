@@ -31,6 +31,7 @@
 #include "Targets/OSTargets.h"
 #include "Targets/PPC.h"
 #include "Targets/RISCV.h"
+#include "Targets/SH.h"
 #include "Targets/SPIR.h"
 #include "Targets/Sparc.h"
 #include "Targets/SystemZ.h"
@@ -368,6 +369,12 @@ std::unique_ptr<TargetInfo> AllocateTarget(const llvm::Triple &Triple,
     default:
       return std::make_unique<M68kTargetInfo>(Triple, Opts);
     }
+
+  case llvm::Triple::sh:
+  case llvm::Triple::shle:
+    if (os == llvm::Triple::Linux)
+      return std::make_unique<LinuxTargetInfo<SHTargetInfo>>(Triple, Opts);
+    return std::make_unique<SHTargetInfo>(Triple, Opts);
 
   case llvm::Triple::ppc:
     switch (os) {

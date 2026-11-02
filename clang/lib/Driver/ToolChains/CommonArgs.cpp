@@ -59,12 +59,346 @@
 #include "llvm/TargetParser/AMDGPUTargetParser.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/PPCTargetParser.h"
+#include "llvm/TargetParser/SHTargetParser.h"
 #include <optional>
 
 using namespace clang::driver;
 using namespace clang::driver::tools;
 using namespace clang;
 using namespace llvm::opt;
+
+SHTargetSelection tools::getSHTargetSelection(const ArgList &Args) {
+  const Arg *A = Args.getLastArgNoClaim(options::OPT_mcpu_EQ,
+                                        options::OPT_m_sh_Arch_Group);
+  if (!A)
+    return {llvm::SH::DefaultCPU,
+            llvm::SH::DefaultCPU,
+            nullptr,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::Default,
+            llvm::SH::ABIKind::GNU};
+
+  switch (A->getOption().getID()) {
+  case options::OPT_mcpu_EQ: {
+    StringRef CPU = A->getValue();
+    llvm::SH::CPUKind CPUKind = llvm::SH::parseCPU(CPU);
+    llvm::SH::ABIKind ABI =
+        llvm::SH::isECPU(CPUKind)            ? llvm::SH::ABIKind::GNUEFloat
+        : CPUKind == llvm::SH::CPUKind::SH2A ? llvm::SH::ABIKind::GNUHardFloat
+                                             : llvm::SH::ABIKind::GNU;
+    return {CPU, CPU, A, false, false, false, llvm::SH::FPUProfile::Default,
+            ABI};
+  }
+  case options::OPT_m1:
+    return {"sh1",
+            "sh1",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::Default,
+            llvm::SH::ABIKind::GNU};
+  case options::OPT_m2:
+    return {"sh2",
+            "sh2",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::Default,
+            llvm::SH::ABIKind::GNU};
+  case options::OPT_m2e:
+    return {"sh2e",
+            "sh2e",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::Default,
+            llvm::SH::ABIKind::GNUEFloat};
+  case options::OPT_m2a:
+    return {"sh2a",
+            "sh2a",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::Default,
+            llvm::SH::ABIKind::GNUHardFloat};
+  case options::OPT_m2a_nofpu:
+    return {"sh2a",
+            "sh2a",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::NoFPU,
+            llvm::SH::ABIKind::GNU};
+  case options::OPT_m2a_single:
+    return {"sh2a",
+            "sh2a",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::Single,
+            llvm::SH::ABIKind::GNUHardFloatSingle};
+  case options::OPT_m2a_single_only:
+    return {"sh2a",
+            "sh2a",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::SingleOnly,
+            llvm::SH::ABIKind::GNUEFloat};
+  case options::OPT_m3:
+    return {"sh3",
+            "sh3",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::Default,
+            llvm::SH::ABIKind::GNU};
+  case options::OPT_m3e:
+    return {"sh3e",
+            "sh3e",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::Default,
+            llvm::SH::ABIKind::GNUEFloat};
+  case options::OPT_m4:
+    return {"sh4",
+            "sh4",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::Default,
+            llvm::SH::ABIKind::GNUHardFloat};
+  case options::OPT_m4_nofpu:
+    return {"sh4",
+            "sh4",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::NoFPU,
+            llvm::SH::ABIKind::GNU};
+  case options::OPT_m4_single:
+    return {"sh4",
+            "sh4",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::Single,
+            llvm::SH::ABIKind::GNUHardFloatSingle};
+  case options::OPT_m4_single_only:
+    return {"sh4",
+            "sh4",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::SingleOnly,
+            llvm::SH::ABIKind::GNUEFloat};
+  case options::OPT_m4a:
+    return {"sh4a",
+            "sh4a",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::Default,
+            llvm::SH::ABIKind::GNUHardFloat};
+  case options::OPT_m4a_nofpu:
+    return {"sh4a",
+            "sh4a",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::NoFPU,
+            llvm::SH::ABIKind::GNU};
+  case options::OPT_m4a_single:
+    return {"sh4a",
+            "sh4a",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::Single,
+            llvm::SH::ABIKind::GNUHardFloatSingle};
+  case options::OPT_m4a_single_only:
+    return {"sh4a",
+            "sh4a",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::SingleOnly,
+            llvm::SH::ABIKind::GNUEFloat};
+  case options::OPT_m4al:
+    return {"sh4al-dsp",
+            "sh4al-dsp",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::Default,
+            llvm::SH::ABIKind::GNU};
+  case options::OPT_m4_100:
+    return {"sh4",
+            "st40-100",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::Default,
+            llvm::SH::ABIKind::GNUHardFloat};
+  case options::OPT_m4_100_nofpu:
+    return {"sh4",
+            "st40-100",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::NoFPU,
+            llvm::SH::ABIKind::GNU};
+  case options::OPT_m4_100_single:
+    return {"sh4",
+            "st40-100",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::Single,
+            llvm::SH::ABIKind::GNUHardFloatSingle};
+  case options::OPT_m4_100_single_only:
+    return {"sh4",
+            "st40-100",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::SingleOnly,
+            llvm::SH::ABIKind::GNUEFloat};
+  case options::OPT_m4_200:
+    return {"sh4",
+            "st40-200",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::Default,
+            llvm::SH::ABIKind::GNUHardFloat};
+  case options::OPT_m4_200_nofpu:
+    return {"sh4",
+            "st40-200",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::NoFPU,
+            llvm::SH::ABIKind::GNU};
+  case options::OPT_m4_200_single:
+    return {"sh4",
+            "st40-200",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::Single,
+            llvm::SH::ABIKind::GNUHardFloatSingle};
+  case options::OPT_m4_200_single_only:
+    return {"sh4",
+            "st40-200",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::SingleOnly,
+            llvm::SH::ABIKind::GNUEFloat};
+  case options::OPT_m4_300:
+    return {"sh4",
+            "st40-300",
+            A,
+            false,
+            true,
+            false,
+            llvm::SH::FPUProfile::Default,
+            llvm::SH::ABIKind::GNUHardFloat};
+  case options::OPT_m4_300_nofpu:
+    return {"sh4",
+            "st40-300",
+            A,
+            false,
+            true,
+            false,
+            llvm::SH::FPUProfile::NoFPU,
+            llvm::SH::ABIKind::GNU};
+  case options::OPT_m4_300_single:
+    return {"sh4",
+            "st40-300",
+            A,
+            false,
+            true,
+            false,
+            llvm::SH::FPUProfile::Single,
+            llvm::SH::ABIKind::GNUHardFloatSingle};
+  case options::OPT_m4_300_single_only:
+    return {"sh4",
+            "st40-300",
+            A,
+            false,
+            true,
+            false,
+            llvm::SH::FPUProfile::SingleOnly,
+            llvm::SH::ABIKind::GNUEFloat};
+  case options::OPT_m4_340:
+    return {"sh4",
+            "st40-340",
+            A,
+            false,
+            false,
+            true,
+            llvm::SH::FPUProfile::NoFPU,
+            llvm::SH::ABIKind::GNU};
+  case options::OPT_m4_400:
+    return {"sh4",
+            "st40-400",
+            A,
+            false,
+            false,
+            true,
+            llvm::SH::FPUProfile::NoFPU,
+            llvm::SH::ABIKind::GNU};
+  case options::OPT_m4_500:
+    return {"sh4",
+            "st40-500",
+            A,
+            false,
+            false,
+            false,
+            llvm::SH::FPUProfile::NoFPU,
+            llvm::SH::ABIKind::GNU};
+  default:
+    return {llvm::SH::DefaultCPU,
+            llvm::SH::DefaultCPU,
+            A,
+            true,
+            false,
+            false,
+            llvm::SH::FPUProfile::Default,
+            llvm::SH::ABIKind::GNU};
+  }
+}
 
 OffloadJobsOpt tools::parseOffloadJobs(const ArgList &Args) {
   Arg *A = Args.getLastArg(options::OPT_offload_jobs_EQ);
@@ -106,6 +440,8 @@ static bool useFramePointerForTargetByDefault(const llvm::opt::ArgList &Args,
   case llvm::Triple::riscv64:
   case llvm::Triple::riscv32be:
   case llvm::Triple::riscv64be:
+  case llvm::Triple::sh:
+  case llvm::Triple::shle:
   case llvm::Triple::sparc:
   case llvm::Triple::sparcel:
   case llvm::Triple::sparcv9:
@@ -606,6 +942,14 @@ const char *tools::getLDMOption(const llvm::Triple &T, const ArgList &Args) {
   }
   case llvm::Triple::m68k:
     return "m68kelf";
+  case llvm::Triple::sh:
+    if (isSHFDPIC(T, Args))
+      return "shelf_fd";
+    return T.isOSLinux() ? "shelf_linux" : "shelf";
+  case llvm::Triple::shle:
+    if (isSHFDPIC(T, Args))
+      return "shlelf_fd";
+    return T.isOSLinux() ? "shlelf_linux" : "shlelf";
   case llvm::Triple::ppc:
     if (T.isOSLinux())
       return "elf32ppclinux";
@@ -660,6 +1004,15 @@ const char *tools::getLDMOption(const llvm::Triple &T, const ArgList &Args) {
   default:
     return nullptr;
   }
+}
+
+bool tools::isSHFDPIC(const llvm::Triple &T, const ArgList &Args) {
+  if (!T.isSH())
+    return false;
+  if (const Arg *A =
+          Args.getLastArg(options::OPT_mfdpic, options::OPT_mno_fdpic))
+    return A->getOption().matches(options::OPT_mfdpic);
+  return T.isMuslFDPIC();
 }
 
 void tools::addLinkerCompressDebugSectionsOption(
@@ -799,6 +1152,21 @@ std::string tools::getCPUName(const Driver &D, const ArgList &Args,
 
   case llvm::Triple::m68k:
     return m68k::getM68kTargetCPU(Args);
+
+  case llvm::Triple::sh:
+  case llvm::Triple::shle: {
+    SHTargetSelection Selection = getSHTargetSelection(Args);
+    bool WasClaimed =
+        Selection.ArchitectureArg && Selection.ArchitectureArg->isClaimed();
+    if (Selection.ArchitectureArg)
+      Selection.ArchitectureArg->claim();
+    Args.ClaimAllArgs(options::OPT_mcpu_EQ);
+    Args.ClaimAllArgs(options::OPT_m_sh_Arch_Group);
+    if (Selection.UnsupportedGCCSelector && !WasClaimed)
+      D.Diag(diag::err_drv_unsupported_sh_architecture_selector)
+          << Selection.ArchitectureArg->getAsString(Args);
+    return Selection.CPU.str();
+  }
 
   case llvm::Triple::mips:
   case llvm::Triple::mipsel:
@@ -956,6 +1324,18 @@ void tools::getTargetFeatures(const Driver &D, const llvm::Triple &Triple,
   case llvm::Triple::m68k:
     m68k::getM68kTargetFeatures(D, Triple, Args, Features);
     break;
+  case llvm::Triple::sh:
+  case llvm::Triple::shle: {
+    SHTargetSelection Selection = getSHTargetSelection(Args);
+    if (Selection.HasST40300)
+      Features.push_back("+st40-300");
+    if (Selection.DisableMMU)
+      Features.push_back("-mmu");
+    for (StringRef Feature : llvm::SH::getFPUProfileFeatures(
+             Selection.FPUProfile, llvm::SH::parseCPU(Selection.CPU)))
+      Features.push_back(Feature);
+    break;
+  }
   case llvm::Triple::msp430:
     msp430::getMSP430TargetFeatures(D, Args, Features);
     break;
@@ -2286,6 +2666,21 @@ tools::ParsePICArgs(const ToolChain &ToolChain, const ArgList &Args) {
     // Unlike other architectures, MIPS, even with -fPIC/-mxgot/multigot,
     // does not use PIC level 2 for historical reasons.
     IsPICLevelTwo = false;
+  }
+
+  if (isSHFDPIC(EffectiveTriple, Args)) {
+    // FDPIC requires position-independent address and call lowering, but that
+    // platform requirement does not make every translation unit a PIE.  Do not
+    // inherit the build host's default PIE policy for a cross target: only an
+    // explicit PIE compilation option establishes PIE interposition rules.
+    bool ExplicitPIE =
+        LastPICArg && (LastPICArg->getOption().matches(options::OPT_fPIE) ||
+                       LastPICArg->getOption().matches(options::OPT_fpie));
+    bool ExplicitLargePIC =
+        LastPICArg && (LastPICArg->getOption().matches(options::OPT_fPIC) ||
+                       LastPICArg->getOption().matches(options::OPT_fPIE));
+    return std::make_tuple(llvm::Reloc::PIC_, ExplicitLargePIC ? 2U : 1U,
+                           ExplicitPIE);
   }
 
   if (PIC)

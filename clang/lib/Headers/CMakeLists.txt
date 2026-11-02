@@ -2,6 +2,7 @@
 # Please consider adding new platform specific headers
 # to platform specific lists below.
 set(core_files
+  shintrin.h
   builtins.h
   endian.h
   float.h

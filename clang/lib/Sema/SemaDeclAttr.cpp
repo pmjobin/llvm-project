@@ -3678,7 +3678,7 @@ bool Sema::checkTargetAttr(SourceLocation LiteralLoc, StringRef AttrStr) {
            << Unknown << CPU << ParsedAttrs.CPU << Target;
 
   if (!ParsedAttrs.Tune.empty() &&
-      !Context.getTargetInfo().isValidCPUName(ParsedAttrs.Tune))
+      !Context.getTargetInfo().isValidTuneCPUName(ParsedAttrs.Tune))
     return Diag(LiteralLoc, diag::warn_unsupported_target_attribute)
            << Unknown << Tune << ParsedAttrs.Tune << Target;
 
@@ -6743,6 +6743,106 @@ static void handleInterruptAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
   }
 }
 
+template <typename AttrTy>
+static void handleSHHandlerAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
+  FunctionDecl *FD = cast<FunctionDecl>(D);
+  if (!FD->getReturnType()->isVoidType()) {
+    S.Diag(AL.getLoc(), diag::err_sh_handler_bad_signature) << AL << 0;
+    return;
+  }
+  if (FD->getNumParams() != 0) {
+    S.Diag(AL.getLoc(), diag::err_sh_handler_bad_signature) << AL << 1;
+    return;
+  }
+  if (FD->isVariadic()) {
+    S.Diag(AL.getLoc(), diag::err_sh_handler_bad_signature) << AL << 2;
+    return;
+  }
+  if (const auto *MD = dyn_cast<CXXMethodDecl>(FD); MD && !MD->isStatic()) {
+    S.Diag(AL.getLoc(), diag::err_sh_handler_bad_signature) << AL << 3;
+    return;
+  }
+  if (S.Context.getTargetInfo().getABI().contains("fdpic")) {
+    S.Diag(AL.getLoc(), diag::err_sh_handler_fdpic) << AL;
+    return;
+  }
+
+  D->addAttr(AttrTy::Create(S.Context, AL));
+  if (!D->hasAttr<DisableSanitizerInstrumentationAttr>())
+    D->addAttr(DisableSanitizerInstrumentationAttr::CreateImplicit(S.Context));
+  StringRef AllSanitizers = "all";
+  D->addAttr(NoSanitizeAttr::CreateImplicit(S.Context, &AllSanitizers, 1));
+}
+
+static void handleSHNoSaveLowRegsAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
+  if (!S.Context.getTargetInfo().hasFeature("banked-gprs")) {
+    S.Diag(AL.getLoc(), diag::err_sh_nosave_low_regs_cpu) << AL;
+    return;
+  }
+  D->addAttr(SHNoSaveLowRegsAttr::Create(S.Context, AL));
+}
+
+static void handleSHResbankAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
+  if (!S.Context.getTargetInfo().hasFeature("sh2a")) {
+    S.Diag(AL.getLoc(), diag::err_sh_resbank_cpu) << AL;
+    return;
+  }
+  D->addAttr(SHResbankAttr::Create(S.Context, AL));
+}
+
+static void handleSHSpSwitchAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
+  StringRef Symbol;
+  if (!S.checkStringLiteralArgumentAttr(AL, 0, Symbol))
+    return;
+  if (Symbol.empty() || Symbol.contains('\0')) {
+    S.Diag(AL.getLoc(), diag::err_sh_sp_switch_symbol) << AL;
+    return;
+  }
+  if (S.getLangOpts().PICLevel != 0 || S.getLangOpts().PIE) {
+    S.Diag(AL.getLoc(), diag::err_sh_sp_switch_pic) << AL;
+    return;
+  }
+  D->addAttr(SHSpSwitchAttr::Create(S.Context, Symbol, AL));
+}
+
+static void handleSHTrapExitAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
+  uint32_t Number;
+  Expr *NumberExpr = AL.getArgAsExpr(0);
+  if (!S.checkUInt32Argument(AL, NumberExpr, Number))
+    return;
+  if (Number > 255) {
+    S.Diag(AL.getLoc(), diag::err_attribute_argument_out_of_range)
+        << AL << 0 << 255 << NumberExpr->getSourceRange();
+    return;
+  }
+  D->addAttr(SHTrapExitAttr::Create(S.Context, Number, AL));
+}
+
+static void checkSHHandlerModifierAttrs(Sema &S, Decl *D) {
+  if (D->hasAttr<SHInterruptHandlerAttr>())
+    return;
+  if (const auto *A = D->getAttr<SHNoSaveLowRegsAttr>()) {
+    S.Diag(A->getLocation(), diag::err_sh_handler_modifier_requires_interrupt)
+        << A;
+    D->dropAttr<SHNoSaveLowRegsAttr>();
+  }
+  if (const auto *A = D->getAttr<SHResbankAttr>()) {
+    S.Diag(A->getLocation(), diag::err_sh_handler_modifier_requires_interrupt)
+        << A;
+    D->dropAttr<SHResbankAttr>();
+  }
+  if (const auto *A = D->getAttr<SHSpSwitchAttr>()) {
+    S.Diag(A->getLocation(), diag::err_sh_handler_modifier_requires_interrupt)
+        << A;
+    D->dropAttr<SHSpSwitchAttr>();
+  }
+  if (const auto *A = D->getAttr<SHTrapExitAttr>()) {
+    S.Diag(A->getLocation(), diag::err_sh_handler_modifier_requires_interrupt)
+        << A;
+    D->dropAttr<SHTrapExitAttr>();
+  }
+}
+
 static void handleLayoutVersion(Sema &S, Decl *D, const ParsedAttr &AL) {
   uint32_t Version;
   Expr *VersionExpr = AL.getArgAsExpr(0);
@@ -7753,6 +7853,24 @@ ProcessDeclAttribute(Sema &S, Decl *D, const ParsedAttr &AL,
     break;
   case ParsedAttr::AT_Interrupt:
     handleInterruptAttr(S, D, AL);
+    break;
+  case ParsedAttr::AT_SHInterruptHandler:
+    handleSHHandlerAttr<SHInterruptHandlerAttr>(S, D, AL);
+    break;
+  case ParsedAttr::AT_SHTRAPAHandler:
+    handleSHHandlerAttr<SHTRAPAHandlerAttr>(S, D, AL);
+    break;
+  case ParsedAttr::AT_SHNoSaveLowRegs:
+    handleSHNoSaveLowRegsAttr(S, D, AL);
+    break;
+  case ParsedAttr::AT_SHResbank:
+    handleSHResbankAttr(S, D, AL);
+    break;
+  case ParsedAttr::AT_SHSpSwitch:
+    handleSHSpSwitchAttr(S, D, AL);
+    break;
+  case ParsedAttr::AT_SHTrapExit:
+    handleSHTrapExitAttr(S, D, AL);
     break;
   case ParsedAttr::AT_ARMInterruptSaveFP:
     S.ARM().handleInterruptSaveFPAttr(D, AL);
@@ -8969,6 +9087,8 @@ void Sema::ProcessDeclAttributes(Scope *S, Decl *D, const Declarator &PD) {
 
   // Look for API notes that map to attributes.
   ProcessAPINotes(D);
+
+  checkSHHandlerModifierAttrs(*this, D);
 }
 
 /// Is the given declaration allowed to use a forbidden type?

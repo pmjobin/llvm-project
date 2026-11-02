@@ -19,6 +19,7 @@
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/Support/CodeGen.h"
+#include "llvm/TargetParser/SHTargetParser.h"
 
 namespace clang {
 namespace driver {
@@ -45,6 +46,8 @@ void AddLinkerInputs(const ToolChain &TC, const InputInfoList &Inputs,
                      llvm::opt::ArgStringList &CmdArgs, const JobAction &JA);
 
 const char *getLDMOption(const llvm::Triple &T, const llvm::opt::ArgList &Args);
+
+bool isSHFDPIC(const llvm::Triple &T, const llvm::opt::ArgList &Args);
 
 void addLinkerCompressDebugSectionsOption(const ToolChain &TC,
                                           const llvm::opt::ArgList &Args,
@@ -189,6 +192,19 @@ void AddTargetFeature(const llvm::opt::ArgList &Args,
                       std::vector<StringRef> &Features,
                       llvm::opt::OptSpecifier OnOpt,
                       llvm::opt::OptSpecifier OffOpt, StringRef FeatureName);
+
+struct SHTargetSelection {
+  StringRef CPU;
+  StringRef TuneCPU;
+  const llvm::opt::Arg *ArchitectureArg;
+  bool UnsupportedGCCSelector;
+  bool HasST40300;
+  bool DisableMMU;
+  llvm::SH::FPUProfile FPUProfile;
+  llvm::SH::ABIKind DefaultABI;
+};
+
+SHTargetSelection getSHTargetSelection(const llvm::opt::ArgList &Args);
 
 std::string getCPUName(const Driver &D, const llvm::opt::ArgList &Args,
                        const llvm::Triple &T, bool FromAs = false);

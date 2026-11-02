@@ -60,6 +60,7 @@
 #include "llvm/TargetParser/PPCTargetParser.h"
 #include "llvm/TargetParser/RISCVISAInfo.h"
 #include "llvm/TargetParser/RISCVTargetParser.h"
+#include "llvm/TargetParser/SHTargetParser.h"
 #include <cctype>
 #include <iterator>
 
@@ -1648,6 +1649,11 @@ void Clang::RenderTargetOptions(const llvm::Triple &EffectiveTriple,
     AddRISCVTargetArgs(Args, CmdArgs);
     break;
 
+  case llvm::Triple::sh:
+  case llvm::Triple::shle:
+    AddSHTargetArgs(Args, CmdArgs);
+    break;
+
   case llvm::Triple::sparc:
   case llvm::Triple::sparcel:
   case llvm::Triple::sparcv9:
@@ -2468,6 +2474,134 @@ void Clang::AddLanaiTargetArgs(const ArgList &Args,
       }
     }
   }
+}
+
+void Clang::AddSHTargetArgs(const ArgList &Args, ArgStringList &CmdArgs) const {
+  const Driver &D = getToolChain().getDriver();
+  const llvm::Triple &Triple = getToolChain().getTriple();
+  SHTargetSelection Selection = getSHTargetSelection(Args);
+  StringRef CPU = Selection.CPU;
+  StringRef TuneCPU = Selection.TuneCPU;
+
+  if (const Arg *A = Selection.ArchitectureArg) {
+    if (!llvm::SH::isValidCPUName(CPU))
+      D.Diag(diag::err_drv_unsupported_option_argument)
+          << A->getSpelling() << CPU;
+  }
+  if (const Arg *A = Args.getLastArg(options::OPT_mtune_EQ)) {
+    StringRef RequestedTuneCPU = A->getValue();
+    if (!llvm::SH::isValidTuneCPUName(RequestedTuneCPU))
+      D.Diag(diag::err_drv_unsupported_option_argument)
+          << A->getSpelling() << RequestedTuneCPU;
+    else if (!llvm::SH::isTuneCompatible(
+                 llvm::SH::parseCPU(CPU),
+                 llvm::SH::parseTuneCPU(RequestedTuneCPU)))
+      D.Diag(diag::err_drv_unsupported_opt_for_target)
+          << A->getAsString(Args) << Triple.str();
+    else
+      TuneCPU = RequestedTuneCPU;
+  }
+  if (TuneCPU != CPU) {
+    CmdArgs.push_back("-tune-cpu");
+    CmdArgs.push_back(Args.MakeArgString(TuneCPU));
+  }
+  if (const Arg *A = Selection.ArchitectureArg) {
+    switch (A->getOption().getID()) {
+    case options::OPT_m4_100:
+    case options::OPT_m4_100_nofpu:
+    case options::OPT_m4_100_single:
+    case options::OPT_m4_100_single_only:
+      CmdArgs.push_back("-D__SH4_100__");
+      break;
+    case options::OPT_m4_200:
+    case options::OPT_m4_200_nofpu:
+    case options::OPT_m4_200_single:
+    case options::OPT_m4_200_single_only:
+      CmdArgs.push_back("-D__SH4_200__");
+      break;
+    case options::OPT_m4_340:
+      CmdArgs.push_back("-D__SH4_340__");
+      CmdArgs.push_back("-D__SH_ATOMIC_MODEL_NONE__");
+      break;
+    case options::OPT_m4_400:
+      CmdArgs.push_back("-D__SH4_400__");
+      CmdArgs.push_back("-D__SH_ATOMIC_MODEL_NONE__");
+      break;
+    case options::OPT_m4_500:
+      CmdArgs.push_back("-D__SH4_500__");
+      CmdArgs.push_back("-D__SH_ATOMIC_MODEL_NONE__");
+      break;
+    default:
+      break;
+    }
+  }
+
+  bool ExplicitGNUABI = false;
+  if (Arg *A = Args.getLastArg(options::OPT_mabi_EQ)) {
+    StringRef ABI = A->getValue();
+    if (ABI != "gnu")
+      D.Diag(diag::err_drv_unsupported_option_argument)
+          << A->getSpelling() << ABI;
+    else
+      ExplicitGNUABI = true;
+  }
+
+  llvm::SH::ABIKind ABI = Selection.DefaultABI;
+  if (Arg *A = Args.getLastArg(
+          options::OPT_msoft_float, options::OPT_mhard_float,
+          options::OPT_mno_soft_float, options::OPT_mfloat_abi_EQ)) {
+    bool RequestHardFloat = false;
+    if (A->getOption().matches(options::OPT_mfloat_abi_EQ)) {
+      StringRef FloatABI = A->getValue();
+      if (FloatABI == "hard")
+        RequestHardFloat = true;
+      else if (FloatABI == "soft")
+        ABI = llvm::SH::ABIKind::GNU;
+      else
+        D.Diag(diag::err_drv_unsupported_option_argument)
+            << A->getSpelling() << FloatABI;
+    } else if (A->getOption().matches(options::OPT_msoft_float))
+      ABI = llvm::SH::ABIKind::GNU;
+    else
+      RequestHardFloat = true;
+    if (RequestHardFloat) {
+      llvm::SH::CPUKind CPUKind = llvm::SH::parseCPU(CPU);
+      if (Selection.FPUProfile == llvm::SH::FPUProfile::NoFPU ||
+          (!llvm::SH::isECPU(CPUKind) && CPUKind != llvm::SH::CPUKind::SH2A &&
+           CPUKind != llvm::SH::CPUKind::SH4 &&
+           CPUKind != llvm::SH::CPUKind::SH4A))
+        D.Diag(diag::err_drv_unsupported_opt_for_target)
+            << A->getAsString(Args) << Triple.str();
+      else if (llvm::SH::isECPU(CPUKind) ||
+               Selection.FPUProfile == llvm::SH::FPUProfile::SingleOnly)
+        ABI = llvm::SH::ABIKind::GNUEFloat;
+      else if (Selection.FPUProfile == llvm::SH::FPUProfile::Single)
+        ABI = llvm::SH::ABIKind::GNUHardFloatSingle;
+      else
+        ABI = llvm::SH::ABIKind::GNUHardFloat;
+    }
+  }
+  if (isSHFDPIC(Triple, Args))
+    ABI = llvm::SH::getFDPICABI(ABI);
+  bool UsesFPUArgumentABI = llvm::SH::usesFPUArgumentABI(ABI);
+  if (Triple.isMuslFDPIC() || llvm::SH::isFDPICABI(ABI) || UsesFPUArgumentABI ||
+      ExplicitGNUABI ||
+      ((llvm::SH::isECPU(llvm::SH::parseCPU(CPU)) ||
+        llvm::SH::parseCPU(CPU) == llvm::SH::CPUKind::SH2A ||
+        llvm::SH::parseCPU(CPU) == llvm::SH::CPUKind::SH4A) &&
+       llvm::SH::getBaseABI(ABI) == llvm::SH::ABIKind::GNU)) {
+    CmdArgs.push_back("-target-abi");
+    CmdArgs.push_back(Args.MakeArgString(llvm::SH::getABIName(ABI)));
+  }
+  if (UsesFPUArgumentABI) {
+    CmdArgs.push_back("-mfloat-abi");
+    CmdArgs.push_back("hard");
+    return;
+  }
+  CmdArgs.push_back("-msoft-float");
+  CmdArgs.push_back("-mfloat-abi");
+  CmdArgs.push_back("soft");
+  CmdArgs.push_back("-no-implicit-float");
 }
 
 void Clang::AddWebAssemblyTargetArgs(const ArgList &Args,
@@ -5338,6 +5472,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // C++ is not supported for IAMCU.
   if (IsIAMCU && types::isCXX(Input.getType()))
     D.Diag(diag::err_drv_clang_unsupported) << "C++ for IAMCU";
+  if (RawTriple.isSH() && isSHFDPIC(RawTriple, Args)) {
+    if (!RawTriple.isOSLinux())
+      D.Diag(diag::err_drv_clang_unsupported) << "SH FDPIC outside Linux";
+  }
 
   // Invoke ourselves in -cc1 mode.
   //
@@ -8632,6 +8770,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                    (TC.getTriple().isOSBinFormatELF() ||
                     TC.getTriple().isOSBinFormatCOFF()) &&
                        !TC.getTriple().isPS4() && !TC.getTriple().isVE() &&
+                       TC.getTriple().getArch() != llvm::Triple::sh &&
+                       TC.getTriple().getArch() != llvm::Triple::shle &&
                        !TC.getTriple().isOSNetBSD() &&
                        !Distro(D.getVFS(), TC.getTriple()).IsGentoo() &&
                        !TC.getTriple().isAndroid() && TC.useIntegratedAs()))

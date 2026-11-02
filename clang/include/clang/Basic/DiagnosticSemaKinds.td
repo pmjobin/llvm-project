@@ -467,6 +467,27 @@ def warn_arm_interrupt_save_fp_without_vfp_unit : Warning<
    InGroup<DiagGroup<"arm-interrupt-save-fp-no-vfp-unit">>;
 def err_arm_interrupt_called : Error<
   "interrupt service routine cannot be called directly">;
+def err_sh_handler_bad_signature : Error<
+	"%0 attribute requires a non-variadic free or static member function with "
+	"type 'void (void)'%select{; function has a non-void return type|; function "
+	"has parameters|; function is variadic|; non-static member functions have "
+	"an implicit 'this' argument}1">;
+def err_sh_handler_fdpic : Error<
+	"%0 attribute is unsupported with the SuperH FDPIC ABI because hardware "
+	"entry provides neither the required incoming r12 context nor a function "
+	"descriptor entry point">;
+def err_sh_handler_called : Error<
+	"hardware SuperH handler cannot be called directly because it returns with RTE">;
+def err_sh_handler_modifier_requires_interrupt : Error<
+	"%0 attribute requires 'interrupt_handler' on the same SuperH function">;
+def err_sh_nosave_low_regs_cpu : Error<
+	"%0 attribute requires a SuperH target with hardware-banked r0-r7 registers">;
+def err_sh_resbank_cpu : Error<
+	"%0 attribute requires an SH2A target">;
+def err_sh_sp_switch_symbol : Error<
+	"%0 attribute requires a non-empty SuperH stack-pointer object symbol">;
+def err_sh_sp_switch_pic : Error<
+	"%0 attribute is unsupported for position-independent SuperH code">;
 def warn_interrupt_signal_attribute_invalid
     : Warning<"%select{MIPS|MSP430|RISC-V|AVR}0 '%select{interrupt|signal}1' "
               "attribute only applies to functions that have "

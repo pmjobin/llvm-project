@@ -487,6 +487,7 @@ def TargetMips32 : TargetArch<["mips", "mipsel"]>;
 def TargetAnyMips : TargetArch<["mips", "mipsel", "mips64", "mips64el"]>;
 def TargetMSP430 : TargetArch<["msp430"]>;
 def TargetM68k : TargetArch<["m68k"]>;
+def TargetSH : TargetArch<["sh", "shle"]>;
 def TargetRISCV : TargetArch<["riscv32", "riscv64", "riscv32be", "riscv64be"]>;
 def TargetX86 : TargetArch<["x86"]>;
 def TargetX86_64 : TargetArch<["x86_64"]>;
@@ -2498,6 +2499,61 @@ def RISCVInterrupt : InheritableAttr, TargetSpecificAttr<TargetRISCV> {
   let ParseKind = "Interrupt";
   let Documentation = [RISCVInterruptDocs];
 }
+
+def SHInterruptHandler : InheritableAttr, TargetSpecificAttr<TargetSH> {
+	let Spellings = [GNU<"interrupt_handler">];
+	let Subjects = SubjectList<[HasFunctionProto], ErrorDiag>;
+	let Documentation = [SHInterruptHandlerDocs];
+}
+
+def SHTRAPAHandler : InheritableAttr, TargetSpecificAttr<TargetSH> {
+	let Spellings = [GNU<"trapa_handler">];
+	let Subjects = SubjectList<[HasFunctionProto], ErrorDiag>;
+	let Documentation = [SHTRAPAHandlerDocs];
+}
+
+def SHNoSaveLowRegs : InheritableAttr, TargetSpecificAttr<TargetSH> {
+	let Spellings = [GNU<"nosave_low_regs">];
+	let Subjects = SubjectList<[HasFunctionProto], ErrorDiag>;
+	let Documentation = [SHNoSaveLowRegsDocs];
+}
+
+def SHResbank : InheritableAttr, TargetSpecificAttr<TargetSH> {
+	let Spellings = [GNU<"resbank">];
+	let Subjects = SubjectList<[HasFunctionProto], ErrorDiag>;
+	let Documentation = [SHResbankDocs];
+}
+
+def SHSpSwitch : InheritableAttr, TargetSpecificAttr<TargetSH> {
+	let Spellings = [GNU<"sp_switch">];
+	let Subjects = SubjectList<[HasFunctionProto], ErrorDiag>;
+	let Args = [StringArgument<"StackSymbol">];
+	let Documentation = [SHSpSwitchDocs];
+}
+
+def SHTrapExit : InheritableAttr, TargetSpecificAttr<TargetSH> {
+	let Spellings = [GNU<"trap_exit">];
+	let Subjects = SubjectList<[HasFunctionProto], ErrorDiag>;
+	let Args = [UnsignedArgument<"TrapNumber">];
+	let Documentation = [SHTrapExitDocs];
+}
+
+def : MutualExclusions<[SHInterruptHandler, SHTRAPAHandler]>;
+def : MutualExclusions<[SHInterruptHandler, Naked]>;
+def : MutualExclusions<[SHTRAPAHandler, Naked]>;
+def : MutualExclusions<[SHInterruptHandler, AlwaysInline]>;
+def : MutualExclusions<[SHTRAPAHandler, AlwaysInline]>;
+def : MutualExclusions<[SHNoSaveLowRegs, Naked]>;
+def : MutualExclusions<[SHNoSaveLowRegs, AlwaysInline]>;
+def : MutualExclusions<[SHResbank, SHNoSaveLowRegs]>;
+def : MutualExclusions<[SHResbank, Naked]>;
+def : MutualExclusions<[SHResbank, AlwaysInline]>;
+def : MutualExclusions<[SHSpSwitch, Naked]>;
+def : MutualExclusions<[SHSpSwitch, AlwaysInline]>;
+def : MutualExclusions<[SHTrapExit, SHResbank]>;
+def : MutualExclusions<[SHTrapExit, SHSpSwitch]>;
+def : MutualExclusions<[SHTrapExit, Naked]>;
+def : MutualExclusions<[SHTrapExit, AlwaysInline]>;
 
 def RISCVRVVVectorBits : TypeAttr {
   let Spellings = [GNU<"riscv_rvv_vector_bits">];

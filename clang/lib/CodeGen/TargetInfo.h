@@ -113,6 +113,13 @@ public:
   virtual void setTargetAttributes(const Decl *D, llvm::GlobalValue *GV,
                                    CodeGen::CodeGenModule &M) const {}
 
+  /// Return whether generated declarations without a corresponding source
+  /// declaration need the target's baseline CPU and feature attributes.
+  virtual bool
+  shouldSetCPUAndFeaturesAttributesOnGeneratedDeclarations() const {
+    return false;
+  }
+
   /// emitTargetMetadata - Provides a convenient hook to handle extra
   /// target-specific metadata for the given globals.
   virtual void emitTargetMetadata(
@@ -273,6 +280,14 @@ public:
   virtual llvm::Constant *
   getUBSanFunctionSignature(CodeGen::CodeGenModule &CGM) const {
     return llvm::ConstantInt::get(CGM.Int32Ty, 0xc105cafe);
+  }
+
+  /// Return the code address UBSan should use to inspect function prologue
+  /// data.
+  virtual llvm::Value *
+  getUBSanFunctionCodePointer(CodeGen::CodeGenFunction &CGF,
+                              llvm::Value *Callee) const {
+    return Callee;
   }
 
   /// Determine whether a call to an unprototyped functions under
@@ -607,6 +622,9 @@ createPPC64_SVR4_TargetCodeGenInfo(CodeGenModule &CGM, PPC64_SVR4_ABIKind Kind,
 std::unique_ptr<TargetCodeGenInfo>
 createRISCVTargetCodeGenInfo(CodeGenModule &CGM, unsigned XLen, unsigned FLen,
                              bool EABI);
+
+std::unique_ptr<TargetCodeGenInfo> createSHTargetCodeGenInfo(CodeGenModule &CGM,
+                                                             StringRef ABIName);
 
 std::unique_ptr<TargetCodeGenInfo>
 createCommonSPIRTargetCodeGenInfo(CodeGenModule &CGM);

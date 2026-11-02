@@ -3065,6 +3065,118 @@ purpose floating point registers will be saved.
   }];
 }
 
+def SHInterruptHandlerDocs : Documentation {
+	let Category = DocCatFunction;
+	let Heading = "interrupt_handler (SuperH)";
+	let Content = [{
+The GNU-style ``__attribute__((interrupt_handler))`` attribute marks a SuperH
+function as a hardware interrupt entry. The function must be a non-variadic
+free function or static member function with type ``void (void)``. It preserves
+the interrupted integer context, including ordinary call-clobbered state when
+the handler makes a call, and returns with ``RTE``. On FPU targets, a leaf
+handler preserves the FR and FPUL state it modifies. It preserves the full
+FPSCR value, including arithmetic cause and sticky status flags, whenever
+local instructions or called code may change it. Calls also require preserving
+the FPU registers clobbered by their calling convention. Hardware FPU effects
+are independent of argument transport: an ordinary call using the soft
+argument ABI can clobber FR0-FR15, FPUL, and FPSCR on an FPU target. Integer-only
+leaf handlers and helpers whose calling convention preserves all FPU state
+do not require an FPU save. Direct software calls and the FDPIC ABI are not
+supported for such a hardware entry.
+
+Alternate-bank XD/XF use and SH4AL-DSP state are not supported for hardware
+handlers. The compiler preserves the active FR bank selected on entry, but
+this is not a complete architectural save of both FPU banks.
+
+Local-exec and initial-exec TLS accesses are compiler-supported when platform
+entry guarantees that GBR identifies the interrupted thread. Dynamic TLS may
+compile through ordinary calls, but its resolver and interrupt-time runtime
+safety are not qualified. Static and ordinary PIC stack protectors are also
+compiler-supported; their failure path requires an interrupt-safe
+``__stack_chk_fail`` environment. General FDPIC entry remains unsupported for
+all of these forms.
+	}];
+}
+
+def SHTRAPAHandlerDocs : Documentation {
+	let Category = DocCatFunction;
+	let Heading = "trapa_handler (SuperH)";
+	let Content = [{
+The GNU-style ``__attribute__((trapa_handler))`` attribute marks a SuperH
+function as a TRAPA exception entry. It has the same ``void (void)`` signature,
+placement, direct-call, and FDPIC restrictions as ``interrupt_handler``. A
+TRAPA handler uses the ordinary callee-saved register policy but returns with
+``RTE``. Floating-point code follows that same ordinary callee-saved policy;
+the full FPSCR value is restored before exception return whenever local
+instructions or called code may modify its mode or arithmetic status.
+	}];
+}
+
+def SHNoSaveLowRegsDocs : Documentation {
+	let Category = DocCatFunction;
+	let Heading = "nosave_low_regs (SuperH)";
+	let Content = [{
+The GNU-style ``__attribute__((nosave_low_regs))`` attribute modifies a SuperH
+``interrupt_handler`` on SH3, SH3E, SH4, SH4A, SH4AL-DSP, and ST40 targets.
+It promises that hardware register banking protects the interrupted r0-r7
+state, so the compiler does not save those registers even when the handler
+makes an ordinary call. High registers, PR, MACH, MACL, and a PIC GOT register
+remain subject to their independent interrupt preservation rules. This
+attribute is not a nested or reentrant interrupt guarantee: platform software
+must ensure that another entry cannot overwrite the active register bank.
+	}];
+}
+
+def SHResbankDocs : Documentation {
+	let Category = DocCatFunction;
+	let Heading = "resbank (SuperH)";
+	let Content = [{
+The GNU-style ``__attribute__((resbank))`` attribute modifies a SuperH
+``interrupt_handler`` on SH2A. Hardware register-bank entry owns preservation
+of r0-r14, GBR, MACH, MACL, PR, and VTO, so the compiler does not duplicate
+those saves. The compiler continues to own the handler's stack frame and any
+non-banked state. On exit it restores compiler-owned state, emits ``RESBANK``,
+then returns with ``RTE`` and its legal delay slot. The architecture provides a
+finite FILO bank resource; this attribute does not promise unrestricted nested
+or reentrant interrupt behavior.
+	}];
+}
+
+def SHSpSwitchDocs : Documentation {
+	let Category = DocCatFunction;
+	let Heading = "sp_switch (SuperH)";
+	let Content = [{
+The GNU-style ``__attribute__((sp_switch("symbol")))`` attribute modifies a
+SuperH ``interrupt_handler`` to run on an alternate stack. ``symbol`` names an
+external or global object containing the 32-bit alternate stack pointer. The
+handler saves r0 and its interrupted stack pointer before switching, builds all
+compiler frames and outgoing call arguments on the alternate stack, and
+restores the original stack and r0 before the special exception return.
+
+This form is supported only for static, non-PIC code. It does not support the
+FDPIC ABI, and it provides no intrinsic nested or reentrant stack allocation;
+platform software must provide a suitable stack object and entry policy. CFI
+describes only the bounded compiler-owned frame on the alternate stack and does
+not make unwind-through-handler or cross-stack unwinding supported.
+	}];
+}
+
+def SHTrapExitDocs : Documentation {
+	let Category = DocCatFunction;
+	let Heading = "trap_exit (SuperH)";
+	let Content = [{
+The GNU-style ``__attribute__((trap_exit(number)))`` attribute modifies a
+SuperH ``interrupt_handler`` to exit through ``TRAPA #number`` instead of
+``RTE``. ``number`` must be an integer constant in the inclusive range 0
+through 255. The compiler restores all software-owned handler state before the
+trap instruction, which is a terminating barrier with no delay slot.
+
+``trap_exit`` may be combined with ``nosave_low_regs`` and ordinary PIC, but it
+cannot be combined with ``resbank`` or ``sp_switch``. General FDPIC hardware
+entry remains unsupported.
+	}];
+}
+
 def BPFPreserveAccessIndexDocs : Documentation {
   let Category = DocCatFunction;
   let Content = [{

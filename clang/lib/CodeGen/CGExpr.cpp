@@ -7159,6 +7159,9 @@ RValue CodeGenFunction::EmitCall(QualType CalleeType,
                     Callee.getPointerAuthInfo(), nullptr);
         CalleePtr = Addr.emitRawPointer(*this);
       }
+      llvm::Value *CalleeCodePtr =
+          CGM.getTargetCodeGenInfo().getUBSanFunctionCodePointer(*this,
+                                                                 CalleePtr);
 
       // On 32-bit Arm, the low bit of a function pointer indicates whether
       // it's using the Arm or Thumb instruction set. The actual first
@@ -7172,10 +7175,10 @@ RValue CodeGenFunction::EmitCall(QualType CalleeType,
       llvm::Value *AlignedCalleePtr;
       if (CGM.getTriple().isARM() || CGM.getTriple().isThumb()) {
         AlignedCalleePtr = Builder.CreateIntrinsic(
-            CalleePtr->getType(), llvm::Intrinsic::ptrmask,
-            {CalleePtr, llvm::ConstantInt::getSigned(IntPtrTy, ~1)});
+            CalleeCodePtr->getType(), llvm::Intrinsic::ptrmask,
+            {CalleeCodePtr, llvm::ConstantInt::getSigned(IntPtrTy, ~1)});
       } else {
-        AlignedCalleePtr = CalleePtr;
+        AlignedCalleePtr = CalleeCodePtr;
       }
 
       llvm::Value *CalleePrefixStruct = AlignedCalleePtr;
@@ -7199,7 +7202,7 @@ RValue CodeGenFunction::EmitCall(QualType CalleeType,
       llvm::Constant *StaticData[] = {EmitCheckSourceLocation(E->getBeginLoc()),
                                       EmitCheckTypeDescriptor(CalleeType)};
       EmitCheck(std::make_pair(CalleeTypeHashMatch, CheckOrdinal), CheckHandler,
-                StaticData, {CalleePtr});
+                StaticData, {CalleeCodePtr});
 
       Builder.CreateBr(Cont);
       EmitBlock(Cont);

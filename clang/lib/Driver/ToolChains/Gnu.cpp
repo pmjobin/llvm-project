@@ -30,6 +30,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/VirtualFileSystem.h"
 #include "llvm/TargetParser/RISCVISAInfo.h"
+#include "llvm/TargetParser/SHTargetParser.h"
 #include "llvm/TargetParser/TargetParser.h"
 #include <system_error>
 
@@ -40,6 +41,23 @@ using namespace llvm::opt;
 
 using tools::addMultilibFlag;
 using tools::addPathIfExists;
+
+static bool isSH(const llvm::Triple &Triple) {
+  return Triple.getArch() == llvm::Triple::sh ||
+         Triple.getArch() == llvm::Triple::shle;
+}
+
+static const char *getSHGNUAssemblerName(const llvm::Triple &Triple) {
+  if (Triple.isOSLinux())
+    return Triple.isLittleEndian() ? "sh4-linux-gnu-as" : "sh-linux-gnu-as";
+  return "sh-elf-as";
+}
+
+static const char *getSHGNULinkerName(const llvm::Triple &Triple) {
+  if (Triple.isOSLinux())
+    return Triple.isLittleEndian() ? "sh4-linux-gnu-ld" : "sh-linux-gnu-ld";
+  return "sh-elf-ld";
+}
 
 static bool forwardToGCC(const Option &O) {
   // LinkerInput options have been forwarded. Don't duplicate.
@@ -338,7 +356,7 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     return;
   }
 
-  if (Triple.isLoongArch() || Triple.isRISCV()) {
+  if (Triple.isLoongArch() || Triple.isRISCV() || Triple.isSH()) {
     CmdArgs.push_back("-X");
     if (Args.hasArg(options::OPT_mno_relax))
       CmdArgs.push_back("--no-relax");
@@ -364,9 +382,12 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                            ToolChain.isPIEDefault(Args));
       if (IsPIE)
         CmdArgs.push_back("-pie");
-      CmdArgs.push_back("-dynamic-linker");
-      CmdArgs.push_back(Args.MakeArgString(Twine(D.DyldPrefix) +
-                                           ToolChain.getDynamicLinker(Args)));
+      std::string DynamicLinker = ToolChain.getDynamicLinker(Args);
+      if (!DynamicLinker.empty()) {
+        CmdArgs.push_back("-dynamic-linker");
+        CmdArgs.push_back(
+            Args.MakeArgString(Twine(D.DyldPrefix) + DynamicLinker));
+      }
     }
   }
 
@@ -627,6 +648,8 @@ void tools::gnutools::Assembler::ConstructJob(Compilation &C,
   // compatible.
   if (getToolChain().getTriple().isOSSolaris())
     DefaultAssembler = "gas";
+  else if (isSH(getToolChain().getTriple()))
+    DefaultAssembler = getSHGNUAssemblerName(getToolChain().getTriple());
   std::tie(RelocationModel, PICLevel, IsPIE) =
       ParsePICArgs(getToolChain(), Args);
 
@@ -691,6 +714,19 @@ void tools::gnutools::Assembler::ConstructJob(Compilation &C,
         getCPUName(D, Args, getToolChain().getTriple())));
     break;
   }
+  case llvm::Triple::sh:
+  case llvm::Triple::shle:
+    CmdArgs.push_back(getToolChain().getTriple().isLittleEndian() ? "--little"
+                                                                  : "--big");
+    if (isSHFDPIC(getToolChain().getTriple(), Args))
+      CmdArgs.push_back("--fdpic");
+    CmdArgs.push_back(Args.MakeArgString(
+        "--isa=" + llvm::SH::getGNUAssemblerISA(
+                       getCPUName(D, Args, getToolChain().getTriple()),
+                       getSHTargetSelection(Args).FPUProfile,
+                       getSHTargetSelection(Args).HasST40300,
+                       !getSHTargetSelection(Args).DisableMMU)));
+    break;
   case llvm::Triple::riscv32:
   case llvm::Triple::riscv64:
   case llvm::Triple::riscv32be:
@@ -2472,6 +2508,12 @@ void Generic_GCC::GCCInstallationDetector::AddDefaultGCCPrefixes(
                                                  "riscv64be-linux-gnu",
                                                  "riscv64be-unknown-elf"};
 
+  static const char *const SHLibDirs[] = {"/lib"};
+  static const char *const SHTriples[] = {"sh-unknown-linux-gnu",
+                                          "sh-linux-gnu"};
+  static const char *const SHLETriples[] = {"shle-unknown-linux-gnu",
+                                            "shle-linux-gnu", "sh4-linux-gnu"};
+
   static const char *const SPARCv8LibDirs[] = {"/lib32", "/lib"};
   static const char *const SPARCv8Triples[] = {"sparc-linux-gnu",
                                                "sparcv8-linux-gnu"};
@@ -2778,6 +2820,18 @@ void Generic_GCC::GCCInstallationDetector::AddDefaultGCCPrefixes(
     TripleAliases.append(begin(RISCV64beTriples), end(RISCV64beTriples));
     BiarchLibDirs.append(begin(RISCV32beLibDirs), end(RISCV32beLibDirs));
     BiarchTripleAliases.append(begin(RISCV32beTriples), end(RISCV32beTriples));
+    break;
+  case llvm::Triple::sh:
+    if (TargetTriple.isOSLinux()) {
+      LibDirs.append(begin(SHLibDirs), end(SHLibDirs));
+      TripleAliases.append(begin(SHTriples), end(SHTriples));
+    }
+    break;
+  case llvm::Triple::shle:
+    if (TargetTriple.isOSLinux()) {
+      LibDirs.append(begin(SHLibDirs), end(SHLibDirs));
+      TripleAliases.append(begin(SHLETriples), end(SHLETriples));
+    }
     break;
   case llvm::Triple::sparc:
   case llvm::Triple::sparcel:
@@ -3516,6 +3570,18 @@ Generic_GCC::TranslateArgs(const llvm::opt::DerivedArgList &Args, BoundArch BA,
 }
 
 void Generic_ELF::anchor() {}
+
+Tool *Generic_ELF::buildLinker() const {
+  if (isSH(getTriple()))
+    return new tools::gnutools::Linker(*this);
+  return Generic_GCC::buildLinker();
+}
+
+const char *Generic_ELF::getDefaultLinker() const {
+  if (isSH(getTriple()))
+    return getSHGNULinkerName(getTriple());
+  return ToolChain::getDefaultLinker();
+}
 
 void Generic_ELF::addClangTargetOptions(const ArgList &DriverArgs,
                                         ArgStringList &CC1Args, BoundArch BA,

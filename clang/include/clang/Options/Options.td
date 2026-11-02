@@ -249,6 +249,8 @@ def m_ve_Features_Group : OptionGroup<"<ve features group>">,
 def m_loongarch_Features_Group : OptionGroup<"<loongarch features group>">,
                                  Group<m_Group>, DocName<"LoongArch">,
                                  Visibility<[ClangOption, CLOption, FlangOption]>;
+def m_sh_Arch_Group : OptionGroup<"<SH architecture selectors group>">,
+	Group<m_Group>, DocName<"SH">;
 
 def m_libc_Group : OptionGroup<"<m libc group>">, Group<m_mips_Features_Group>,
                    Flags<[HelpHidden]>;
@@ -5595,6 +5597,10 @@ def malign_jumps_EQ : Joined<["-"], "malign-jumps=">, Group<clang_ignored_m_Grou
 let Flags = [TargetSpecific] in {
 def mabi_EQ : Joined<["-"], "mabi=">, Group<m_Group>,
   Visibility<[ClangOption, CC1Option, FlangOption, FC1Option]>;
+def mfdpic : Flag<["-"], "mfdpic">, Group<m_Group>,
+  Visibility<[ClangOption]>, HelpText<"Use the FDPIC ABI">;
+def mno_fdpic : Flag<["-"], "mno-fdpic">, Group<m_Group>,
+  Visibility<[ClangOption]>, HelpText<"Do not use the FDPIC ABI">;
 def malign_branch_EQ : CommaJoined<["-"], "malign-branch=">, Group<m_Group>,
   HelpText<"Specify types of branches to align">;
 def malign_branch_boundary_EQ : Joined<["-"], "malign-branch-boundary=">, Group<m_Group>,
@@ -6646,7 +6652,7 @@ def module_file_info : Flag<["-"], "module-file-info">, Flags<[]>,
 def mthumb : Flag<["-"], "mthumb">, Group<m_Group>;
 def mtune_EQ : Joined<["-"], "mtune=">, Group<m_Group>,
   Visibility<[ClangOption, FlangOption]>,
-  HelpText<"Only supported on AArch64, PowerPC, RISC-V, SPARC, SystemZ, and X86">;
+  HelpText<"Only supported on AArch64, PowerPC, RISC-V, SH, SPARC, SystemZ, and X86">;
 def multi_lib_config : Joined<["-", "--"], "multi-lib-config=">,
   HelpText<"Path to the YAML configuration file to be used for multilib selection">,
   MetaVarName<"<file>">;
@@ -7250,6 +7256,44 @@ def mdynamic_no_pic : Joined<["-"], "mdynamic-no-pic">, Group<m_Group>;
 
 } // let Vis = [Default, FlangOption]
 } // let Flags = [TargetSpecific]
+
+class SHArchitectureSelector<string name> : Flag<["-"], name>,
+	Group<m_sh_Arch_Group>, Flags<[TargetSpecific]>,
+	HelpText<"Select a GCC-compatible SH architecture">;
+
+def m1 : SHArchitectureSelector<"m1">;
+def m2 : SHArchitectureSelector<"m2">;
+def m2a : SHArchitectureSelector<"m2a">;
+def m2a_nofpu : SHArchitectureSelector<"m2a-nofpu">;
+def m2a_single : SHArchitectureSelector<"m2a-single">;
+def m2a_single_only : SHArchitectureSelector<"m2a-single-only">;
+def m2e : SHArchitectureSelector<"m2e">;
+def m3 : SHArchitectureSelector<"m3">;
+def m3e : SHArchitectureSelector<"m3e">;
+def m4 : SHArchitectureSelector<"m4">;
+def m4_100 : SHArchitectureSelector<"m4-100">;
+def m4_100_nofpu : SHArchitectureSelector<"m4-100-nofpu">;
+def m4_100_single : SHArchitectureSelector<"m4-100-single">;
+def m4_100_single_only : SHArchitectureSelector<"m4-100-single-only">;
+def m4_200 : SHArchitectureSelector<"m4-200">;
+def m4_200_nofpu : SHArchitectureSelector<"m4-200-nofpu">;
+def m4_200_single : SHArchitectureSelector<"m4-200-single">;
+def m4_200_single_only : SHArchitectureSelector<"m4-200-single-only">;
+def m4_300 : SHArchitectureSelector<"m4-300">;
+def m4_300_nofpu : SHArchitectureSelector<"m4-300-nofpu">;
+def m4_300_single : SHArchitectureSelector<"m4-300-single">;
+def m4_300_single_only : SHArchitectureSelector<"m4-300-single-only">;
+def m4_340 : SHArchitectureSelector<"m4-340">;
+def m4_400 : SHArchitectureSelector<"m4-400">;
+def m4_500 : SHArchitectureSelector<"m4-500">;
+def m4_nofpu : SHArchitectureSelector<"m4-nofpu">;
+def m4_single : SHArchitectureSelector<"m4-single">;
+def m4_single_only : SHArchitectureSelector<"m4-single-only">;
+def m4a : SHArchitectureSelector<"m4a">;
+def m4a_nofpu : SHArchitectureSelector<"m4a-nofpu">;
+def m4a_single : SHArchitectureSelector<"m4a-single">;
+def m4a_single_only : SHArchitectureSelector<"m4a-single-only">;
+def m4al : SHArchitectureSelector<"m4al">;
 
 // Hexagon feature flags.
 let Flags = [TargetSpecific] in {

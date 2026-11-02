@@ -444,10 +444,12 @@ public:
   addClangTargetOptions(const llvm::opt::ArgList &DriverArgs,
                         llvm::opt::ArgStringList &CC1Args, BoundArch BA,
                         Action::OffloadKind DeviceOffloadKind) const override;
+  Tool *buildLinker() const override;
 
   virtual std::string getDynamicLinker(const llvm::opt::ArgList &Args) const {
     return {};
   }
+  const char *getDefaultLinker() const override;
 
   virtual void addExtraOpts(llvm::opt::ArgStringList &CmdArgs) const {}
 };

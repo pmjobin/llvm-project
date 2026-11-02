@@ -33,6 +33,7 @@
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/IntrinsicsSH.h"
 #include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/IR/MatrixBuilder.h"
 #include "llvm/Support/ConvertUTF.h"
@@ -136,6 +137,9 @@ static Value *EmitTargetArchBuiltinExpr(CodeGenFunction *CGF,
     return CGF->EmitSPIRVBuiltinExpr(BuiltinID, E);
   case llvm::Triple::avr:
     return CGF->EmitAVRBuiltinExpr(BuiltinID, E);
+  case llvm::Triple::sh:
+  case llvm::Triple::shle:
+    return CGF->EmitSHBuiltinExpr(BuiltinID, E);
   default:
     return nullptr;
   }
@@ -6763,6 +6767,9 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
         emitBuiltinWithOneOverloadedType<1>(*this, E, Intrinsic::canonicalize));
 
   case Builtin::BI__builtin_thread_pointer: {
+    if (getTarget().getTriple().isSH())
+      return RValue::get(Builder.CreateCall(
+          CGM.getIntrinsic(llvm::Intrinsic::sh_get_thread_pointer)));
     if (!getContext().getTargetInfo().isTLSSupported())
       CGM.ErrorUnsupported(E, "__builtin_thread_pointer");
 

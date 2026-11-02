@@ -167,6 +167,10 @@ std::string Linux::getMultiarchTriple(const Driver &D,
     if (IsAndroid)
       return "riscv64-linux-android";
     return "riscv64-linux-gnu";
+  case llvm::Triple::sh:
+    return "sh-linux-gnu";
+  case llvm::Triple::shle:
+    return "sh4-linux-gnu";
   case llvm::Triple::sparc:
     return "sparc-linux-gnu";
   case llvm::Triple::sparcv9:
@@ -580,6 +584,17 @@ std::string Linux::getDynamicLinker(const ArgList &Args) const {
     }
     return Triple.isArch64Bit() ? "/system/bin/linker64" : "/system/bin/linker";
   }
+  if (Triple.isSH() && Triple.isMusl() && tools::isSHFDPIC(Triple, Args)) {
+    std::string ArchName = "sh";
+    if (!Triple.isLittleEndian())
+      ArchName += "eb";
+    if (tools::getSHTargetSelection(Args).FPUProfile ==
+            llvm::SH::FPUProfile::NoFPU ||
+        llvm::SH::parseCPU(tools::getSHTargetSelection(Args).CPU) ==
+            llvm::SH::CPUKind::SH2)
+      ArchName += "-nofpu";
+    return "/lib/ld-musl-" + ArchName + "-fdpic.so.1";
+  }
   if (Triple.isMusl()) {
     std::string ArchName;
     bool IsArm = false;
@@ -718,6 +733,11 @@ std::string Linux::getDynamicLinker(const ArgList &Args) const {
     Loader = ("ld-linux-" + ArchName + "-" + ABIName + ".so.1").str();
     break;
   }
+  case llvm::Triple::sh:
+  case llvm::Triple::shle:
+    LibDir = "lib";
+    Loader = "ld-linux.so.2";
+    break;
   case llvm::Triple::sparc:
   case llvm::Triple::sparcel:
     LibDir = "lib";
@@ -946,6 +966,8 @@ void Linux::addSYCLIncludeArgs(const ArgList &DriverArgs,
 }
 
 bool Linux::isPIEDefault(const llvm::opt::ArgList &Args) const {
+  if (tools::isSHFDPIC(getTriple(), Args))
+    return false;
   return CLANG_DEFAULT_PIE_ON_LINUX || getTriple().isAndroid() ||
          getTriple().isMusl() || getSanitizerArgs(Args).requiresPIE();
 }

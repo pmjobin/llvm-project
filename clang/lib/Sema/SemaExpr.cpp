@@ -7341,6 +7341,11 @@ ExprResult Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
       Diag(Fn->getExprLoc(), diag::err_arm_interrupt_called);
       return ExprError();
     }
+    if (FDecl->hasAttr<SHInterruptHandlerAttr>() ||
+        FDecl->hasAttr<SHTRAPAHandlerAttr>()) {
+      Diag(Fn->getExprLoc(), diag::err_sh_handler_called);
+      return ExprError();
+    }
   }
 
   // X86 interrupt handlers may only call routines with attribute

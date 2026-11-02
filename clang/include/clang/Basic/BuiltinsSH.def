@@ -1,0 +1,37 @@
+//===--- BuiltinsSH.def - SH Builtin function database ---------*- C++ -*-===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+// This file defines the SH-specific builtin function database. Users of this
+// file must define the BUILTIN macro to make use of this information.
+//
+//===----------------------------------------------------------------------===//
+
+#if defined(BUILTIN) && !defined(TARGET_BUILTIN)
+#define TARGET_BUILTIN(ID, TYPE, ATTRS, FEATURE) BUILTIN(ID, TYPE, ATTRS)
+#endif
+
+// The operation accesses one volatile byte, returns one if its old value was
+// zero, and sets bit 7 in memory.
+BUILTIN(__builtin_sh_tas_b, "iUcD*", "")
+
+// Context management and FP control are ordered architectural state access.
+BUILTIN(__builtin_set_thread_pointer, "vv*", "")
+TARGET_BUILTIN(__builtin_sh_get_fpscr, "Ui", "", "single-fpu")
+TARGET_BUILTIN(__builtin_sh_set_fpscr, "vUi", "", "single-fpu")
+
+// Explicit instruction semantics; these operations may change FP status.
+TARGET_BUILTIN(__builtin_sh_fsca, "V2fUi", "", "sh4a,single-fpu")
+TARGET_BUILTIN(__builtin_sh_fsrra, "ff", "", "sh4a,single-fpu")
+TARGET_BUILTIN(__builtin_sh_fipr, "fV4fV4f", "", "fpu-vector")
+TARGET_BUILTIN(__builtin_sh_ftrv, "V4fvC*V4f", "", "fpu-vector")
+TARGET_BUILTIN(__builtin_sh_ftrv4, "vv*vC*vC*", "", "fpu-vector")
+TARGET_BUILTIN(__builtin_sh_ftrv_array, "vv*vC*UivC*", "", "fpu-vector")
+TARGET_BUILTIN(__builtin_sh_ftrv_compose, "vv*vC*UivC*vC*", "", "fpu-vector")
+
+#undef TARGET_BUILTIN
+#undef BUILTIN

@@ -247,6 +247,10 @@ createTargetCodeGenInfo(CodeGenModule &CGM) {
     return createRISCVTargetCodeGenInfo(CGM, XLen, ABIFLen, EABI);
   }
 
+  case llvm::Triple::sh:
+  case llvm::Triple::shle:
+    return createSHTargetCodeGenInfo(CGM, CGM.getTarget().getABI());
+
   case llvm::Triple::systemz: {
     bool SoftFloat = CodeGenOpts.FloatABI == "soft";
     bool HasVector = !SoftFloat && Target.getABI() == "vector";
@@ -3499,7 +3503,7 @@ bool CodeGenModule::GetCPUAndFeaturesAttributes(GlobalDecl GD,
         TuneCPU = ""; // Clear the tune CPU.
       }
       if (!ParsedAttr.Tune.empty() &&
-          getTarget().isValidCPUName(ParsedAttr.Tune))
+          getTarget().isValidTuneCPUName(ParsedAttr.Tune))
         TuneCPU = ParsedAttr.Tune;
     }
 
@@ -5819,8 +5823,14 @@ llvm::Constant *CodeGenModule::GetOrCreateLLVMFunction(
   }
 
   assert(F->getName() == MangledName && "name was uniqued!");
-  if (D)
+  if (D) {
     SetFunctionAttributes(GD, F, IsIncompleteFunction, IsThunk);
+  } else if (getTargetCodeGenInfo()
+                 .shouldSetCPUAndFeaturesAttributesOnGeneratedDeclarations()) {
+    llvm::AttrBuilder Attrs(F->getContext());
+    GetCPUAndFeaturesAttributes(GlobalDecl(), Attrs);
+    F->addFnAttrs(Attrs);
+  }
   if (ExtraAttrs.hasFnAttrs()) {
     llvm::AttrBuilder B(F->getContext(), ExtraAttrs.getFnAttrs());
     F->addFnAttrs(B);
