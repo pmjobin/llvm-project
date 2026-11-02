@@ -2013,24 +2013,24 @@ MachineBasicBlock::iterator findHoistingInsertPosAndDeps(MachineBasicBlock *MBB,
 
   // Find out what registers are live. Note this routine is ignoring other live
   // registers which are only used by instructions in successor blocks.
-  for (const MachineOperand &MO : PI->operands()) {
-    if (!MO.isReg())
-      continue;
+  // Remove definitions from the branch's inputs before adding PI's own reads.
+  // An explicit input can precede an implicit definition of the same register;
+  // processing those in operand order would erase an incoming value PI needs.
+  for (const MachineOperand &MO : PI->all_defs()) {
     Register Reg = MO.getReg();
     if (!Reg)
       continue;
-    if (MO.isUse()) {
-      addRegAndItsAliases(Reg, TRI, Uses);
-    } else {
-      if (Uses.erase(Reg)) {
-        if (Reg.isPhysical()) {
-          for (MCPhysReg SubReg : TRI->subregs(Reg))
-            Uses.erase(SubReg); // Use sub-registers to be conservative
-        }
+    if (Uses.erase(Reg)) {
+      if (Reg.isPhysical()) {
+        for (MCPhysReg SubReg : TRI->subregs(Reg))
+          Uses.erase(SubReg); // Use sub-registers to be conservative
       }
-      addRegAndItsAliases(Reg, TRI, Defs);
     }
+    addRegAndItsAliases(Reg, TRI, Defs);
   }
+  for (const MachineOperand &MO : PI->all_uses())
+    if (Register Reg = MO.getReg())
+      addRegAndItsAliases(Reg, TRI, Uses);
 
   return PI;
 }

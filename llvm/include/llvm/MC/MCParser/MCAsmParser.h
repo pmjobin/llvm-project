@@ -156,6 +156,10 @@ protected: // Can only create subclasses.
   // TODO: Adopt this in more places.
   bool SymbolScanningMode = false;
 
+  // Clients inspecting expression trees may need to validate arithmetic before
+  // evaluating it. This also applies to expressions nested in parentheses.
+  bool FoldExpressions = true;
+
 public:
   MCAsmParser(const MCAsmParser &) = delete;
   MCAsmParser &operator=(const MCAsmParser &) = delete;
@@ -173,7 +177,10 @@ public:
   const AsmLexer &getLexer() const { return Lexer; }
 
   MCTargetAsmParser &getTargetParser() const { return *TargetParser; }
+  bool hasTargetParser() const { return TargetParser != nullptr; }
   void setTargetParser(MCTargetAsmParser &P);
+
+  void setFoldExpressions(bool Value) { FoldExpressions = Value; }
 
   virtual unsigned getAssemblerDialect() { return 0;}
   virtual void setAssemblerDialect(unsigned i) { }

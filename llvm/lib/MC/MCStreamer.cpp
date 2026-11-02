@@ -67,6 +67,11 @@ void MCTargetStreamer::emitDwarfFileDirective(StringRef Directive) {
   Streamer.emitRawText(Directive);
 }
 
+const char *MCTargetStreamer::getDataDirective(const MCSection *,
+                                               unsigned) const {
+  return nullptr;
+}
+
 void MCTargetStreamer::emitValue(const MCExpr *Value) {
   SmallString<128> Str;
   raw_svector_ostream OS(Str);

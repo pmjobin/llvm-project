@@ -1494,12 +1494,25 @@ void MCAsmStreamer::emitValueImpl(const MCExpr *Value, unsigned Size,
   assert(getCurrentSectionOnly() &&
          "Cannot emit contents before setting section!");
   const char *Directive = nullptr;
-  switch (Size) {
-  default: break;
-  case 1: Directive = MAI->getData8bitsDirective();  break;
-  case 2: Directive = MAI->getData16bitsDirective(); break;
-  case 4: Directive = MAI->getData32bitsDirective(); break;
-  case 8: Directive = MAI->getData64bitsDirective(); break;
+  if (MCTargetStreamer *TS = getTargetStreamer())
+    Directive = TS->getDataDirective(getCurrentSectionOnly(), Size);
+  if (!Directive) {
+    switch (Size) {
+    default:
+      break;
+    case 1:
+      Directive = MAI->getData8bitsDirective();
+      break;
+    case 2:
+      Directive = MAI->getData16bitsDirective();
+      break;
+    case 4:
+      Directive = MAI->getData32bitsDirective();
+      break;
+    case 8:
+      Directive = MAI->getData64bitsDirective();
+      break;
+    }
   }
 
   if (!Directive) {

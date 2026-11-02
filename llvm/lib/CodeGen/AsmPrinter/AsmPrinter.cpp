@@ -4579,6 +4579,9 @@ static void emitGlobalConstantImpl(const DataLayout &DL, const Constant *CV,
   if (!BaseCV && CV->hasOneUse())
     BaseCV = dyn_cast<Constant>(CV->user_back());
 
+  if (AP.emitGlobalConstantValue(DL, CV, BaseCV, Offset))
+    return;
+
   if (isa<ConstantAggregateZero>(CV)) {
     StructType *structType;
     if (AliasList && (structType = llvm::dyn_cast<StructType>(CV->getType()))) {
@@ -4696,6 +4699,13 @@ static void emitGlobalConstantImpl(const DataLayout &DL, const Constant *CV,
     handleIndirectSymViaGOTPCRel(AP, &ME, BaseCV, Offset);
 
   AP.OutStreamer->emitValue(ME, Size);
+}
+
+bool AsmPrinter::emitGlobalConstantValue(const DataLayout &DL,
+                                         const Constant *CV,
+                                         const Constant *BaseCV,
+                                         uint64_t Offset) {
+  return false;
 }
 
 /// EmitGlobalConstant - Print a general LLVM constant to the .s file.

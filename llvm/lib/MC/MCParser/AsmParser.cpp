@@ -1477,8 +1477,11 @@ bool MCAsmParser::parseAtSpecifier(const MCExpr *&Res, SMLoc &EndLoc) {
 bool AsmParser::parseExpression(const MCExpr *&Res, SMLoc &EndLoc) {
   // Parse the expression.
   Res = nullptr;
-  auto &TS = getTargetParser();
-  if (TS.parsePrimaryExpr(Res, EndLoc) || parseBinOpRHS(1, Res, EndLoc))
+  // Constant expressions do not require a target instruction parser.
+  bool Failed = hasTargetParser()
+                    ? getTargetParser().parsePrimaryExpr(Res, EndLoc)
+                    : parsePrimaryExpr(Res, EndLoc, nullptr);
+  if (Failed || parseBinOpRHS(1, Res, EndLoc))
     return true;
 
   // As a special case, we support 'a op b @ modifier' by rewriting the
@@ -1505,7 +1508,7 @@ bool AsmParser::parseExpression(const MCExpr *&Res, SMLoc &EndLoc) {
   // Try to constant fold it up front, if possible. Do not exploit
   // assembler here.
   int64_t Value;
-  if (Res->evaluateAsAbsolute(Value))
+  if (FoldExpressions && Res->evaluateAsAbsolute(Value))
     Res = MCConstantExpr::create(Value, getContext());
 
   return false;
@@ -1713,7 +1716,10 @@ bool AsmParser::parseBinOpRHS(unsigned Precedence, const MCExpr *&Res,
 
     // Eat the next primary expression.
     const MCExpr *RHS;
-    if (getTargetParser().parsePrimaryExpr(RHS, EndLoc))
+    bool Failed = hasTargetParser()
+                      ? getTargetParser().parsePrimaryExpr(RHS, EndLoc)
+                      : parsePrimaryExpr(RHS, EndLoc, nullptr);
+    if (Failed)
       return true;
 
     // If BinOp binds less tightly with RHS than the operator after RHS, let
@@ -1880,7 +1886,17 @@ bool AsmParser::parseStatement(ParseStatementInfo &Info,
     // does not understand Labels. This may cause us to see a Hash
     // here instead of a preprocessor line comment.
     if (getTok().is(AsmToken::Hash)) {
-      StringRef CommentStr = parseStringToEndOfStatement();
+      StringRef CommentStr;
+      if (Ctx.getTargetTriple().isSH()) {
+        // GNU SH hash comments extend to the end of the line, even when
+        // they follow a label and contain a statement separator.
+        const char *Start = getTok().getLoc().getPointer();
+        StringRef Rest = Lexer.LexUntilEndOfLine();
+        CommentStr = StringRef(Start, Rest.end() - Start);
+        Lexer.Lex(); // Consume the hash and lex the end of the line.
+      } else {
+        CommentStr = parseStringToEndOfStatement();
+      }
       Lexer.Lex();
       Lexer.UnLex(AsmToken(AsmToken::EndOfStatement, CommentStr));
     }

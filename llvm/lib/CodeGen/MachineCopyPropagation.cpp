@@ -675,6 +675,12 @@ bool MachineCopyPropagation::eraseIfRedundant(MachineInstr &Copy,
 
 bool MachineCopyPropagation::isBackwardPropagatableRegClassCopy(
     const MachineInstr &Copy, const MachineInstr &UseI, unsigned UseIdx) {
+  // Leave copy-to-copy propagation to the forward scan, including target
+  // copies that have register class constraints unlike the generic COPY.
+  // Rewriting their destinations here can otherwise leave a self-copy.
+  if (isCopyInstr(UseI, *TII, UseCopyInstr))
+    return false;
+
   DestSourcePair CopyOperands = *isCopyInstr(Copy, *TII, UseCopyInstr);
   MCRegister Dst = getDstMCReg(CopyOperands);
 
@@ -682,8 +688,6 @@ bool MachineCopyPropagation::isBackwardPropagatableRegClassCopy(
           UseI.getRegClassConstraint(UseIdx, TII, TRI))
     return URC->contains(Dst);
 
-  // We don't process further if UseI is a COPY, since forward copy propagation
-  // should handle that.
   return false;
 }
 

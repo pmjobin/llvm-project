@@ -134,6 +134,13 @@ StringRef llvm::object::getELFRelocationTypeName(uint32_t Machine,
       break;
     }
     break;
+  case ELF::EM_SH:
+    switch (Type) {
+#include "llvm/BinaryFormat/ELFRelocs/SH.def"
+    default:
+      break;
+    }
+    break;
   case ELF::EM_AMDGPU:
     switch (Type) {
 #include "llvm/BinaryFormat/ELFRelocs/AMDGPU.def"

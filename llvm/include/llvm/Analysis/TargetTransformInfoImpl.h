@@ -100,6 +100,9 @@ public:
     // removed along with the introduction of this function.
     return 15000;
   }
+  virtual std::optional<int> getInliningOptSizeThreshold() const {
+    return std::nullopt;
+  }
   virtual unsigned adjustInliningThreshold(const CallBase *CB) const {
     return 0;
   }

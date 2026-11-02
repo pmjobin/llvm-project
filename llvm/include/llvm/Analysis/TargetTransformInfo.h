@@ -460,6 +460,11 @@ public:
   /// \returns The bonus of inlining the last call to a static function.
   LLVM_ABI int getInliningLastCallToStaticBonus() const;
 
+  /// Return an optional target-specific upper bound on the base inlining
+  /// threshold for optsize callers. Explicit threshold options, minsize,
+  /// inline hints and the usual inlining bonuses retain their own policies.
+  LLVM_ABI std::optional<int> getInliningOptSizeThreshold() const;
+
   /// \returns A value to be added to the inlining threshold.
   LLVM_ABI unsigned adjustInliningThreshold(const CallBase *CB) const;
 

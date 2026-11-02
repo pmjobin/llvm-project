@@ -1559,6 +1559,9 @@ def calloc : RuntimeLibcallImpl<CALLOC>;
 def free : RuntimeLibcallImpl<FREE>;
 } // End defset LibcCoreImpls
 
+// GNU SH libgcc signed 32-bit division entry point.
+def __sdivsi3 : RuntimeLibcallImpl<SDIV_I32>;
+
 // Stack Protector Fail
 def __stack_chk_fail : RuntimeLibcallImpl<STACKPROTECTOR_CHECK_FAIL>;
 

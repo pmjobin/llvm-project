@@ -618,6 +618,11 @@ public:
   void emitGlobalConstant(const DataLayout &DL, const Constant *CV,
                           AliasMapTy *AliasList = nullptr);
 
+  /// Give targets an opportunity to emit an individual global-constant value
+  /// using target-specific syntax. Return true when the value was emitted.
+  virtual bool emitGlobalConstantValue(const DataLayout &DL, const Constant *CV,
+                                       const Constant *BaseCV, uint64_t Offset);
+
   /// Unnamed constant global variables solely contaning a pointer to
   /// another globals variable act like a global variable "proxy", or GOT
   /// equivalents, i.e., it's only used to hold the address of the latter. One

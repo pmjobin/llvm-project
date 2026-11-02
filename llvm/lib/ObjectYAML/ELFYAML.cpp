@@ -408,6 +408,31 @@ void ScalarBitSetTraits<ELFYAML::ELF_EF>::bitset(IO &IO,
     BCase(EF_RISCV_RVE);
     BCase(EF_RISCV_TSO);
     break;
+  case ELF::EM_SH:
+    BCaseMask(EF_SH1, EF_SH_MACH_MASK);
+    BCaseMask(EF_SH2, EF_SH_MACH_MASK);
+    BCaseMask(EF_SH3, EF_SH_MACH_MASK);
+    BCaseMask(EF_SH_DSP, EF_SH_MACH_MASK);
+    BCaseMask(EF_SH3_DSP, EF_SH_MACH_MASK);
+    BCaseMask(EF_SH4AL_DSP, EF_SH_MACH_MASK);
+    BCaseMask(EF_SH3E, EF_SH_MACH_MASK);
+    BCaseMask(EF_SH4, EF_SH_MACH_MASK);
+    BCaseMask(EF_SH5, EF_SH_MACH_MASK);
+    BCaseMask(EF_SH2E, EF_SH_MACH_MASK);
+    BCaseMask(EF_SH4A, EF_SH_MACH_MASK);
+    BCaseMask(EF_SH2A, EF_SH_MACH_MASK);
+    BCaseMask(EF_SH4_NOFPU, EF_SH_MACH_MASK);
+    BCaseMask(EF_SH4A_NOFPU, EF_SH_MACH_MASK);
+    BCaseMask(EF_SH4_NOMMU_NOFPU, EF_SH_MACH_MASK);
+    BCaseMask(EF_SH2A_NOFPU, EF_SH_MACH_MASK);
+    BCaseMask(EF_SH3_NOMMU, EF_SH_MACH_MASK);
+    BCaseMask(EF_SH2A_SH4_NOFPU, EF_SH_MACH_MASK);
+    BCaseMask(EF_SH2A_SH3_NOFPU, EF_SH_MACH_MASK);
+    BCaseMask(EF_SH2A_SH4, EF_SH_MACH_MASK);
+    BCaseMask(EF_SH2A_SH3E, EF_SH_MACH_MASK);
+    BCase(EF_SH_PIC);
+    BCase(EF_SH_FDPIC);
+    break;
   case ELF::EM_SPARC32PLUS:
     BCase(EF_SPARC_32PLUS);
     BCase(EF_SPARC_SUN_US1);
@@ -727,6 +752,9 @@ void ScalarEnumerationTraits<ELFYAML::ELF_REL>::enumeration(
     break;
   case ELF::EM_RISCV:
 #include "llvm/BinaryFormat/ELFRelocs/RISCV.def"
+    break;
+  case ELF::EM_SH:
+#include "llvm/BinaryFormat/ELFRelocs/SH.def"
     break;
   case ELF::EM_LANAI:
 #include "llvm/BinaryFormat/ELFRelocs/Lanai.def"

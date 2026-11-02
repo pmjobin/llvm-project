@@ -572,6 +572,40 @@ enum {
 #include "ELFRelocs/Sparc.def"
 };
 
+// SH specific e_flags.
+enum : unsigned {
+  EF_SH_MACH_MASK = 0x1f,
+  EF_SH_UNKNOWN = 0,
+  EF_SH1 = 1,
+  EF_SH2 = 2,
+  EF_SH3 = 3,
+  EF_SH_DSP = 4,
+  EF_SH3_DSP = 5,
+  EF_SH4AL_DSP = 6,
+  EF_SH3E = 8,
+  EF_SH4 = 9,
+  EF_SH5 = 10,
+  EF_SH2E = 11,
+  EF_SH4A = 12,
+  EF_SH2A = 13,
+  EF_SH4_NOFPU = 16,
+  EF_SH4A_NOFPU = 17,
+  EF_SH4_NOMMU_NOFPU = 18,
+  EF_SH2A_NOFPU = 19,
+  EF_SH3_NOMMU = 20,
+  EF_SH2A_SH4_NOFPU = 21,
+  EF_SH2A_SH3_NOFPU = 22,
+  EF_SH2A_SH4 = 23,
+  EF_SH2A_SH3E = 24,
+  EF_SH_PIC = 0x100,
+  EF_SH_FDPIC = 0x8000,
+};
+
+// ELF relocation types for SH.
+enum {
+#include "ELFRelocs/SH.def"
+};
+
 // AMDGPU specific e_flags.
 #define AMDGPU_MACH_LIST(X)                                                    \
   X(0x01, EF_AMDGPU_MACH_R600_R600, "r600")                                    \

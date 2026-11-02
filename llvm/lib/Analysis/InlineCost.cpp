@@ -2034,8 +2034,14 @@ void InlineCostCallAnalyzer::updateThreshold(CallBase &Call, Function &Callee) {
     // call/return instructions.
     SingleBBBonusPercent = 0;
     VectorBonusPercent = 0;
-  } else if (Caller->hasOptSize())
+  } else if (Caller->hasOptSize()) {
     Threshold = MinIfValid(Threshold, Params.OptSizeThreshold);
+    // An explicit threshold option disables the size-specific parameters.
+    // Otherwise let the target restrict the base size threshold while keeping
+    // the hint, profile and bonus policies below intact.
+    if (Params.OptSizeThreshold)
+      Threshold = MinIfValid(Threshold, TTI.getInliningOptSizeThreshold());
+  }
 
   // Adjust the threshold based on inlinehint attribute and profile based
   // hotness information if the caller does not have MinSize attribute.

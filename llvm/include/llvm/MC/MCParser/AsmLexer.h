@@ -112,6 +112,10 @@ public:
 
   LLVM_ABI StringRef LexUntilEndOfStatement();
 
+  /// Consume raw text through the next physical line ending, ignoring
+  /// statement separators and comment characters within that text.
+  LLVM_ABI StringRef LexUntilEndOfLine();
+
   /// Get the current source location.
   SMLoc getLoc() const { return SMLoc::getFromPointer(TokStart); }
 
@@ -224,7 +228,6 @@ private:
   AsmToken LexFloatLiteral();
   AsmToken LexHexFloatLiteral(bool NoIntDigits);
 
-  StringRef LexUntilEndOfLine();
 };
 
 } // end namespace llvm

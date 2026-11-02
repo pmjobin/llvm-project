@@ -121,6 +121,10 @@ public:
   virtual void changeSection(const MCSection *CurSection, MCSection *Section,
                              uint32_t SubSection, raw_ostream &OS);
 
+  /// Return a target-specific directive for emitting a value in \p Section.
+  virtual const char *getDataDirective(const MCSection *Section,
+                                       unsigned Size) const;
+
   virtual void emitValue(const MCExpr *Value);
 
   /// Emit the bytes in \p Data into the output.

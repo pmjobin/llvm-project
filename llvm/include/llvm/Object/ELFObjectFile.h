@@ -831,6 +831,13 @@ Expected<uint32_t> ELFObjectFile<ELFT>::getSymbolFlags(DataRefImpl Sym) const {
       // TODO: Actually report errors helpfully.
       consumeError(NameOrErr.takeError());
     }
+  } else if (EF.getHeader().e_machine == ELF::EM_SH) {
+    if (Expected<StringRef> NameOrErr = getSymbolName(Sym)) {
+      if (NameOrErr->starts_with(".L"))
+        Result |= SymbolRef::SF_FormatSpecific;
+    } else {
+      consumeError(NameOrErr.takeError());
+    }
   }
 
   if (ESym->st_shndx == ELF::SHN_UNDEF)
@@ -1312,6 +1319,8 @@ StringRef ELFObjectFile<ELFT>::getFileFormatName() const {
       return (IsLittleEndian ? "elf32-powerpcle" : "elf32-powerpc");
     case ELF::EM_RISCV:
       return (IsLittleEndian ? "elf32-littleriscv" : "elf32-bigriscv");
+    case ELF::EM_SH:
+      return (IsLittleEndian ? "elf32-shl" : "elf32-sh");
     case ELF::EM_CSKY:
       return "elf32-csky";
     case ELF::EM_SPARC:
@@ -1405,6 +1414,8 @@ template <class ELFT> Triple::ArchType ELFObjectFile<ELFT>::getArch() const {
     default:
       report_fatal_error("Invalid ELFCLASS!");
     }
+  case ELF::EM_SH:
+    return IsLittleEndian ? Triple::shle : Triple::sh;
   case ELF::EM_S390:
     return Triple::systemz;
 
