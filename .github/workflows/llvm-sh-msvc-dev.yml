@@ -1,0 +1,76 @@
+name: LLVM SH native MSVC development
+
+on:
+  pull_request:
+    branches: [llvm-sh]
+  workflow_dispatch:
+    inputs:
+      full_validation:
+        description: 'After the backend passes, build Clang and run SH object/regression checks'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sh-msvc-dev-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-msvc:
+    runs-on: windows-2022
+    timeout-minutes: ${{ inputs.full_validation && 330 || 90 }}
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+      NINJA_STATUS: '[%f/%t %es] '
+    steps:
+      - name: Preserve source line endings
+        run: git config --global core.autocrlf false
+      - name: Check out PR source or manually selected branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github
+            llvm
+            clang
+            lld
+            compiler-rt
+            libunwind
+            cmake
+            third-party
+            libc
+      - name: Select Visual Studio 2022 native x64 tools
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: x64
+          vsversion: '2022'
+      # Persist sccache's bounded disk cache in one GHA archive, rather than
+      # making a remote cache API request for each small compiled object.
+      - name: Restore sccache
+        uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
+        with:
+          variant: sccache
+          max-size: 2G
+          key: sh-msvc-dev-windows-2022-x64-release-v1
+      - name: Configure and build LLVMSHCodeGen first
+        run: ./.github/ci/test-llvm-sh-msvc.ps1 -Stage Backend
+      - name: Optional Clang, ELF objects and SH regressions
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_validation }}
+        run: ./.github/ci/test-llvm-sh-msvc.ps1 -Stage Validate
+      - name: Report timings and sccache statistics
+        if: ${{ always() }}
+        run: ./.github/ci/test-llvm-sh-msvc.ps1 -Stage Report
+      - name: Retain diagnostics and test results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: sh-msvc-dev-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/llvm-sh-msvc-dev-logs
+          if-no-files-found: warn
+          retention-days: 14
