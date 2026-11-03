@@ -61,8 +61,10 @@ GitHub Actions evidence
 * Initial run (cancelled early to add visible checksum values while keeping
   uploads disabled):
   https://github.com/pmjobin/llvm-project/actions/runs/41723994735
-* Qualification run on ``28ade2b2c`` (Ubuntu pending; Fedora PASS):
+* Qualification run on ``28ade2b2c``: PASS (2026-11-03):
   https://github.com/pmjobin/llvm-project/actions/runs/41724679129
+* Ubuntu 26.04 DEB: PASS:
+  https://github.com/pmjobin/llvm-project/actions/runs/41724679129/job/126226600926
 * Fedora 45 RPM and portable ZIP: PASS:
   https://github.com/pmjobin/llvm-project/actions/runs/41724679129/job/126226600673
 * Shell/YAML validation on ``28ade2b2c``: PASS:
@@ -71,14 +73,21 @@ GitHub Actions evidence
 The Fedora job ran on 2026-11-03 from 21:46:22 to 22:32:24 UTC (46m02s).
 Its build/package/test step took 42m15s. Fedora image digest:
 ``sha256:a7d72ba2745b100a3351087472e5ee7b2450af7cf331e7673007e3817612839c``.
-Ubuntu is still pending; it is not yet qualified. Local Fedora 44 preflights
-are not counted as distribution qualification.
+Ubuntu ran from 21:46:22 to 22:45:01 UTC (58m39s); its build/package/test step
+took 52m18s. Windows was skipped by platform selection. All five smoke objects
+(staged and installed on each distribution, plus the relocated ZIP) met every
+required SH4 header check. Local Fedora 44 preflights are not counted as
+distribution qualification. Later commits only document these results; the
+qualified CI scripts are byte-identical to ``28ade2b2c``.
 
 Package results
 ---------------
 
-Fedora generated files (both ``sha256sum --check`` results were ``OK``):
+Generated files (all three ``sha256sum --check`` results were ``OK``):
 
+* ``llvm-sh-rc1-ubuntu2604-amd64.deb``: 69,481,340 bytes.
+  SHA-256:
+  ``d3dda176690e71bdab9597a76125881194f95e496c4019bc36c3f3ae353a97ff``.
 * ``llvm-sh-rc1-fedora45-x86_64.rpm``: 49,601,374 bytes.
   SHA-256:
   ``8adb0833e7a734fc772b9ab1cbf50de143854295cf08106fb82d688af144ced0``.
@@ -86,11 +95,55 @@ Fedora generated files (both ``sha256sum --check`` results were ``OK``):
   SHA-256:
   ``1561e80d7d55319e834139ef2c88ec049e604ef54db0faa5573e020b31ff1e12``.
 
-Fedora phase durations: configure 12s; build 2416s (40m16s); stage 1s;
-CPack RPM 91s; DNF installation 2s; ZIP creation 9s. Staged, installed and
-relocated smoke invocations each recorded 0s at whole-second resolution.
-Archive integrity/extraction, mode/content comparison, library checks and
-checksum verification are also included in the 42m15s step duration.
+Measured phase durations in seconds:
+
+==================== ============ ===========
+Phase                Ubuntu DEB   Fedora RPM
+==================== ============ ===========
+Configure            22           12
+Build                3090         2416
+Stage                1            1
+Staged smoke         0            0
+CPack                18           91
+Package installation 4            2
+Installed smoke      0            0
+ZIP creation         --           9
+Relocated smoke      --           0
+==================== ============ ===========
+
+Build durations were 51m30s on Ubuntu and 40m16s on Fedora. Smoke invocations
+recorded 0s at whole-second resolution. Archive integrity/extraction,
+mode/content comparison, library checks and checksum verification are also
+included in the overall build/package/test step durations above.
+
+Ubuntu installation evidence
+----------------------------
+
+APT installed exactly one new package, with no upgrades or removals. It logged
+``Setting up llvm-sh-clang (0.1.0~rc1-1)`` at 22:44:55 UTC.
+``dpkg-query`` confirmed
+``llvm-sh-clang 0.1.0~rc1-1 amd64 install ok installed``; ``dpkg -V`` passed.
+DEB metadata included the intended maintainer, section, description and
+architecture; its payload stayed under the private prefix, including ancestor
+directories. Generated dependencies were::
+
+  libc6 (>= 2.38), libedit2 (>= 2.11-20080614-0), libgcc-s1 (>= 4.3),
+  liblzma5 (>= 5.1.1alpha+20110809), libstdc++6 (>= 12),
+  libxml2-16 (>= 2.14.1), libzstd1 (>= 1.5.5), zlib1g (>= 1:1.2.0)
+
+The installed ``/opt/llvm-sh/rc1/bin/clang`` reported the frozen source commit
+and generated the verified SH4 object using the installed ``llvm-readobj``.
+All checked runtime libraries resolved without ``LD_LIBRARY_PATH``.
+The system ``/usr/bin/clang`` still resolved to ``/usr/lib/llvm-21/bin/clang``
+with unchanged SHA-256
+``78e9dd2ccc9e88859b3a29109a44bfab00e3d6cb70f00f3daae063eed3d05251``.
+
+Nonfatal Ubuntu warnings were CMake's CMP0219 policy notice and two
+``GNUInstallDirs`` author warnings during symlink installation. No Ubuntu
+package-creation, installation, runtime-resolution or smoke failure remained.
+
+Fedora installation and relocation evidence
+-------------------------------------------
 
 DNF installed ``llvm-sh-clang-0.1.0-0.rc1.1.x86_64`` from ``@commandline`` at
 22:32:07 UTC; transaction output reported ``Complete!``. ``rpm -qi`` verified
@@ -150,3 +203,5 @@ All qualification dispatches use ``platform=linux`` and
 ``upload_artifacts=false``. The existing upload opt-in gate remains intact.
 No GitHub Release, downloadable package upload, tag update, merge or change to
 MSVC PR #1 is part of this work.
+The completed qualification run has zero uploaded artifacts. Windows build
+validation remains outside this Linux task; its build script is unchanged.
