@@ -1,0 +1,67 @@
+name: LLVM SH packaging validation
+
+on:
+  push:
+    paths:
+      - '.github/ci/build-llvm-sh-linux.sh'
+      - '.github/ci/build-llvm-sh-windows.ps1'
+      - '.github/ci/*llvm-sh*.py'
+      - '.github/ci/llvm-sh-test-tools.txt'
+      - 'compiler-rt/utils/build-sh4-freestanding.py'
+      - 'compiler-rt/lib/builtins/sh/**'
+      - 'llvm/examples/SHFreestanding/**'
+      - '.github/workflows/llvm-sh-rc1-packages.yml'
+      - '.github/workflows/llvm-sh-packaging-validation.yml'
+  pull_request:
+    paths:
+      - '.github/ci/build-llvm-sh-linux.sh'
+      - '.github/ci/build-llvm-sh-windows.ps1'
+      - '.github/ci/*llvm-sh*.py'
+      - '.github/ci/llvm-sh-test-tools.txt'
+      - 'compiler-rt/utils/build-sh4-freestanding.py'
+      - 'compiler-rt/lib/builtins/sh/**'
+      - 'llvm/examples/SHFreestanding/**'
+      - '.github/workflows/llvm-sh-rc1-packages.yml'
+      - '.github/workflows/llvm-sh-packaging-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            .github
+            compiler-rt/utils
+            compiler-rt/lib/builtins/sh
+            llvm/examples/SHFreestanding
+          persist-credentials: false
+      - name: Validate shell without building LLVM
+        run: |
+          bash -n .github/ci/build-llvm-sh-linux.sh
+          shellcheck --severity=warning .github/ci/build-llvm-sh-linux.sh
+      - name: Check Python recipes and native Windows script syntax cheaply
+        shell: pwsh
+        run: |
+          python -c "import ast,pathlib; paths=[*pathlib.Path('.github/ci').glob('*llvm-sh*.py'),pathlib.Path('compiler-rt/utils/build-sh4-freestanding.py'),pathlib.Path('llvm/examples/SHFreestanding/check.py')]; [ast.parse(p.read_text()) for p in paths]"
+          if ($LASTEXITCODE -ne 0) { throw 'Python recipe syntax failed' }
+          $tokens = $null; $errors = $null
+          [Management.Automation.Language.Parser]::ParseFile((Join-Path $pwd '.github/ci/build-llvm-sh-windows.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count) { throw ($errors | Out-String) }
+      - name: Validate workflow syntax and expressions
+        run: |
+          curl --fail --location --silent --show-error \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            -o "$RUNNER_TEMP/actionlint.tar.gz"
+          echo '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  '"$RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          # This actionlint release predates the already-used hosted 26.04 label.
+          "$RUNNER_TEMP/actionlint" -shellcheck= \
+            -ignore '^label "ubuntu-26[.]04" is unknown[.]' \
+            .github/workflows/llvm-sh-rc1-packages.yml \
+            .github/workflows/llvm-sh-packaging-validation.yml
