@@ -292,5 +292,6 @@ if [[ "$format" == rpm ]]; then
   (cd "$out" && sha256sum --check "$(basename "$portable_zip").sha256")
   stat --printf='%n %s bytes\n' "$portable_zip"
 fi
+cat "$out"/*.sha256
 cat "$out/timings.tsv"
 ls -lah "$out"
