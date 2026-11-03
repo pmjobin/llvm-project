@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+# Linux native distribution packaging: DEB on Ubuntu 26.04, RPM on Fedora 45.
+# All packages install under /opt/llvm-sh/rc1, never replacing system clang.
+set -euo pipefail
+
+format="${1:?need deb or rpm}"
+case "$format" in deb|rpm) ;; *) echo 'format must be deb or rpm' >&2; exit 2;; esac
+
+repo="${GITHUB_WORKSPACE:?}/source"
+out="${GITHUB_WORKSPACE}/dist"
+bld="${RUNNER_TEMP:?}/llvm-sh-rc1-build"
+pkgroot="${RUNNER_TEMP}/llvm-sh-rc1-stage"
+prefix='/opt/llvm-sh/rc1'
+stage="${pkgroot}${prefix}"
+expected='a4ad03d58bd5a924de0ae286340ff7c6bb664ec2'
+expected_tree='afbc1ebbfcbae3811208ff4dcfb0930208d3f8a1'
+
+cd "$repo"
+actual="$(git rev-parse HEAD)"
+tree="$(git rev-parse HEAD^{tree})"
+[[ "$actual" == "$expected" && "$tree" == "$expected_tree" ]] || {
+  echo "RC1 source mismatch: commit=$actual tree=$tree" >&2; exit 3;
+}
+[[ -f llvm/lib/Target/SH/CMakeLists.txt && -d clang ]] || exit 4
+
+mkdir -p "$out" "$pkgroot"
+df -h .
+# Build a deliberately small host distribution; NO GNU cross-SDK, QEMU, runtimes or Doom.
+# Linux uses shared LLVM/Clang libraries, as in the qualified P07 build profile.
+# LLVM_INSTALL_TOOLCHAIN_ONLY=OFF is essential: this distribution explicitly
+# requests development tools (llc, opt, llvm-as/dis/link), whose installation
+# targets are omitted by the toolchain-only setting.
+components='LLVM;clang-cpp;clang;clang-resource-headers;llc;opt;llvm-as;llvm-dis;llvm-readobj;llvm-objdump;llvm-ar;llvm-nm;llvm-link'
+cmake -S llvm -B "$bld" -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+  -DCMAKE_INSTALL_PREFIX="$prefix" \
+  '-DCMAKE_INSTALL_RPATH=$ORIGIN/../lib;$ORIGIN/../lib64' \
+  -DLLVM_ENABLE_PROJECTS=clang \
+  -DLLVM_ENABLE_RUNTIMES= \
+  -DLLVM_TARGETS_TO_BUILD=X86 \
+  -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=SH \
+  -DLLVM_BUILD_LLVM_DYLIB=ON \
+  -DLLVM_LINK_LLVM_DYLIB=ON \
+  -DCLANG_LINK_CLANG_DYLIB=ON \
+  -DLLVM_ENABLE_ASSERTIONS=ON \
+  -DLLVM_INSTALL_TOOLCHAIN_ONLY=OFF \
+  "-DLLVM_DISTRIBUTION_COMPONENTS=${components}" \
+  -DCLANG_ENABLE_CIR=OFF \
+  -DLLVM_ENABLE_LIBEDIT=ON \
+  -DLLVM_ENABLE_LIBXML2=ON \
+  -DLLVM_ENABLE_ZLIB=ON \
+  -DLLVM_ENABLE_ZSTD=ON \
+  -DLLVM_ENABLE_LZMA=ON \
+  -DLLVM_ENABLE_LIBPFM=OFF \
+  -DLLVM_ENABLE_CURL=OFF \
+  -DLLVM_PARALLEL_LINK_JOBS=1 \
+  -DLLVM_BUILD_DOCS=OFF -DLLVM_INCLUDE_TESTS=OFF \
+  -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF
+
+cmake --build "$bld" --target distribution --parallel 2
+DESTDIR="$pkgroot" cmake --build "$bld" --target install-distribution --parallel 2
+
+test -x "$stage/bin/clang"
+test -x "$stage/bin/llc"
+test -x "$stage/bin/llvm-readobj"
+mkdir -p "$stage/share/doc/llvm-sh"
+cp llvm/LICENSE.TXT "$stage/share/doc/llvm-sh/LICENSE-LLVM.txt"
+cp clang/LICENSE.TXT "$stage/share/doc/llvm-sh/LICENSE-CLANG.txt"
+cat > "$stage/BUILDINFO.txt" <<EOF
+LLVM SH private RC1 CI build (not the originally qualified binary)
+tag=llvm-sh-rc1
+commit=$actual
+tree=$tree
+package_format=$format
+host=$(uname -srm)
+llvm_enable_projects=clang
+llvm_targets=X86;SH(experimental)
+no GNU SH4 sysroot, no QEMU, no Doom, no LLVM runtimes
+EOF
+
+# Test the staged binaries without LD_LIBRARY_PATH overriding RPATH behavior.
+unset LD_LIBRARY_PATH || true
+"$stage/bin/clang" --version
+printf 'int sh_add(int a,int b){return a+b;}\n' > "$RUNNER_TEMP/llvm-sh-smoke.c"
+"$stage/bin/clang" --target=sh4-unknown-linux-gnu -m4 \
+  -c "$RUNNER_TEMP/llvm-sh-smoke.c" -o "$RUNNER_TEMP/llvm-sh-smoke.o"
+"$stage/bin/llvm-readobj" --file-headers "$RUNNER_TEMP/llvm-sh-smoke.o" \
+  | tee "$out/smoke-$format.txt" | grep -E -q 'EM_SH|SuperH'
+
+# Package the already staged installation with CPack's native DEB/RPM generators.
+# It must occupy /opt/llvm-sh/rc1 inside the package (not the CI build path).
+config="$RUNNER_TEMP/CPack-llvm-sh-$format.cmake"
+cpackdir="$RUNNER_TEMP/cpack-output-$format"
+mkdir -p "$cpackdir"
+cat > "$config" <<EOF
+set(CPACK_PACKAGE_NAME "llvm-sh-clang")
+set(CPACK_PACKAGE_VERSION "0.1.0")
+set(CPACK_PACKAGE_CONTACT "Pierre-Marc Jobin <pmjobin@users.noreply.github.com>")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Experimental LLVM/Clang SuperH RC1 host toolchain")
+set(CPACK_PACKAGE_DESCRIPTION "Experimental LLVM and Clang RC1 toolchain with SH4 code-generation support. Does not include a target GNU sysroot or emulator.")
+set(CPACK_PACKAGE_VENDOR "LLVM SH project")
+set(CPACK_PACKAGING_INSTALL_PREFIX "/")
+set(CPACK_INSTALLED_DIRECTORIES "$stage;opt/llvm-sh/rc1")
+set(CPACK_PACKAGE_DIRECTORY "$cpackdir")
+set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)
+EOF
+if [[ "$format" == deb ]]; then
+  cat >> "$config" <<EOF
+set(CPACK_GENERATOR "DEB")
+set(CPACK_PACKAGE_FILE_NAME "llvm-sh-rc1-ubuntu2604-amd64")
+set(CPACK_DEBIAN_PACKAGE_NAME "llvm-sh-clang")
+set(CPACK_DEBIAN_PACKAGE_VERSION "0.1.0~rc1")
+set(CPACK_DEBIAN_PACKAGE_RELEASE "1")
+set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Pierre-Marc Jobin <pmjobin@users.noreply.github.com>")
+set(CPACK_DEBIAN_PACKAGE_SECTION "devel")
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS_PRIVATE_DIRS "$stage/lib;$stage/lib64")
+EOF
+else
+  cat >> "$config" <<EOF
+set(CPACK_GENERATOR "RPM")
+set(CPACK_PACKAGE_FILE_NAME "llvm-sh-rc1-fedora45-x86_64")
+set(CPACK_RPM_PACKAGE_NAME "llvm-sh-clang")
+set(CPACK_RPM_PACKAGE_VERSION "0.1.0")
+set(CPACK_RPM_PACKAGE_RELEASE "0.rc1.1")
+set(CPACK_RPM_PACKAGE_ARCHITECTURE "x86_64")
+set(CPACK_RPM_PACKAGE_LICENSE "Apache-2.0 WITH LLVM-exception")
+set(CPACK_RPM_PACKAGE_AUTOREQPROV ON)
+EOF
+fi
+cpack --config "$config" --verbose
+case "$format" in
+  deb) cp "$cpackdir"/*.deb "$out/" ;;
+  rpm) cp "$cpackdir"/*.rpm "$out/" ;;
+esac
+
+if [[ "$format" == deb ]]; then
+  file="$(find "$out" -maxdepth 1 -name '*.deb' -print -quit)"
+  test -f "$file"
+  dpkg-deb --field "$file"
+  dpkg-deb --contents "$file" | grep -F '/opt/llvm-sh/rc1/bin/clang' || {
+    echo 'Package missing /opt/llvm-sh/rc1/bin/clang' >&2; exit 10;
+  }
+  # The package manager verifies dependencies and actual installation.
+  sudo apt-get install -y "$file"
+else
+  file="$(find "$out" -maxdepth 1 -name '*.rpm' -print -quit)"
+  test -f "$file"
+  rpm -qp --requires "$file"
+  rpm -qpl "$file" | grep -F '/opt/llvm-sh/rc1/bin/clang' || {
+    echo 'Package missing /opt/llvm-sh/rc1/bin/clang' >&2; exit 10;
+  }
+  dnf install -y "$file"
+fi
+# Smoke-test the actual installed package as well as the staged install.
+"$prefix/bin/clang" --version
+"$prefix/bin/clang" --target=sh4-unknown-linux-gnu -m4 \
+  -c "$RUNNER_TEMP/llvm-sh-smoke.c" -o "$RUNNER_TEMP/installed-sh4.o"
+"$prefix/bin/llvm-readobj" --file-headers "$RUNNER_TEMP/installed-sh4.o" \
+  | grep -E -q 'EM_SH|SuperH'
+(cd "$out" && sha256sum "$(basename "$file")" > "$(basename "$file").sha256")
+
+# The Fedora RPM job additionally publishes a movable Linux ZIP of the SAME
+# installed LLVM + Clang files. Do not recompile or rebuild the compiler.
+# Keep Unix executable permissions and symbolic links (zip -y / --symlinks).
+if [[ "$format" == rpm ]]; then
+  portable_zip="$out/llvm-sh-rc1-fedora45-linux-x86_64.zip"
+  zip_base="${pkgroot}${prefix%/*}" # contains the installed rc1/ directory
+  test -d "$zip_base/rc1/bin"
+  # Reject absolute installed symlinks: they would break when the ZIP moves.
+  while IFS= read -r -d '' link; do
+    target="$(readlink "$link")"
+    if [[ "$target" == /* ]]; then
+      echo "Non-relocatable absolute symlink: $link -> $target" >&2
+      exit 12
+    fi
+  done < <(find "$stage" -type l -print0)
+
+  ( cd "$zip_base" && zip -q -r -y "$portable_zip" rc1 )
+  unzip -tq "$portable_zip"
+
+  # Unzip into a completely different directory and smoke-test from there.
+  portable_test="$RUNNER_TEMP/llvm-sh-rc1-zip-relocation"
+  mkdir -p "$portable_test"
+  ( cd "$portable_test" && unzip -q "$portable_zip" )
+  portable="$portable_test/rc1"
+  test -x "$portable/bin/clang"
+  test -x "$portable/bin/llc"
+  test -x "$portable/bin/llvm-readobj"
+  if [[ -L "$stage/bin/clang++" && ! -L "$portable/bin/clang++" ]]; then
+    echo 'ZIP extraction did not preserve clang++ symlink' >&2
+    exit 13
+  fi
+  "$portable/bin/clang" --version
+  "$portable/bin/clang" --target=sh4-unknown-linux-gnu -m4 \
+    -c "$RUNNER_TEMP/llvm-sh-smoke.c" \
+    -o "$RUNNER_TEMP/portable-zip-sh4.o"
+  "$portable/bin/llvm-readobj" --file-headers \
+    "$RUNNER_TEMP/portable-zip-sh4.o" \
+    | tee "$out/smoke-linux-zip.txt" | grep -E -q 'EM_SH|SuperH'
+
+  ( cd "$out" && sha256sum "$(basename "$portable_zip")" \
+    > "$(basename "$portable_zip").sha256" )
+fi
+ls -lah "$out"

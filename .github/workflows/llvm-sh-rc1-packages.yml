@@ -1,0 +1,139 @@
+# This workflow builds LLVM + Clang only, from the immutable RC1 tag.
+# It never creates/moves tags, pushes commits, or publishes GitHub Releases.
+name: LLVM SH RC1 packages (DEB, RPM, Windows)
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload_artifacts:
+        description: 'Upload downloadable CI artifacts (review redistribution rights first)'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: llvm-sh-rc1-packages
+  cancel-in-progress: false
+
+jobs:
+  ubuntu-deb:
+    name: Ubuntu 26.04 / DEB (amd64)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 330
+    steps:
+      - name: Check out CI scripts only (workflow branch)
+        uses: actions/checkout@v6
+        with:
+          path: automation
+          sparse-checkout: .github/ci
+          persist-credentials: false
+      - name: Check out immutable compiler source tag
+        uses: actions/checkout@v6
+        with:
+          ref: llvm-sh-rc1
+          path: source
+          persist-credentials: false
+      - name: Install build/packaging prerequisites
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            clang lld cmake ninja-build python3 git binutils dpkg-dev \
+            libedit-dev libxml2-dev zlib1g-dev libzstd-dev liblzma-dev
+      - name: Build, package, install and smoke test
+        shell: bash
+        run: bash automation/.github/ci/build-llvm-sh-linux.sh deb
+      - name: Upload package for review (explicit opt-in)
+        if: ${{ inputs.upload_artifacts }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: llvm-sh-rc1-ubuntu2604-deb-amd64
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  fedora-rpm:
+    name: Fedora 45 / RPM (x86_64)
+    runs-on: ubuntu-26.04
+    container: fedora:45
+    timeout-minutes: 330
+    steps:
+      - name: Install build/packaging prerequisites in Fedora container
+        shell: bash
+        run: |
+          dnf -y --setopt=install_weak_deps=False install \
+            git clang lld cmake ninja-build python3 gcc gcc-c++ binutils \
+            rpm-build rpmdevtools libedit-devel libxml2-devel \
+            zlib-devel libzstd-devel xz-devel tar gzip zip unzip findutils which
+      - name: Check out CI scripts only (workflow branch)
+        uses: actions/checkout@v6
+        with:
+          path: automation
+          sparse-checkout: .github/ci
+          persist-credentials: false
+      - name: Check out immutable compiler source tag
+        uses: actions/checkout@v6
+        with:
+          ref: llvm-sh-rc1
+          path: source
+          persist-credentials: false
+      - name: Build, package, install and smoke test
+        shell: bash
+        run: bash automation/.github/ci/build-llvm-sh-linux.sh rpm
+      - name: Upload package for review (explicit opt-in)
+        if: ${{ inputs.upload_artifacts }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: llvm-sh-rc1-fedora45-rpm-x86_64
+          path: |
+            dist/*.rpm
+            dist/*.rpm.sha256
+            dist/smoke-rpm.txt
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload Fedora-built Linux portable ZIP for review (explicit opt-in)
+        if: ${{ inputs.upload_artifacts }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: llvm-sh-rc1-fedora45-linux-zip-x86_64
+          path: |
+            dist/llvm-sh-rc1-fedora45-linux-x86_64.zip
+            dist/llvm-sh-rc1-fedora45-linux-x86_64.zip.sha256
+            dist/smoke-linux-zip.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-zip:
+    name: Windows Server 2022 / ZIP (x64)
+    runs-on: windows-2022
+    timeout-minutes: 330
+    steps:
+      - name: Keep checkout line endings intact
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - name: Check out CI scripts only (workflow branch)
+        uses: actions/checkout@v6
+        with:
+          path: automation
+          sparse-checkout: .github/ci
+          persist-credentials: false
+      - name: Check out immutable compiler source tag
+        uses: actions/checkout@v6
+        with:
+          ref: llvm-sh-rc1
+          path: source
+          persist-credentials: false
+      - name: Build, ZIP and smoke test
+        shell: pwsh
+        run: ./automation/.github/ci/build-llvm-sh-windows.ps1
+      - name: Upload package for review (explicit opt-in)
+        if: ${{ inputs.upload_artifacts }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: llvm-sh-rc1-windows-x64
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
