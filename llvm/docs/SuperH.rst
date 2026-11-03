@@ -125,9 +125,32 @@ were accepted and a corrupted ELF machine field was rejected. A separate
 configure-only Ninja graph check confirmed that the backend build excludes
 Clang sources and the optional validation targets exist. These checks
 do not run native MSVC. Local sccache measurements are unavailable because
-the local compilation used the Linux compilers directly. Native MSVC
-compatibility, Windows lit applicability, cold/warm Windows timings, and
-cache effectiveness remain unqualified until real GitHub Windows runs pass.
+the local compilation used the Linux compilers directly.
+
+The first `native Windows PR run
+<https://github.com/pmjobin/llvm-project/actions/runs/41666512976>`_ passed
+on commit ``2ec6088b23bafccaa1d78e5578f5c790a197d683`` with Visual Studio
+2022 x64 ``cl.exe`` 19.44.35229.0, CMake 3.31.6, Ninja 1.13.2, and sccache
+0.17.0. CMake identified both compilers as MSVC and targeted SH only; the
+log records compilation of all 27 SH CodeGen sources, including
+``SHISelLowering.cpp``, and creation of ``LLVMSHCodeGen.lib``. Configuration
+took 31.88 seconds and the cold backend build took 3263.87 seconds
+(54 minutes 23.87 seconds). The complete job took 57 minutes 12 seconds.
+The cold cache recorded 1,722 misses, zero hits, zero compilation failures,
+zero cache errors, and zero non-cacheable compilations; all entries fit in
+834 MiB of the 2 GiB cache, which was saved successfully. The empty-cache
+build is costly because LLVM support dependencies compile before SH.
+Warm-cache speed still needs measurement before claiming a fast CI loop.
+
+The native build emitted two nonfatal C4018 warnings at the existing
+unsigned-value comparisons with positive signed limits in
+``SHInstrInfo.cpp`` (lines 307 and 318), plus an upstream C4996 deprecation
+warning in ``llvm/lib/IR/Core.cpp``. No further MSVC compilation errors
+occurred. The runner also reported that the pinned MSVC environment action
+targets deprecated Node.js 20 and was successfully run with Node.js 24.
+These diagnostics do not require changing unrelated LLVM components.
+The optional full stage was skipped: Windows-hosted Clang ELF objects,
+Windows lit applicability, and Windows regression results remain unqualified.
 The frozen ``llvm-sh-rc1`` tag and release-packaging workflow are unchanged.
 
 GNU ABI and C++
