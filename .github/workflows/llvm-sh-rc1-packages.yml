@@ -5,6 +5,15 @@ name: LLVM SH RC1 packages (DEB, RPM, Windows)
 on:
   workflow_dispatch:
     inputs:
+      platform:
+        description: 'Platforms to build (all preserves the original default)'
+        required: false
+        type: choice
+        options:
+          - all
+          - linux
+          - windows
+        default: all
       upload_artifacts:
         description: 'Upload downloadable CI artifacts (review redistribution rights first)'
         required: true
@@ -20,6 +29,7 @@ concurrency:
 
 jobs:
   ubuntu-deb:
+    if: ${{ inputs.platform != 'windows' }}
     name: Ubuntu 26.04 / DEB (amd64)
     runs-on: ubuntu-26.04
     timeout-minutes: 330
@@ -56,6 +66,7 @@ jobs:
           retention-days: 14
 
   fedora-rpm:
+    if: ${{ inputs.platform != 'windows' }}
     name: Fedora 45 / RPM (x86_64)
     runs-on: ubuntu-26.04
     container: fedora:45
@@ -92,6 +103,8 @@ jobs:
             dist/*.rpm
             dist/*.rpm.sha256
             dist/smoke-rpm.txt
+            dist/*-rpm.txt
+            dist/timings.tsv
           if-no-files-found: error
           retention-days: 14
       - name: Upload Fedora-built Linux portable ZIP for review (explicit opt-in)
@@ -103,10 +116,12 @@ jobs:
             dist/llvm-sh-rc1-fedora45-linux-x86_64.zip
             dist/llvm-sh-rc1-fedora45-linux-x86_64.zip.sha256
             dist/smoke-linux-zip.txt
+            dist/*-linux-zip.txt
           if-no-files-found: error
           retention-days: 14
 
   windows-zip:
+    if: ${{ inputs.platform != 'linux' }}
     name: Windows Server 2022 / ZIP (x64)
     runs-on: windows-2022
     timeout-minutes: 330
