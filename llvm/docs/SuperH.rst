@@ -40,6 +40,96 @@ The driver diagnoses unsupported selectors and incompatible CPU, FPU, tune,
 or ABI combinations. Family encoding definitions and compile-only tests do
 not imply SH2, SH3, SH2A, SH4A, DSP, or big-endian application qualification.
 
+Native MSVC development on Windows
+----------------------------------
+
+``.github/workflows/llvm-sh-msvc-dev.yml`` provides a separate development
+check on ``windows-2022`` with Visual Studio 2022's native ``cl.exe``, Ninja,
+and sccache. Pull requests targeting ``llvm-sh`` build the PR source commit;
+manual runs build the selected branch commit. The first build target is
+``LLVMSHCodeGen`` with no enabled Clang project, no other target backends, and
+no packaging. Ninja stops scheduling work after the first compilation error.
+LLVM support libraries and TableGen dependencies still need to build on a
+cold runner. A bounded 2 GiB sccache disk cache is restored and saved using
+GitHub Actions caching, following the existing LLVM CI cache pattern.
+
+After pushing the development branch, open a PR targeting ``llvm-sh`` for
+the default backend check. To run it manually with GitHub CLI::
+
+  git push -u origin fix/sh-msvc-portability
+  gh workflow run llvm-sh-msvc-dev.yml --ref fix/sh-msvc-portability
+
+The Actions UI also supports selecting this workflow and branch. GitHub
+requires a ``workflow_dispatch`` workflow to exist on the repository's
+default branch before manual dispatch is available; the PR trigger can
+test a newly added workflow before that. Full validation is an explicit
+manual opt-in, after the backend passes::
+
+  gh workflow run llvm-sh-msvc-dev.yml --ref fix/sh-msvc-portability \
+    -f full_validation=true
+  gh run list --workflow llvm-sh-msvc-dev.yml --branch fix/sh-msvc-portability
+  gh run view RUN_ID --log-failed
+
+Full validation installs Python's ``psutil`` dependency for lit timeouts,
+reuses the same build tree, enables and builds Clang plus
+LLVM/Clang test dependencies, and compiles a C function for both
+``shle-unknown-linux-gnu`` and ``sh-unknown-linux-gnu``. It checks ELF32,
+endianness, relocatable type, ``EM_SH``, code, and the function symbol.
+It then runs ``llvm/test/CodeGen/SH``, ``llvm/test/MC/SH``, the Clang
+``sh-*`` tests, and ``clang/test/CodeGen/SH`` through lit. Platform feature
+requirements determine which tests are applicable; unsupported tests must
+be distinguished from passing tests in the reports. This does not test
+target execution, a GNU sysroot, or distribution packaging.
+
+Each run records the source revision, native compiler path and ``/Bv``
+identity, CMake/Ninja/sccache versions, elapsed command times and exit codes,
+compiler diagnostics, and sccache statistics. Optional validation adds ELF
+objects, inspection logs, and lit XML results. The job summary and the
+``sh-msvc-dev-RUN_ID-ATTEMPT`` diagnostic artifact remain available after
+failure; artifact retention is 14 days. Compare backend time and cache hits
+on cold and warm runs before making speed claims.
+
+For local iterations, start PowerShell 7 from an **x64 Native Tools Command
+Prompt for VS 2022**, with Ninja, CMake, Python, and sccache on ``PATH``::
+
+  pwsh -NoProfile
+  ./.github/ci/test-llvm-sh-msvc.ps1 -Stage Backend
+  # Run only when full validation is wanted:
+  ./.github/ci/test-llvm-sh-msvc.ps1 -Stage Validate
+  ./.github/ci/test-llvm-sh-msvc.ps1 -Stage Report
+
+Local defaults put builds and logs in ``%TEMP%/llvm-sh-msvc-dev-build`` and
+``%TEMP%/llvm-sh-msvc-dev-logs``. Optional ``-BuildDir`` and ``-LogDir``
+arguments support other out-of-source locations; use the same directories
+for each stage. Repeating the backend stage on a reused build directory
+resets the enabled projects to the backend-only configuration.
+
+The MSVC portability fix compares each instruction operand's explicit
+``Use::get()`` value with the positive ``ConstantFP`` pointer. This preserves
+the existing size-optimized signed-double-literal sharing policy while
+avoiding the rejected heterogeneous comparison inside ``is_contained``.
+
+Local validation on 2026-11-03 compiled ``SHISelLowering.cpp`` with Linux
+Clang 22.1.8 (5.53 seconds) and GCC 16.2.1 (10.16 seconds), with no compiler
+diagnostics. Matching existing generated headers and support libraries were
+reused; all 2,406 LLVM header files and the other 79 SH files matched the
+current sources. Replacing the compiled object in a separate SH archive and
+relinking a separate LLVM library took 0.60 seconds. Against that rebuilt
+library, all 641 LLVM SH CodeGen/MC tests passed (16.61 seconds), as did all
+94 selected Clang SH tests (13.32 seconds). The signed-double-literal test
+also passed independently in both endian modes and argument ABIs.
+``actionlint`` 1.7.12 and PowerShell 7.6.9 parsing passed. Script control-flow
+checks used simulated build commands to verify backend isolation, failure
+propagation and report persistence; real Linux-hosted Clang smoke objects
+were accepted and a corrupted ELF machine field was rejected. A separate
+configure-only Ninja graph check confirmed that the backend build excludes
+Clang sources and the optional validation targets exist. These checks
+do not run native MSVC. Local sccache measurements are unavailable because
+the local compilation used the Linux compilers directly. Native MSVC
+compatibility, Windows lit applicability, cold/warm Windows timings, and
+cache effectiveness remain unqualified until real GitHub Windows runs pass.
+The frozen ``llvm-sh-rc1`` tag and release-packaging workflow are unchanged.
+
 GNU ABI and C++
 ---------------
 
