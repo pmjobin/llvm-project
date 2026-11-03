@@ -41,6 +41,7 @@ jobs:
             clang
             cmake
             third-party
+            libc
       - name: Select Visual Studio 2022 native x64 tools
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
         with:

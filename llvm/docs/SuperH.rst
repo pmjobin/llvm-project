@@ -46,7 +46,9 @@ Native MSVC development on Windows
 ``.github/workflows/llvm-sh-msvc-dev.yml`` provides a separate development
 check on ``windows-2022`` with Visual Studio 2022's native ``cl.exe``, Ninja,
 and sccache. Checkout includes LLVM, Clang, their CMake/third-party
-dependencies, and the CI scripts, omitting unrelated monorepo projects.
+dependencies, libc common headers, and the CI scripts, omitting unrelated
+monorepo projects. The libc headers are an unconditional LLVM configuration
+dependency; their presence does not enable any libc runtime build.
 Pull requests targeting ``llvm-sh`` build the PR source commit;
 manual runs build the selected branch commit. The first build target is
 ``LLVMSHCodeGen`` with no enabled Clang project, no other target backends, and
@@ -64,7 +66,13 @@ the default backend check. To run it manually with GitHub CLI::
 The Actions UI also supports selecting this workflow and branch. GitHub
 requires a ``workflow_dispatch`` workflow to exist on the repository's
 default branch before manual dispatch is available; the PR trigger can
-test a newly added workflow before that. Full validation is an explicit
+test a newly added workflow before that. GitHub scopes caches created by a
+PR run to that PR. After the workflow is merged, run the backend once on
+``llvm-sh`` to seed a base-branch cache that future PRs can restore::
+
+  gh workflow run llvm-sh-msvc-dev.yml --ref llvm-sh
+
+Full validation is an explicit
 manual opt-in, after the backend passes::
 
   gh workflow run llvm-sh-msvc-dev.yml --ref fix/sh-msvc-portability \
@@ -156,8 +164,13 @@ Source/compiler changes and cache eviction can increase later build times.
 
 The warm run spent 2 minutes 34 seconds checking out the full monorepo.
 The workflow now narrows checkout to the source directories listed above.
-Local configuration with that source subset verified both backend and
-optional full-validation dependency targets without compiling LLVM/Clang.
+The subset must include ``libc`` for ``FindLibcCommonUtils`` even though
+``LLVM_ENABLE_RUNTIMES`` is empty. This dependency is checked during CMake
+configuration, before the compiler cache can help. An isolated sparse
+worktree configuration checked both backend and optional Clang validation
+dependency targets without building LLVM/Clang. Directory symlinks are
+unsuitable for this check because relative paths can escape into the
+complete source tree.
 
 The native build emitted two nonfatal C4018 warnings at the existing
 unsigned-value comparisons with positive signed limits in
