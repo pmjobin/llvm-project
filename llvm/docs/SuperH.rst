@@ -45,7 +45,9 @@ Native MSVC development on Windows
 
 ``.github/workflows/llvm-sh-msvc-dev.yml`` provides a separate development
 check on ``windows-2022`` with Visual Studio 2022's native ``cl.exe``, Ninja,
-and sccache. Pull requests targeting ``llvm-sh`` build the PR source commit;
+and sccache. Checkout includes LLVM, Clang, their CMake/third-party
+dependencies, and the CI scripts, omitting unrelated monorepo projects.
+Pull requests targeting ``llvm-sh`` build the PR source commit;
 manual runs build the selected branch commit. The first build target is
 ``LLVMSHCodeGen`` with no enabled Clang project, no other target backends, and
 no packaging. Ninja stops scheduling work after the first compilation error.
@@ -140,7 +142,22 @@ The cold cache recorded 1,722 misses, zero hits, zero compilation failures,
 zero cache errors, and zero non-cacheable compilations; all entries fit in
 834 MiB of the 2 GiB cache, which was saved successfully. The empty-cache
 build is costly because LLVM support dependencies compile before SH.
-Warm-cache speed still needs measurement before claiming a fast CI loop.
+The `warm-cache PR update
+<https://github.com/pmjobin/llvm-project/actions/runs/41676793100>`_ also
+passed on a fresh Windows runner after documentation-only commit
+``f22b9e33b49f8e12d7442a6cad0b2e13ab8c0ed6``. GitHub restored the saved
+cache successfully. The backend build took 283.80 seconds (4 minutes
+43.80 seconds), 11.50 times faster than the cold build. Configuration took
+48.32 seconds and the complete job took 9 minutes 2 seconds. sccache
+reported 1,719 hits and three misses from 1,722 requests (99.83% hits),
+zero compilation/cache errors, and a final cache size of 837 MiB. These
+are measured runs with two build jobs, not guarantees for every runner.
+Source/compiler changes and cache eviction can increase later build times.
+
+The warm run spent 2 minutes 34 seconds checking out the full monorepo.
+The workflow now narrows checkout to the source directories listed above.
+Local configuration with that source subset verified both backend and
+optional full-validation dependency targets without compiling LLVM/Clang.
 
 The native build emitted two nonfatal C4018 warnings at the existing
 unsigned-value comparisons with positive signed limits in

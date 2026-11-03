@@ -35,6 +35,12 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+          sparse-checkout: |
+            .github
+            llvm
+            clang
+            cmake
+            third-party
       - name: Select Visual Studio 2022 native x64 tools
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
         with:
