@@ -180,6 +180,9 @@ void SHTargetInfo::getTargetDefines(const LangOptions &Opts,
     Builder.defineMacro("__SH2__");
   }
   Builder.defineMacro(BigEndian ? "__BIG_ENDIAN__" : "__LITTLE_ENDIAN__");
+  // Floating-point words follow the byte order for both SH ELF endiannesses.
+  Builder.defineMacro("__FLOAT_WORD_ORDER__", BigEndian ? "__ORDER_BIG_ENDIAN__"
+                                                     : "__ORDER_LITTLE_ENDIAN__");
 }
 
 bool SHTargetInfo::initFeatureMap(

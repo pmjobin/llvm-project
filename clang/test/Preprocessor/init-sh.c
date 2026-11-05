@@ -133,8 +133,10 @@
 // COMMON-DAG: #define __sh__ 1
 // SH-DAG: #define __BIG_ENDIAN__ 1
 // SH-DAG: #define __BYTE_ORDER__ __ORDER_BIG_ENDIAN__
+// SH-DAG: #define __FLOAT_WORD_ORDER__ __ORDER_BIG_ENDIAN__
 // SHLE-DAG: #define __LITTLE_ENDIAN__ 1
 // SHLE-DAG: #define __BYTE_ORDER__ __ORDER_LITTLE_ENDIAN__
+// SHLE-DAG: #define __FLOAT_WORD_ORDER__ __ORDER_LITTLE_ENDIAN__
 // LINUX-DAG: #define __gnu_linux__ 1
 // LINUX-DAG: #define __linux__ 1
 
