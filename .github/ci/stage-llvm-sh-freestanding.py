@@ -42,6 +42,9 @@ def main():
                         "commands.json",
                         "toolchain.json",
                         "CMakeConfigureLog.yaml",
+                        "meson-log.txt",
+                        "intro-buildoptions.json",
+                        "intro-machines.json",
                     )
                 ):
                     dest = args.logs_dir / path.relative_to(args.build_dir)

@@ -136,8 +136,12 @@ jobs:
             dist/*-rpm.txt
             dist/timings.tsv
             dist/source-tests-rpm/**
+            dist/install-layout-rpm/**
+            dist/target-runtime-build/**
             dist/freestanding-staged-rpm/**
             dist/freestanding-rpm/**
+            dist/libraries-staged-rpm/**
+            dist/libraries-rpm/**
           if-no-files-found: error
           retention-days: 14
       - name: Upload Fedora-built Linux portable ZIP for review (explicit opt-in)
@@ -151,11 +155,48 @@ jobs:
             dist/smoke-linux-zip.txt
             dist/*-linux-zip.txt
             dist/freestanding-linux-zip/**
+            dist/libraries-linux-zip/**
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-runtime-staging:
+    needs: validate-candidate
+    if: ${{ inputs.platform != 'linux' }}
+    name: Windows bare-metal install layout
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - name: Check out pinned runtime recipes
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          path: source
+          sparse-checkout: runtimes/sh
+          persist-credentials: false
+      - name: Set up runtime-build Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Check target prefix and native staging paths before building LLVM
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check meson==1.12.1 ninja==1.13.0
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime build tool installation failed' }
+          python source/runtimes/sh/check-install-layout.py `
+            --build-dir "$env:RUNNER_TEMP/SH install layout with spaces" `
+            --logs-dir dist/install-layout-windows
+          if ($LASTEXITCODE -ne 0) { throw 'Bare-metal runtime install layout failed' }
+      - name: Upload install layout receipt (explicit opt-in)
+        if: ${{ always() && inputs.upload_artifacts }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: llvm-sh-rc1-windows-install-layout
+          path: dist/install-layout-windows/**
           if-no-files-found: error
           retention-days: 14
 
   windows-zip:
-    needs: validate-candidate
+    needs: [validate-candidate, windows-runtime-staging]
     if: ${{ inputs.platform != 'linux' }}
     name: Windows Server 2022 / ZIP (x64)
     runs-on: windows-2022
@@ -186,6 +227,14 @@ jobs:
           python -m pip install --disable-pip-version-check psutil meson==1.12.1 ninja==1.13.0
           if ($LASTEXITCODE -ne 0) { throw 'lit timeout dependency installation failed' }
           ./automation/.github/ci/build-llvm-sh-windows.ps1
+      - name: Preserve installed native tools for runtime debugging after failure
+        if: ${{ failure() && inputs.upload_artifacts }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: llvm-sh-rc1-native-windows-tools-for-debugging
+          path: ${{ runner.temp }}/llvm-sh-rc1/**
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Upload package and qualification receipts for review (explicit opt-in)
         if: ${{ always() && inputs.upload_artifacts }}
         uses: actions/upload-artifact@v6

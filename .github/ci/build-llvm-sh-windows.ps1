@@ -117,6 +117,12 @@ Invoke-Timed 'stage' {
     if ($LASTEXITCODE -ne 0) { throw "Windows component installation failed: $component" }
   }
 }
+# Keep the host tools' licenses available even if target-runtime staging fails.
+$doc = Join-Path $stage 'share/doc/llvm-sh'
+New-Item -ItemType Directory -Force -Path $doc | Out-Null
+Copy-Item (Join-Path $source 'llvm/LICENSE.TXT') (Join-Path $doc 'LICENSE-LLVM.txt')
+Copy-Item (Join-Path $source 'clang/LICENSE.TXT') (Join-Path $doc 'LICENSE-CLANG.txt')
+Copy-Item (Join-Path $source 'lld/LICENSE.TXT') (Join-Path $doc 'LICENSE-lld.txt')
 Invoke-Timed 'target-runtime' {
   & python (Join-Path $source '.github/ci/stage-llvm-sh-freestanding.py') `
     --source $source --prefix $stage --build-dir (Join-Path $env:RUNNER_TEMP 'sh4-runtime-build') `
@@ -137,10 +143,6 @@ if (!(Test-Path (Join-Path $resourceVersion 'include/stddef.h'))) {
   throw "Clang resource headers missing from staged installation: $resourceVersion"
 }
 
-$doc = Join-Path $stage 'share/doc/llvm-sh'
-New-Item -ItemType Directory -Force -Path $doc | Out-Null
-Copy-Item (Join-Path $source 'llvm/LICENSE.TXT') (Join-Path $doc 'LICENSE-LLVM.txt')
-Copy-Item (Join-Path $source 'clang/LICENSE.TXT') (Join-Path $doc 'LICENSE-CLANG.txt')
 @"
 LLVM SH RC1 Windows x64 reissue candidate (UNPUBLISHED)
 published_tag_unchanged=llvm-sh-rc1

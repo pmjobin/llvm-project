@@ -44,6 +44,9 @@ timed() {
 }
 printf 'release=RC1 reissue candidate (unpublished)\ncommit=%s\ntree=%s\n' "$actual" "$tree" \
   | tee "$out/source-$format.txt"
+timed install-layout python3 runtimes/sh/check-install-layout.py \
+  --build-dir "$RUNNER_TEMP/sh-install-layout-check" \
+  --logs-dir "$out/install-layout-$format"
 # Remember the system compiler before package installation.
 system_clang="$(command -v clang)"
 system_clang_real="$(readlink -f "$system_clang")"
