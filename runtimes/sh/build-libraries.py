@@ -21,6 +21,10 @@ import sys
 import tarfile
 import urllib.request
 
+# Meson validates the install prefix using the bare-metal target's POSIX path
+# rules. Native build-machine paths, including Windows drives, belong in DESTDIR.
+MESON_PREFIX = "/"
+
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -231,7 +235,7 @@ def main():
         "--cross-file",
         cross,
         "--prefix",
-        sysroot,
+        MESON_PREFIX,
         "--libdir",
         "lib",
         "--buildtype",
@@ -253,7 +257,10 @@ def main():
         configure.append("--wipe" if changed_toolchain else "--reconfigure")
     run(configure, "picolibc-configure")
     run(["ninja", "-C", pico_build, "-j", args.jobs], "picolibc-build")
-    run(["meson", "install", "-C", pico_build, "--no-rebuild"], "picolibc-install")
+    run(
+        ["meson", "install", "-C", pico_build, "--no-rebuild", "--destdir", sysroot],
+        "picolibc-install",
+    )
     # Never distribute dummy OS implementations as a board support layer.
     for name in ("libdummyhost.a", "libg.a", "libnosys.a"):
         (sysroot / "lib" / name).unlink(missing_ok=True)

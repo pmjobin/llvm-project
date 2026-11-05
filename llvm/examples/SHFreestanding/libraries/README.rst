@@ -145,3 +145,8 @@ target tools, and are separate from the native host compiler build.
 Compiler, archive-tool, source-pin, profile and recipe fingerprints invalidate
 runtime object caches when their inputs change. Compiler provenance is recorded
 in the manifest; target objects omit compiler-identification comment sections.
+
+Meson uses the bare-metal target's ``/`` prefix and installs through a native
+``--destdir``, including Windows drive paths. The inexpensive
+``runtimes/sh/check-install-layout.py`` check exercises that installation with
+spaces in its paths before CI builds LLVM; it does not qualify target code.
