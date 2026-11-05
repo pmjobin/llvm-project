@@ -1,0 +1,88 @@
+# RUN: yaml2obj --docnum=1 %s -o %t.pad.o
+# RUN: yaml2obj --docnum=2 %s -o %t.o
+# RUN: ld.lld -r %t.pad.o %t.o -o %t.r.o
+# RUN: llvm-readobj -r -x .data -x .debug_info %t.r.o | FileCheck %s --check-prefix=PARTIAL
+# RUN: ld.lld --image-base=0 -Ttext=0x1000 --section-start=.rodata=0x2000 --section-start=.data=0x3000 %t.pad.o %t.o -o %t.direct
+# RUN: ld.lld --image-base=0 -Ttext=0x1000 --section-start=.rodata=0x2000 --section-start=.data=0x3000 %t.r.o -o %t.indirect
+# RUN: llvm-readobj -x .data -x .debug_info %t.direct | FileCheck %s --check-prefix=FINAL
+# RUN: llvm-readobj -x .data -x .debug_info %t.indirect | FileCheck %s --check-prefix=FINAL
+# RUN: llvm-objcopy -O binary %t.direct %t.direct.bin
+# RUN: llvm-objcopy -O binary %t.indirect %t.indirect.bin
+# RUN: cmp %t.direct.bin %t.indirect.bin
+
+## The section symbol for the second .rodata moves by 16 in a partial link.
+## Adjust the partial-in-place addends in the contents, keeping r_addend=0.
+## The non-ALLOC debug section must use the same addend rules as .data.
+# PARTIAL: 0x0 R_SH_DIR32 .rodata 0x0
+# PARTIAL: 0x4 R_SH_REL32 .rodata 0x0
+# PARTIAL: 0x0 R_SH_DIR32 .rodata 0x0
+# PARTIAL: 0x00000000 0c000000 14000000
+# PARTIAL: 0x00000000 12000000
+# FINAL: 0x00003000 0c200000 10f0ffff
+# FINAL: 0x00000000 12200000
+
+--- !ELF
+FileHeader:
+  Class: ELFCLASS32
+  Data: ELFDATA2LSB
+  Type: ET_REL
+  Machine: EM_SH
+  Flags: [ EF_SH4 ]
+Sections:
+  - Name: .rodata
+    Type: SHT_PROGBITS
+    Flags: [ SHF_ALLOC ]
+    AddressAlign: 4
+    Content: '00000000000000000000000000000000'
+
+--- !ELF
+FileHeader:
+  Class: ELFCLASS32
+  Data: ELFDATA2LSB
+  Type: ET_REL
+  Machine: EM_SH
+  Flags: [ EF_SH4 ]
+Sections:
+  - Name: .text
+    Type: SHT_PROGBITS
+    Flags: [ SHF_ALLOC, SHF_EXECINSTR ]
+    Content: '0900'
+  - Name: .rodata
+    Type: SHT_PROGBITS
+    Flags: [ SHF_ALLOC ]
+    AddressAlign: 4
+    Content: '1122334455667788'
+  - Name: .data
+    Type: SHT_PROGBITS
+    Flags: [ SHF_ALLOC, SHF_WRITE ]
+    AddressAlign: 4
+    Content: 'FCFFFFFF04000000'
+  - Name: .rela.data
+    Type: SHT_RELA
+    Link: .symtab
+    Info: .data
+    Relocations:
+      - Offset: 0
+        Type: R_SH_DIR32
+        Symbol: .rodata
+      - Offset: 4
+        Type: R_SH_REL32
+        Symbol: .rodata
+  - Name: .debug_info
+    Type: SHT_PROGBITS
+    Content: '02000000'
+  - Name: .rela.debug_info
+    Type: SHT_RELA
+    Link: .symtab
+    Info: .debug_info
+    Relocations:
+      - Offset: 0
+        Type: R_SH_DIR32
+        Symbol: .rodata
+Symbols:
+  - Name: .rodata
+    Type: STT_SECTION
+    Section: .rodata
+  - Name: _start
+    Binding: STB_GLOBAL
+    Section: .text

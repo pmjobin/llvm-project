@@ -221,6 +221,43 @@ public:
     return {};
   }
 
+  void applyPCRel8Relocation(const MCFragment &F, const MCFixup &Fixup,
+                             const MCValue &Target, uint8_t *Data,
+                             uint64_t Value) {
+    // Absolute numeric operands also reach this path. Keep their existing
+    // handling, including the disassembler's numeric branch round trip.
+    if (!Target.getAddSym()) {
+      maybeAddReloc(F, Fixup, Target, Value, false);
+      return;
+    }
+    unsigned Scale = Fixup.getKind() == SH::fixup_SH_PCREL8_4 ? 4 : 2;
+    int64_t Addend = Target.getConstant();
+    if (Addend % Scale) {
+      getContext().reportError(Fixup.getLoc(),
+                               "SH relocation addend must be a multiple of " +
+                                   Twine(Scale));
+      return;
+    }
+    int64_t Encoded = Addend / Scale;
+    bool IsSigned = Fixup.getKind() == SH::fixup_SH_PCREL8_2;
+    if (IsSigned ? !isInt<8>(Encoded) : !isUInt<8>(Encoded)) {
+      getContext().reportError(Fixup.getLoc(),
+                               "SH relocation addend is out of range");
+      return;
+    }
+
+    // These relocations are partial-in-place even in RELA objects. In
+    // particular, r_addend is ignored by GNU SH linkers. Unlike IND12W, the
+    // PC+4 bias is applied by the linker rather than included in this addend.
+    MCValue RelocTarget =
+        MCValue::get(Target.getAddSym(), Target.getSubSym(), 0);
+    uint64_t RelocValue = 0;
+    maybeAddReloc(F, Fixup, RelocTarget, RelocValue, false);
+    uint16_t Word = support::endian::read<uint16_t>(Data, Endian);
+    Word = (Word & 0xff00) | (static_cast<uint16_t>(Encoded) & 0xff);
+    support::endian::write<uint16_t>(Data, Word, Endian);
+  }
+
   void applyFixup(const MCFragment &F, const MCFixup &Fixup,
                   const MCValue &Target, uint8_t *Data, uint64_t Value,
                   bool IsResolved) override {
@@ -279,7 +316,7 @@ public:
     }
     case SH::fixup_SH_PCREL8_4: {
       if (!IsResolved) {
-        maybeAddReloc(F, Fixup, Target, Value, IsResolved);
+        applyPCRel8Relocation(F, Fixup, Target, Data, Value);
         return;
       }
 
@@ -310,7 +347,7 @@ public:
     }
     case SH::fixup_SH_PCREL8_2_LITERAL: {
       if (!IsResolved) {
-        maybeAddReloc(F, Fixup, Target, Value, IsResolved);
+        applyPCRel8Relocation(F, Fixup, Target, Data, Value);
         return;
       }
 
@@ -332,6 +369,10 @@ public:
     case SH::fixup_SH_PCREL12_2:
     case SH::fixup_SH_BSR12_2: {
       if (!IsResolved) {
+        if (Fixup.getKind() == SH::fixup_SH_PCREL8_2) {
+          applyPCRel8Relocation(F, Fixup, Target, Data, Value);
+          return;
+        }
         MCValue RelocTarget = Target;
         if (Fixup.getKind() == SH::fixup_SH_BSR12_2 ||
             Fixup.getKind() == SH::fixup_SH_PCREL12_2) {

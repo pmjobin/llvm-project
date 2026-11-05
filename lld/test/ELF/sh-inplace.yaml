@@ -1,0 +1,81 @@
+# RUN: yaml2obj %s -o %t.le.o
+# RUN: yaml2obj -D ENC=ELFDATA2MSB -D TEXT=FFFFFFFBFFFFFFFCB5FF89FDD3029404FFFF1122 %s -o %t.be.o
+# RUN: ld.lld --image-base=0 -Ttext=0x1000 --defsym=external=0x1100 %t.le.o -o %t.le
+# RUN: ld.lld --image-base=0 -Ttext=0x1000 --defsym=external=0x1100 %t.be.o -o %t.be
+# RUN: llvm-readobj -x .text %t.le | FileCheck %s --check-prefix=LE
+# RUN: llvm-readobj -x .text %t.be | FileCheck %s --check-prefix=BE
+# RUN: ld.lld -r %t.le.o -o %t.r.o
+# RUN: llvm-readobj -r %t.r.o | FileCheck %s --check-prefix=RELOC
+# RUN: ld.lld --image-base=0 -Ttext=0x1000 --defsym=external=0x1100 %t.r.o -o %t.r
+# RUN: llvm-readobj -x .text %t.r | FileCheck %s --check-prefix=LE
+
+## Partial-in-place SH relocations ignore r_addend even in RELA. Conversely,
+## IND12W and DIR16 overwrite their field using only the explicit addend.
+## Include nonzero ignored fields/addends so an implementation cannot pass
+## by assuming either that all addends are explicit or that all are implicit.
+# LE: 0x00001000 fb100000 f8000000 7ab07689 3ed37b94
+# LE-NEXT: 0x00001010 fc101122
+# BE: 0x00001000 000010fb 000000f8 b07a8976 d33e947b
+# BE-NEXT: 0x00001010 10fc1122
+# RELOC: R_SH_DIR32 external 0x0
+# RELOC: R_SH_REL32 external 0x0
+# RELOC: R_SH_IND12W external 0xFFFFFFFC
+# RELOC: R_SH_DIR8WPN external 0x0
+# RELOC: R_SH_DIR8WPL external 0x0
+# RELOC: R_SH_DIR8WPZ external 0x0
+# RELOC: R_SH_DIR16 external 0xFFFFFFFC
+
+--- !ELF
+FileHeader:
+  Class: ELFCLASS32
+  Data: '[[ENC=ELFDATA2LSB]]'
+  Type: ET_REL
+  Machine: EM_SH
+  Flags: [ EF_SH4 ]
+Sections:
+  - Name: .text
+    Type: SHT_PROGBITS
+    Flags: [ SHF_ALLOC, SHF_EXECINSTR ]
+    AddressAlign: 4
+    Content: '[[TEXT=FBFFFFFFFCFFFFFFFFB5FD8902D30494FFFF1122]]'
+  - Name: .rela.text
+    Type: SHT_RELA
+    Link: .symtab
+    Info: .text
+    Relocations:
+      - Offset: 0
+        Type: R_SH_DIR32
+        Symbol: external
+        Addend: 0x1234
+      - Offset: 4
+        Type: R_SH_REL32
+        Symbol: external
+        Addend: -4660
+      - Offset: 8
+        Type: R_SH_IND12W
+        Symbol: external
+        Addend: -4
+      - Offset: 10
+        Type: R_SH_DIR8WPN
+        Symbol: external
+        Addend: 0x1234
+      - Offset: 12
+        Type: R_SH_DIR8WPL
+        Symbol: external
+        Addend: -4660
+      - Offset: 14
+        Type: R_SH_DIR8WPZ
+        Symbol: external
+        Addend: 0x1234
+      - Offset: 16
+        Type: R_SH_DIR16
+        Symbol: external
+        Addend: -4
+      - Offset: 18
+        Type: R_SH_NONE
+Symbols:
+  - Name: _start
+    Binding: STB_GLOBAL
+    Section: .text
+  - Name: external
+    Binding: STB_GLOBAL

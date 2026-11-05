@@ -85,6 +85,7 @@ llvm_config.feature_config(
                 "NVPTX": "nvptx",
                 "PowerPC": "ppc",
                 "RISCV": "riscv",
+                "SH": "sh",
                 "Sparc": "sparc",
                 "SystemZ": "systemz",
                 "WebAssembly": "wasm",

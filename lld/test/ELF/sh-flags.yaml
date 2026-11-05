@@ -1,0 +1,72 @@
+# RUN: yaml2obj %s -o %t.o
+# RUN: ld.lld %t.o -o %t
+# RUN: llvm-readobj -h %t | FileCheck %s --check-prefix=GOOD
+# RUN: yaml2obj -D FLAGS= %s -o %t.unknown.o
+# RUN: not ld.lld %t.unknown.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=FLAGS
+# RUN: yaml2obj -D FLAGS=EF_SH2 -D ENTRY=other %s -o %t.sh2.o
+# RUN: not ld.lld %t.o %t.sh2.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=FLAGS
+# RUN: yaml2obj -D FLAGS=EF_SH4,EF_SH_FDPIC %s -o %t.fdpic.o
+# RUN: not ld.lld -r %t.fdpic.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=FLAGS
+# RUN: yaml2obj -D FLAGS=EF_SH4,EF_SH_PIC %s -o %t.pic.o
+# RUN: not ld.lld %t.pic.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=FLAGS
+# RUN: %python -c "import pathlib,sys; b=bytearray(pathlib.Path(sys.argv[1]).read_bytes()); b[37]=0x20; pathlib.Path(sys.argv[2]).write_bytes(b)" %t.o %t.other.o
+# RUN: not ld.lld %t.other.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=FLAGS
+# RUN: yaml2obj -D CLASS=ELFCLASS64 %s -o %t.64.o
+# RUN: not ld.lld %t.64.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=CLASS
+# RUN: yaml2obj -D OSABI=ELFOSABI_FREEBSD %s -o %t.osabi.o
+# RUN: not ld.lld %t.osabi.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=BAD-OSABI
+# RUN: yaml2obj -D ENC=ELFDATA2MSB %s -o %t.be.o
+# RUN: not ld.lld -m shlelf %t.be.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=ENDIAN
+# RUN: not ld.lld -shared %t.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=MODE
+# RUN: not ld.lld -pie %t.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=MODE
+# RUN: not ld.lld --dynamic-linker=/lib/ld.so %t.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=MODE
+# RUN: yaml2obj --docnum=2 %s -o %t.so
+# RUN: not ld.lld %t.o %t.so -o /dev/null 2>&1 | FileCheck %s --check-prefix=DSO
+# RUN: yaml2obj -D SECFLAG=SHF_TLS %s -o %t.tls.o
+# RUN: not ld.lld %t.tls.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=TLS
+
+# GOOD: Machine: EM_SH
+# GOOD: Flags [ (0x9)
+# FLAGS: unsupported SH e_flags:
+# FLAGS-SAME: expected SH4 (0x9)
+# CLASS: SH requires ELF32
+# BAD-OSABI: unsupported SH OSABI or ABI version
+# ENDIAN: incompatible with shlelf
+# MODE: SH supports only static non-PIE executables and relocatable links
+# DSO: SH shared object inputs are not supported
+# TLS: SH TLS is not supported
+
+--- !ELF
+FileHeader:
+  Class: '[[CLASS=ELFCLASS32]]'
+  Data: '[[ENC=ELFDATA2LSB]]'
+  Type: '[[TYPE=ET_REL]]'
+  Machine: EM_SH
+  OSABI: '[[OSABI=ELFOSABI_NONE]]'
+  Flags: [ [[FLAGS=EF_SH4]] ]
+Sections:
+  - Name: .text
+    Type: SHT_PROGBITS
+    Flags: [ SHF_ALLOC, [[SECFLAG=SHF_EXECINSTR]] ]
+    AddressAlign: 2
+    Content: '0900'
+Symbols:
+  - Name: '[[ENTRY=_start]]'
+    Binding: STB_GLOBAL
+    Section: .text
+--- !ELF
+FileHeader:
+  Class: ELFCLASS32
+  Data: ELFDATA2LSB
+  Type: ET_DYN
+  Machine: EM_SH
+  Flags: [ EF_SH4 ]
+Sections:
+  - Name: .text
+    Type: SHT_PROGBITS
+    Flags: [ SHF_ALLOC, SHF_EXECINSTR ]
+    Content: '0900'
+DynamicSymbols:
+  - Name: _start
+    Binding: STB_GLOBAL
+    Section: .text

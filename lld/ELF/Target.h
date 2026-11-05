@@ -42,6 +42,9 @@ public:
   virtual void writeGotPlt(uint8_t *buf, const Symbol &s) const {}
   virtual void writeIgotPlt(uint8_t *buf, const Symbol &s) const {}
   virtual int64_t getImplicitAddend(const uint8_t *buf, RelType type) const;
+  // Some SH relocations use an in-place addend even in RELA objects. Their
+  // r_addend field is ignored, including during a relocatable link.
+  virtual bool usesOnlyImplicitAddend(RelType type) const { return false; }
 
   // If lazy binding is supported, the first entry of the PLT has code
   // to call the dynamic linker to resolve PLT entries the first time
@@ -221,6 +224,7 @@ void setMipsTargetInfo(Ctx &);
 void setPPC64TargetInfo(Ctx &);
 void setPPCTargetInfo(Ctx &);
 void setRISCVTargetInfo(Ctx &);
+void setSHTargetInfo(Ctx &);
 void setSPARCV9TargetInfo(Ctx &);
 void setSystemZTargetInfo(Ctx &);
 void setX86TargetInfo(Ctx &);

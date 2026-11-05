@@ -1,3 +1,4 @@
+// Host file paths in -### output can contain escaped Windows separators.
 // RUN: %clang -### -target shle-unknown-linux-gnu -c %s 2>&1 | FileCheck %s --check-prefix=IAS
 // IAS: "-cc1"
 // IAS-SAME: "-emit-obj"
@@ -5,11 +6,11 @@
 
 // RUN: env "PATH=" %clang -### -target shle-unknown-linux-gnu -fno-integrated-as -c %s 2>&1 | FileCheck %s --check-prefix=LE-LINUX-AS
 // LE-LINUX-AS: "sh4-linux-gnu-as" "--little" "--isa=sh2"
-// LE-LINUX-AS-NOT: "/usr/bin/as"
+// LE-LINUX-AS-NOT: "{{[/\\]+}}usr{{[/\\]+}}bin{{[/\\]+}}as"
 
 // RUN: env "PATH=" %clang -### -target sh-unknown-linux-gnu -fno-integrated-as -c %s 2>&1 | FileCheck %s --check-prefix=BE-LINUX-AS
 // BE-LINUX-AS: "sh-linux-gnu-as" "--big" "--isa=sh2"
-// BE-LINUX-AS-NOT: "/usr/bin/as"
+// BE-LINUX-AS-NOT: "{{[/\\]+}}usr{{[/\\]+}}bin{{[/\\]+}}as"
 
 // RUN: env "PATH=" %clang -### -target shle-unknown-none-elf -fno-integrated-as -c %s 2>&1 | FileCheck %s --check-prefix=LE-ELF-AS
 // LE-ELF-AS: "sh-elf-as" "--little" "--isa=sh2"
@@ -63,7 +64,7 @@
 
 // RUN: rm -f %t.missing-as.o %t.missing-ld
 // RUN: not env "PATH=" %clang -target shle-unknown-linux-gnu -fno-integrated-as -c %s -o %t.missing-as.o 2>&1 | FileCheck %s --check-prefix=MISSING-AS
-// RUN: not env "PATH=" %clang -target shle-unknown-none-elf -nostdlib %s -o %t.missing-ld 2>&1 | FileCheck %s --check-prefix=MISSING-LD
+// RUN: not env "PATH=" %clang -target shle-unknown-linux-gnu -nostdlib %s -o %t.missing-ld 2>&1 | FileCheck %s --check-prefix=MISSING-LD
 // RUN: not test -e %t.missing-as.o
 // RUN: not test -e %t.missing-ld
 // MISSING-AS: clang: error: unable to execute command:
@@ -76,86 +77,86 @@
 // RUN: touch %t.dir/bin/sh4-linux-gnu-as %t.dir/bin/sh4-linux-gnu-ld
 // RUN: chmod +x %t.dir/bin/sh4-linux-gnu-as %t.dir/bin/sh4-linux-gnu-ld
 // RUN: env "PATH=" %clang -### -target shle-unknown-linux-gnu -B%t.dir/bin -fno-integrated-as -c %s 2>&1 | FileCheck %s --check-prefix=B-AS
-// B-AS: "{{.*}}.dir/bin/sh4-linux-gnu-as" "--little" "--isa=sh2"
+// B-AS: "{{.*}}.dir{{[/\\]+}}bin{{[/\\]+}}sh4-linux-gnu-as" "--little" "--isa=sh2"
 
 // RUN: env "PATH=" %clang -### -target shle-unknown-linux-gnu -mcpu=sh3 -B%t.dir/bin -fno-integrated-as -c %s 2>&1 | FileCheck %s --check-prefix=B-SH3-AS
-// B-SH3-AS: "{{.*}}.dir/bin/sh4-linux-gnu-as" "--little" "--isa=sh3"
+// B-SH3-AS: "{{.*}}.dir{{[/\\]+}}bin{{[/\\]+}}sh4-linux-gnu-as" "--little" "--isa=sh3"
 
 // RUN: env "PATH=" %clang -### -target shle-unknown-linux-gnu -mcpu=sh4 -B%t.dir/bin -fno-integrated-as -c %s 2>&1 | FileCheck %s --check-prefix=B-SH4-AS
-// B-SH4-AS: "{{.*}}.dir/bin/sh4-linux-gnu-as" "--little" "--isa=sh4"
+// B-SH4-AS: "{{.*}}.dir{{[/\\]+}}bin{{[/\\]+}}sh4-linux-gnu-as" "--little" "--isa=sh4"
 
 // RUN: env "PATH=" %clang -### -target shle-unknown-linux-gnu -B%t.dir/bin --sysroot=%t.dir/sysroot -nostdlib %s 2>&1 | FileCheck %s --check-prefix=LE-LINUX-LD
-// LE-LINUX-LD: "{{.*}}.dir/bin/sh4-linux-gnu-ld"
-// LE-LINUX-LD-SAME: "--sysroot={{.*}}.dir/sysroot"
+// LE-LINUX-LD: "{{.*}}.dir{{[/\\]+}}bin{{[/\\]+}}sh4-linux-gnu-ld"
+// LE-LINUX-LD-SAME: "--sysroot={{.*}}.dir{{[/\\]+}}sysroot"
 // LE-LINUX-LD-SAME: "-m" "shlelf_linux"
 // LE-LINUX-LD-SAME: "-X"
 // LE-LINUX-LD-SAME: "-dynamic-linker" "/lib/ld-linux.so.2"
-// LE-LINUX-LD-NOT: "/usr/lib"
-// LE-LINUX-LD-NOT: "/usr/bin/ld"
+// LE-LINUX-LD-NOT: "{{[/\\]+}}usr{{[/\\]+}}lib"
+// LE-LINUX-LD-NOT: "{{[/\\]+}}usr{{[/\\]+}}bin{{[/\\]+}}ld"
 
 // RUN: env "PATH=" %clang -### -target sh-unknown-linux-gnu --sysroot=%t.dir/sysroot -nostdlib %s 2>&1 | FileCheck %s --check-prefix=BE-LINUX-LD
 // BE-LINUX-LD: "sh-linux-gnu-ld"
-// BE-LINUX-LD-SAME: "--sysroot={{.*}}.dir/sysroot"
+// BE-LINUX-LD-SAME: "--sysroot={{.*}}.dir{{[/\\]+}}sysroot"
 // BE-LINUX-LD-SAME: "-m" "shelf_linux"
 // BE-LINUX-LD-SAME: "-X"
 // BE-LINUX-LD-SAME: "-dynamic-linker" "/lib/ld-linux.so.2"
-// BE-LINUX-LD-NOT: "/usr/bin/ld"
+// BE-LINUX-LD-NOT: "{{[/\\]+}}usr{{[/\\]+}}bin{{[/\\]+}}ld"
 
 // RUN: env "PATH=" %clang -### -target shle-unknown-none-elf -nostdlib %s 2>&1 | FileCheck %s --check-prefix=LE-ELF-LD
-// LE-ELF-LD: "sh-elf-ld"
+// LE-ELF-LD: "{{.*}}ld.lld{{(.exe)?}}"
 // LE-ELF-LD-SAME: "-m" "shlelf"
 // LE-ELF-LD-SAME: "-X"
 // LE-ELF-LD-NOT: "-dynamic-linker"
-// LE-ELF-LD-NOT: "/usr/lib"
-// LE-ELF-LD-NOT: "/lib/"
-// LE-ELF-LD-NOT: "/usr/bin/ld"
+// LE-ELF-LD-NOT: "{{[/\\]+}}usr{{[/\\]+}}lib"
+// LE-ELF-LD-NOT: "{{[/\\]+}}lib{{[/\\]+}}"
+// LE-ELF-LD-NOT: "{{[/\\]+}}usr{{[/\\]+}}bin{{[/\\]+}}ld"
 
 // RUN: env "PATH=" %clang -### -target sh-unknown-none-elf -nostdlib %s 2>&1 | FileCheck %s --check-prefix=BE-ELF-LD
-// BE-ELF-LD: "sh-elf-ld"
+// BE-ELF-LD: "{{.*}}ld.lld{{(.exe)?}}"
 // BE-ELF-LD-SAME: "-m" "shelf"
 // BE-ELF-LD-SAME: "-X"
 // BE-ELF-LD-NOT: "-dynamic-linker"
-// BE-ELF-LD-NOT: "/usr/bin/ld"
+// BE-ELF-LD-NOT: "{{[/\\]+}}usr{{[/\\]+}}bin{{[/\\]+}}ld"
 
 // RUN: mkdir -p %t.dir/gcc/lib/gcc/sh4-linux-gnu/14.2.0
 // RUN: touch %t.dir/gcc/lib/gcc/sh4-linux-gnu/14.2.0/crtbegin.o %t.dir/gcc/lib/gcc/sh4-linux-gnu/14.2.0/crtend.o
 // RUN: env "PATH=" %clang -### -target shle-unknown-linux-gnu -B%t.dir/bin --gcc-toolchain=%t.dir/gcc --sysroot=%t.dir/sysroot -nostartfiles %s 2>&1 | FileCheck %s --check-prefix=GCC-TOOLCHAIN
-// GCC-TOOLCHAIN: "{{.*}}.dir/bin/sh4-linux-gnu-ld"
-// GCC-TOOLCHAIN-SAME: "-L{{.*}}.dir/gcc/lib/gcc/sh4-linux-gnu/14.2.0"
-// GCC-TOOLCHAIN-NOT: "/usr/lib/gcc"
+// GCC-TOOLCHAIN: "{{.*}}.dir{{[/\\]+}}bin{{[/\\]+}}sh4-linux-gnu-ld"
+// GCC-TOOLCHAIN-SAME: "-L{{.*}}.dir{{[/\\]+}}gcc{{[/\\]+}}lib{{[/\\]+}}gcc{{[/\\]+}}sh4-linux-gnu{{[/\\]+}}14.2.0"
+// GCC-TOOLCHAIN-NOT: "{{[/\\]+}}usr{{[/\\]+}}lib{{[/\\]+}}gcc"
 
 // RUN: env "PATH=" %clang -### -target shle-unknown-none-elf -B%t.dir/bin --gcc-toolchain=%t.dir/gcc --sysroot=%t.dir/sysroot %s 2>&1 | FileCheck %s --check-prefix=BARE-ISOLATED
-// BARE-ISOLATED: "sh-elf-ld"
+// BARE-ISOLATED: "{{.*}}ld.lld{{(.exe)?}}"
 // BARE-ISOLATED-NOT: sh4-linux-gnu
 // BARE-ISOLATED-NOT: "-dynamic-linker"
-// BARE-ISOLATED-NOT: "-L/usr"
-// BARE-ISOLATED-NOT: "-L/lib"
+// BARE-ISOLATED-NOT: "-L{{[/\\]+}}usr"
+// BARE-ISOLATED-NOT: "-L{{[/\\]+}}lib"
 
 // RUN: env "PATH=" %clang -### -target shle-unknown-linux-gnu -B%t.dir/bin --sysroot=%t.dir/sysroot -nostdlib -no-pie %s 2>&1 | FileCheck %s --check-prefix=NO-PIE
 // RUN: env "PATH=" %clang -### -target shle-unknown-linux-gnu -B%t.dir/bin --sysroot=%t.dir/sysroot -nostdlib -pie %s 2>&1 | FileCheck %s --check-prefix=PIE
 // RUN: env "PATH=" %clang -### -target shle-unknown-linux-gnu -B%t.dir/bin --sysroot=%t.dir/sysroot -nostdlib -shared %s 2>&1 | FileCheck %s --check-prefix=SHARED
 // RUN: env "PATH=" %clang -### -target shle-unknown-linux-gnu -B%t.dir/bin --sysroot=%t.dir/sysroot -nostdlib -static %s 2>&1 | FileCheck %s --check-prefix=STATIC
-// NO-PIE: "{{.*}}.dir/bin/sh4-linux-gnu-ld"
+// NO-PIE: "{{.*}}.dir{{[/\\]+}}bin{{[/\\]+}}sh4-linux-gnu-ld"
 // NO-PIE-NOT: "-pie"
-// PIE: "{{.*}}.dir/bin/sh4-linux-gnu-ld"
+// PIE: "{{.*}}.dir{{[/\\]+}}bin{{[/\\]+}}sh4-linux-gnu-ld"
 // PIE-SAME: "-pie"
-// SHARED: "{{.*}}.dir/bin/sh4-linux-gnu-ld"
+// SHARED: "{{.*}}.dir{{[/\\]+}}bin{{[/\\]+}}sh4-linux-gnu-ld"
 // SHARED-SAME: "-shared"
 // SHARED-NOT: "-dynamic-linker"
-// STATIC: "{{.*}}.dir/bin/sh4-linux-gnu-ld"
+// STATIC: "{{.*}}.dir{{[/\\]+}}bin{{[/\\]+}}sh4-linux-gnu-ld"
 // STATIC-SAME: "-static"
 // STATIC-NOT: "-dynamic-linker"
 
 // RUN: env "PATH=" %clang -### -target shle-unknown-linux-gnu -B%t.dir/bin --sysroot=%t.dir/sysroot -nostdlib %s 2>&1 | FileCheck %s --check-prefix=NOSTDLIB
 // RUN: env "PATH=" %clang -### -target shle-unknown-linux-gnu -B%t.dir/bin --sysroot=%t.dir/sysroot -nostartfiles %s 2>&1 | FileCheck %s --check-prefix=NOSTARTFILES
 // RUN: env "PATH=" %clang -### -target shle-unknown-linux-gnu -B%t.dir/bin --sysroot=%t.dir/sysroot -nodefaultlibs %s 2>&1 | FileCheck %s --check-prefix=NODEFAULTLIBS
-// NOSTDLIB: "{{.*}}.dir/bin/sh4-linux-gnu-ld"
+// NOSTDLIB: "{{.*}}.dir{{[/\\]+}}bin{{[/\\]+}}sh4-linux-gnu-ld"
 // NOSTDLIB-NOT: crt{{[^\"]*}}.o
 // NOSTDLIB-NOT: "-lc"
-// NOSTARTFILES: "{{.*}}.dir/bin/sh4-linux-gnu-ld"
+// NOSTARTFILES: "{{.*}}.dir{{[/\\]+}}bin{{[/\\]+}}sh4-linux-gnu-ld"
 // NOSTARTFILES-NOT: crt{{[^\"]*}}.o
 // NOSTARTFILES-SAME: "-lc"
-// NODEFAULTLIBS: "{{.*}}.dir/bin/sh4-linux-gnu-ld"
+// NODEFAULTLIBS: "{{.*}}.dir{{[/\\]+}}bin{{[/\\]+}}sh4-linux-gnu-ld"
 // NODEFAULTLIBS-SAME: crt{{[^\"]*}}.o
 // NODEFAULTLIBS-NOT: "-lc"
 

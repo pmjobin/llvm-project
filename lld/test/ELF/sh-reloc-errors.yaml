@@ -1,0 +1,93 @@
+# All range endpoints are derived from the architectural displacement widths.
+# RUN: yaml2obj %s -o %t.o
+# RUN: yaml2obj -D TYPE=R_SH_IND12W -D TEXT=00B0 -D ADDEND=-4 %s -o %t.IND12W.o
+# RUN: ld.lld --image-base=0 -Ttext=0x1000 --defsym=target=0x2002 %t.IND12W.o -o %t.out
+# RUN: llvm-readobj -x .text %t.out | FileCheck %s --check-prefix=IND12W-0
+# IND12W-0: ffb7
+# RUN: ld.lld --image-base=0 -Ttext=0x1000 --defsym=target=0x4 %t.IND12W.o -o %t.out
+# RUN: llvm-readobj -x .text %t.out | FileCheck %s --check-prefix=IND12W-1
+# IND12W-1: 00b8
+# RUN: not ld.lld --image-base=0 -Ttext=0x1000 --defsym=target=0x2004 %t.IND12W.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=IND12W-RANGE
+# RUN: not ld.lld --image-base=0 -Ttext=0x1000 --defsym=target=0x2 %t.IND12W.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=IND12W-RANGE
+# IND12W-RANGE: relocation R_SH_IND12W out of range:
+# RUN: not ld.lld --image-base=0 -Ttext=0x1000 --defsym=target=0x1005 %t.IND12W.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=IND12W-ALIGN
+# IND12W-ALIGN: improper alignment for relocation R_SH_IND12W
+# RUN: yaml2obj -D TYPE=R_SH_DIR8WPN -D TEXT=0089 -D ADDEND=0 %s -o %t.DIR8WPN.o
+# RUN: ld.lld --image-base=0 -Ttext=0x1000 --defsym=target=0x1102 %t.DIR8WPN.o -o %t.out
+# RUN: llvm-readobj -x .text %t.out | FileCheck %s --check-prefix=DIR8WPN-0
+# DIR8WPN-0: 7f89
+# RUN: ld.lld --image-base=0 -Ttext=0x1000 --defsym=target=0xf04 %t.DIR8WPN.o -o %t.out
+# RUN: llvm-readobj -x .text %t.out | FileCheck %s --check-prefix=DIR8WPN-1
+# DIR8WPN-1: 8089
+# RUN: not ld.lld --image-base=0 -Ttext=0x1000 --defsym=target=0x1104 %t.DIR8WPN.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=DIR8WPN-RANGE
+# RUN: not ld.lld --image-base=0 -Ttext=0x1000 --defsym=target=0xf02 %t.DIR8WPN.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=DIR8WPN-RANGE
+# DIR8WPN-RANGE: relocation R_SH_DIR8WPN out of range:
+# RUN: not ld.lld --image-base=0 -Ttext=0x1000 --defsym=target=0x1005 %t.DIR8WPN.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=DIR8WPN-ALIGN
+# DIR8WPN-ALIGN: improper alignment for relocation R_SH_DIR8WPN
+# RUN: yaml2obj -D TYPE=R_SH_DIR8WPL -D TEXT=00D0 -D ADDEND=0 %s -o %t.DIR8WPL.o
+# RUN: ld.lld --image-base=0 -Ttext=0x1000 --defsym=target=0x1400 %t.DIR8WPL.o -o %t.out
+# RUN: llvm-readobj -x .text %t.out | FileCheck %s --check-prefix=DIR8WPL-0
+# DIR8WPL-0: ffd0
+# RUN: ld.lld --image-base=0 -Ttext=0x1000 --defsym=target=0x1004 %t.DIR8WPL.o -o %t.out
+# RUN: llvm-readobj -x .text %t.out | FileCheck %s --check-prefix=DIR8WPL-1
+# DIR8WPL-1: 00d0
+# RUN: not ld.lld --image-base=0 -Ttext=0x1000 --defsym=target=0x1404 %t.DIR8WPL.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=DIR8WPL-RANGE
+# RUN: not ld.lld --image-base=0 -Ttext=0x1000 --defsym=target=0x1000 %t.DIR8WPL.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=DIR8WPL-RANGE
+# DIR8WPL-RANGE: relocation R_SH_DIR8WPL out of range:
+# RUN: not ld.lld --image-base=0 -Ttext=0x1000 --defsym=target=0x1006 %t.DIR8WPL.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=DIR8WPL-ALIGN
+# DIR8WPL-ALIGN: improper alignment for relocation R_SH_DIR8WPL
+# RUN: yaml2obj -D TYPE=R_SH_DIR8WPZ -D TEXT=0091 -D ADDEND=0 %s -o %t.DIR8WPZ.o
+# RUN: ld.lld --image-base=0 -Ttext=0x1000 --defsym=target=0x1202 %t.DIR8WPZ.o -o %t.out
+# RUN: llvm-readobj -x .text %t.out | FileCheck %s --check-prefix=DIR8WPZ-0
+# DIR8WPZ-0: ff91
+# RUN: ld.lld --image-base=0 -Ttext=0x1000 --defsym=target=0x1004 %t.DIR8WPZ.o -o %t.out
+# RUN: llvm-readobj -x .text %t.out | FileCheck %s --check-prefix=DIR8WPZ-1
+# DIR8WPZ-1: 0091
+# RUN: not ld.lld --image-base=0 -Ttext=0x1000 --defsym=target=0x1204 %t.DIR8WPZ.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=DIR8WPZ-RANGE
+# RUN: not ld.lld --image-base=0 -Ttext=0x1000 --defsym=target=0x1002 %t.DIR8WPZ.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=DIR8WPZ-RANGE
+# DIR8WPZ-RANGE: relocation R_SH_DIR8WPZ out of range:
+# RUN: not ld.lld --image-base=0 -Ttext=0x1000 --defsym=target=0x1005 %t.DIR8WPZ.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=DIR8WPZ-ALIGN
+# DIR8WPZ-ALIGN: improper alignment for relocation R_SH_DIR8WPZ
+# RUN: yaml2obj -D TYPE=R_SH_DIR16 -D TEXT=FFFF -D ADDEND=0 %s -o %t.dir16.o
+# RUN: not ld.lld --defsym=target=0x10000 %t.dir16.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=DIR16
+# DIR16: relocation R_SH_DIR16 out of range:
+# RUN: yaml2obj -D TYPE=R_SH_GOT32 -D TEXT=00000000 -D ADDEND=0 %s -o %t.got.o
+# RUN: not ld.lld --defsym=target=0 %t.got.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=GOT
+# GOT: unsupported SH relocation R_SH_GOT32
+# RUN: not ld.lld -r %t.got.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=GOT
+# RUN: yaml2obj -D TYPE=255 -D TEXT=00000000 -D ADDEND=0 %s -o %t.unknown.o
+# RUN: not ld.lld --defsym=target=0 %t.unknown.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=UNKNOWN
+# UNKNOWN: unsupported SH relocation Unknown (255)
+# RUN: not ld.lld -r %t.unknown.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=UNKNOWN
+# RUN: yaml2obj -D RELTYPE=SHT_REL %s -o %t.rel.o
+# RUN: not ld.lld -r %t.rel.o -o /dev/null 2>&1 | FileCheck %s --check-prefix=REL-FORMAT
+# REL-FORMAT: SH requires SHT_RELA relocations
+
+--- !ELF
+FileHeader:
+  Class: ELFCLASS32
+  Data: ELFDATA2LSB
+  Type: ET_REL
+  Machine: EM_SH
+  Flags: [ EF_SH4 ]
+Sections:
+  - Name: .text
+    Type: SHT_PROGBITS
+    Flags: [ SHF_ALLOC, SHF_EXECINSTR ]
+    AddressAlign: 4
+    Content: '[[TEXT=00B0]]'
+  - Name: .rela.text
+    Type: '[[RELTYPE=SHT_RELA]]'
+    Link: .symtab
+    Info: .text
+    Relocations:
+      - Offset: 0
+        Type: '[[TYPE=R_SH_IND12W]]'
+        Symbol: target
+        Addend: '[[ADDEND=-4]]'
+Symbols:
+  - Name: _start
+    Binding: STB_GLOBAL
+    Section: .text
+  - Name: target
+    Binding: STB_GLOBAL

@@ -29,12 +29,15 @@ little endian. CPU selection, endianness, hardware FPU capabilities, argument
 transport ABI, and operating-system runtime are separate choices. A driver
 example for a GNU/Linux SH4 little-endian compilation is::
 
-  clang --target=shle-unknown-linux-gnu -m4 -S example.c
+  clang --target=shle-unknown-linux-gnu -mcpu=sh4 -c example.c -o example.o
 
-Supply a compatible GNU sysroot, GNU binutils, and explicit library/tool search
-paths for linking. This target does not provide an SH LLD implementation or a
-complete compiler-rt/runtime distribution. A cross compilation must not
-silently use host libraries or an older compiler executable.
+Hosted GNU linking requires a compatible GNU sysroot, GNU binutils, and
+explicit library/tool search paths. For freestanding SH4, LLD now implements
+static executable and relocatable ELF32 linking. The separate bounded runtime,
+startup examples and application responsibilities are documented in
+``llvm/examples/SHFreestanding/README.rst``. This does not supply a hosted GNU
+SDK or complete C++ standard library. Cross compilation must not silently use
+host target libraries or an older compiler executable.
 
 The driver diagnoses unsupported selectors and incompatible CPU, FPU, tune,
 or ABI combinations. Family encoding definitions and compile-only tests do
@@ -197,7 +200,7 @@ optional ``-mdalign`` ABI is not modeled. Hard-float, soft argument transport,
 single-precision modes, E-class ABI, and FDPIC must agree across callers,
 callees, runtime libraries, and assembly providers.
 
-The intended C++ baseline is GNU C++17 with libstdc++, exceptions, RTTI,
+The intended hosted GNU C++ object ABI is C++17 with libstdc++, exceptions, RTTI,
 construction/destruction, static initialization, and GNU-compatible unwinding.
 A build using ``-fno-exceptions`` or ``-fno-rtti`` does not establish this
 contract. Separate translation units and mixed GNU/Clang producer directions

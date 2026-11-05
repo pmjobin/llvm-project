@@ -486,11 +486,18 @@ void InputSection::copyRelocations(Ctx &ctx, uint8_t *buf,
     const ObjFile<ELFT> *file = getFile<ELFT>();
     Symbol &sym = *rel.sym;
 
+    // SH rejects unimplemented relocations in partial links as well as final
+    // links. Other targets may intentionally preserve them for another linker.
+    if (ctx.arg.emachine == EM_SH)
+      target.getRelExpr(type, sym, sec->content().data() + rel.offset);
+
     auto *p = reinterpret_cast<typename ELFT::Rela *>(buf);
     buf += sizeof(RelTy);
 
+    bool hasExplicitAddend =
+        RelTy::HasAddend && !target.usesOnlyImplicitAddend(type);
     if (RelTy::HasAddend)
-      p->r_addend = rel.addend;
+      p->r_addend = hasExplicitAddend ? rel.addend : 0;
 
     // Output section VA is zero for -r, so r_offset is an offset within the
     // section, but for --emit-relocs it is a virtual address.
@@ -530,7 +537,7 @@ void InputSection::copyRelocations(Ctx &ctx, uint8_t *buf,
 
       int64_t addend = rel.addend;
       const uint8_t *bufLoc = sec->content().begin() + rel.offset;
-      if (!RelTy::HasAddend)
+      if (!hasExplicitAddend)
         addend = target.getImplicitAddend(bufLoc, type);
 
       if (ctx.arg.emachine == EM_MIPS &&
@@ -549,7 +556,7 @@ void InputSection::copyRelocations(Ctx &ctx, uint8_t *buf,
         addend += sec->getFile<ELFT>()->mipsGp0;
       }
 
-      if (RelTy::HasAddend)
+      if (hasExplicitAddend)
         p->r_addend =
             sym.getVA(ctx, addend) - section->getOutputSection()->addr;
       // For SHF_ALLOC sections relocated by REL, append a relocation to
@@ -926,10 +933,11 @@ uint64_t InputSectionBase::getRelocTargetVA(Ctx &ctx, const Relocation &r,
   case RE_LOONGARCH_PAGE_PC:
     return getLoongArchPageDelta(r.sym->getVA(ctx, a), p, r.type);
   case R_PC:
-  case RE_ARM_PCA: {
+  case RE_ARM_PCA:
+  case RE_SH_PCA: {
     uint64_t dest;
-    if (r.expr == RE_ARM_PCA)
-      // Some PC relative ARM (Thumb) relocations align down the place.
+    if (r.expr == RE_ARM_PCA || r.expr == RE_SH_PCA)
+      // Thumb literal loads and SH longword literal loads align down the PC.
       p = p & 0xfffffffc;
     if (r.sym->isUndefined()) {
       // On ARM and AArch64 a branch to an undefined weak resolves to the next
@@ -1074,8 +1082,10 @@ void InputSection::relocateNonAlloc(Ctx &ctx, uint8_t *buf,
     const uint64_t offset = rel.r_offset;
     uint8_t *bufLoc = buf + offset;
     int64_t addend = getAddend<ELFT>(rel);
-    if (!RelTy::HasAddend)
-      addend += target.getImplicitAddend(bufLoc, type);
+    bool hasExplicitAddend =
+        RelTy::HasAddend && !target.usesOnlyImplicitAddend(type);
+    if (!hasExplicitAddend)
+      addend = target.getImplicitAddend(bufLoc, type);
 
     Symbol &sym = f->getRelocTargetSym(rel);
     RelExpr expr = target.getRelExpr(type, sym, bufLoc);
@@ -1150,7 +1160,7 @@ void InputSection::relocateNonAlloc(Ctx &ctx, uint8_t *buf,
     // explicit addend, such as RELA, remain unchanged and we can stop here.
     // While content relocated by relocation types with an implicit addend, such
     // as REL, needs the implicit addend updated.
-    if (ctx.arg.relocatable && (RelTy::HasAddend || sym.type != STT_SECTION))
+    if (ctx.arg.relocatable && (hasExplicitAddend || sym.type != STT_SECTION))
       continue;
 
     // R_ABS/R_DTPREL and some other relocations can be used from non-SHF_ALLOC
@@ -1449,7 +1459,7 @@ void EhInputSection::preprocessRelocs(Relocs<RelTy> elfRels) {
     RelType type = rel.getType(ctx.arg.isMips64EL);
     RelExpr expr = ctx.target->getRelExpr(type, sym, content().data() + offset);
     int64_t addend =
-        RelTy::HasAddend
+        RelTy::HasAddend && !ctx.target->usesOnlyImplicitAddend(type)
             ? getAddend<ELFT>(rel)
             : ctx.target->getImplicitAddend(content().data() + offset, type);
     rels.push_back({expr, type, offset, addend, &sym});

@@ -3578,8 +3578,11 @@ Tool *Generic_ELF::buildLinker() const {
 }
 
 const char *Generic_ELF::getDefaultLinker() const {
-  if (isSH(getTriple()))
+  if (isSH(getTriple())) {
+    if (getTriple().isOSUnknown())
+      return "ld.lld";
     return getSHGNULinkerName(getTriple());
+  }
   return ToolChain::getDefaultLinker();
 }
 

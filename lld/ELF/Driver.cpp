@@ -175,6 +175,8 @@ static std::tuple<ELFKind, uint16_t, uint8_t> parseEmulation(Ctx &ctx,
           .Case("elf_iamcu", {ELF32LEKind, EM_IAMCU})
           .Case("elf64_sparc", {ELF64BEKind, EM_SPARCV9})
           .Case("msp430elf", {ELF32LEKind, EM_MSP430})
+          .Cases({"shlelf", "shlelf_linux"}, {ELF32LEKind, EM_SH})
+          .Cases({"shelf", "shelf_linux"}, {ELF32BEKind, EM_SH})
           .Case("elf64_amdgpu", {ELF64LEKind, EM_AMDGPU})
           .Case("elf64loongarch", {ELF64LEKind, EM_LOONGARCH})
           .Case("elf64_s390", {ELF64BEKind, EM_S390})
@@ -321,6 +323,14 @@ static void initLLVM() {
 // Some command line options or some combinations of them are not allowed.
 // This function checks for such errors.
 static void checkOptions(Ctx &ctx) {
+  if (ctx.arg.emachine == EM_SH) {
+    if (ctx.arg.ekind != ELF32LEKind && ctx.arg.ekind != ELF32BEKind)
+      ErrAlways(ctx) << "SH requires ELF32";
+    if (ctx.arg.shared || ctx.arg.pie || !ctx.arg.dynamicLinker.empty())
+      ErrAlways(ctx) << "SH supports only static non-PIE executables and "
+                        "relocatable links";
+  }
+
   // The MIPS ABI as of 2016 does not support the GNU-style symbol lookup
   // table which is a relatively new feature.
   if (ctx.arg.emachine == EM_MIPS && ctx.arg.gnuHash)
