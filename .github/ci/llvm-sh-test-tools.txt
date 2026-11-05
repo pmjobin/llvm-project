@@ -29,3 +29,4 @@ not
 split-file
 yaml2obj
 obj2yaml
+SHTests

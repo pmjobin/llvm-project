@@ -52,8 +52,10 @@ jobs:
           for key in ('LLVM_SH_CANDIDATE_COMMIT', 'LLVM_SH_CANDIDATE_TREE'):
               if not re.fullmatch('[0-9a-f]{40}', os.environ[key]):
                   raise SystemExit('Need a full 40-character SHA: ' + key)
-          if os.environ['LLVM_SH_CANDIDATE_COMMIT'] == '090c682597f7155373681807330fbb0ac343a33c':
-              raise SystemExit('Published RC1 is immutable and does not contain SH LLD')
+          if os.environ['LLVM_SH_CANDIDATE_COMMIT'] in (
+              '090c682597f7155373681807330fbb0ac343a33c',
+              'c8f8d9181205796eaa58f38700906ee19a6444c8'):
+              raise SystemExit('Select a new library candidate; published RC1 stays unchanged')
   ubuntu-deb:
     needs: validate-candidate
     if: ${{ inputs.platform != 'windows' }}
@@ -78,13 +80,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            clang lld cmake ninja-build python3 python3-psutil git binutils file dpkg-dev qemu-user \
+            clang lld cmake meson ninja-build python3 python3-psutil git binutils file dpkg-dev qemu-user \
             libedit-dev libxml2-dev zlib1g-dev libzstd-dev liblzma-dev
       - name: Build, package, install and smoke test
         shell: bash
         run: bash automation/.github/ci/build-llvm-sh-linux.sh deb
       - name: Upload package for review (explicit opt-in)
-        if: ${{ inputs.upload_artifacts }}
+        if: ${{ always() && inputs.upload_artifacts }}
         uses: actions/upload-artifact@v6
         with:
           name: llvm-sh-rc1-candidate-ubuntu2604-deb-amd64
@@ -104,7 +106,7 @@ jobs:
         shell: bash
         run: |
           dnf -y --setopt=install_weak_deps=False install \
-            git clang lld cmake ninja-build python3 python3-psutil qemu-user-static gcc gcc-c++ binutils file \
+            git clang lld cmake meson ninja-build python3 python3-psutil qemu-user-static gcc gcc-c++ binutils file \
             rpm-build rpmdevtools libedit-devel libxml2-devel \
             zlib-devel libzstd-devel xz-devel tar gzip zip unzip findutils which
       - name: Check out CI scripts only (workflow branch)
@@ -123,7 +125,7 @@ jobs:
         shell: bash
         run: bash automation/.github/ci/build-llvm-sh-linux.sh rpm
       - name: Upload package for review (explicit opt-in)
-        if: ${{ inputs.upload_artifacts }}
+        if: ${{ always() && inputs.upload_artifacts }}
         uses: actions/upload-artifact@v6
         with:
           name: llvm-sh-rc1-candidate-fedora45-rpm-x86_64
@@ -174,10 +176,14 @@ jobs:
           ref: ${{ inputs.candidate_sha }}
           path: source
           persist-credentials: false
+      - name: Set up runtime-build Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
       - name: Build, ZIP and smoke test
         shell: pwsh
         run: |
-          python -m pip install --disable-pip-version-check psutil
+          python -m pip install --disable-pip-version-check psutil meson==1.12.1 ninja==1.13.0
           if ($LASTEXITCODE -ne 0) { throw 'lit timeout dependency installation failed' }
           ./automation/.github/ci/build-llvm-sh-windows.ps1
       - name: Upload package and qualification receipts for review (explicit opt-in)

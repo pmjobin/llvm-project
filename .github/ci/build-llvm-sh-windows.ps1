@@ -10,7 +10,8 @@ $out = Join-Path $env:GITHUB_WORKSPACE 'dist'
 $expected = $env:LLVM_SH_CANDIDATE_COMMIT
 $expectedTree = $env:LLVM_SH_CANDIDATE_TREE
 if ($expected -notmatch '^[0-9a-f]{40}$' -or $expectedTree -notmatch '^[0-9a-f]{40}$' -or
-    $expected -eq '090c682597f7155373681807330fbb0ac343a33c') {
+    $expected -in @('090c682597f7155373681807330fbb0ac343a33c',
+                    'c8f8d9181205796eaa58f38700906ee19a6444c8')) {
   throw 'Select full new RC1 candidate commit/tree identities; published RC1 stays unchanged'
 }
 $short = $expected.Substring(0, 12)
@@ -25,6 +26,9 @@ if ($actual -ne $expected -or $tree -ne $expectedTree) {
 }
 if (!(Test-Path (Join-Path $source 'lld/ELF/Arch/SH.cpp'))) {
   throw 'Missing SH LLD implementation in candidate source'
+}
+if (!(Test-Path (Join-Path $source 'runtimes/sh/picolibc.json'))) {
+  throw 'Missing pinned SH C/C++ library recipe in candidate source'
 }
 & git -C $source diff --quiet
 if ($LASTEXITCODE -ne 0) { throw 'Dirty candidate source' }
@@ -116,7 +120,7 @@ Invoke-Timed 'stage' {
 Invoke-Timed 'target-runtime' {
   & python (Join-Path $source '.github/ci/stage-llvm-sh-freestanding.py') `
     --source $source --prefix $stage --build-dir (Join-Path $env:RUNNER_TEMP 'sh4-runtime-build') `
-    --commit $actual --tree $tree
+    --commit $actual --tree $tree --logs-dir (Join-Path $out 'target-runtime-build')
   if ($LASTEXITCODE -ne 0) { throw 'SH freestanding runtime staging failed' }
 }
 
@@ -149,6 +153,7 @@ runner=windows-2022
 llvm_enable_projects=clang;lld
 llvm_targets=X86;SH(experimental)
 target_runtime=shle-unknown-none-elf/sh4-soft (bounded compiler-rt/C/C++ subset)
+target_libraries=SH4 little-endian soft argument ABI; Picolibc 1.8.12; static libc++/libc++abi; see SH4-LIBRARIES.rst
 no GNU SH4 SDK/sysroot/libgcc; no packaged emulator; see SH4-FREESTANDING.rst
 "@ | Set-Content -Path (Join-Path $stage 'BUILDINFO.txt') -Encoding utf8
 
@@ -204,6 +209,9 @@ function Invoke-Freestanding {
   & python (Join-Path $Root 'share/llvm-sh/examples/SHFreestanding/check.py') `
     --prefix $Root --build-dir (Join-Path $out "freestanding-$Label")
   if ($LASTEXITCODE -ne 0) { throw "Packaged SH compile/archive/link qualification failed: $Label" }
+  & python (Join-Path $Root 'share/llvm-sh/examples/SHFreestanding/libraries/check.py') `
+    --prefix $Root --build-dir (Join-Path $out "libraries-$Label")
+  if ($LASTEXITCODE -ne 0) { throw "Packaged SH C/C++ library qualification failed: $Label" }
   # No native SH Linux-user QEMU is available on Windows. receipt.json records
   # execution UNRUN/PARTIAL; the Linux qualification executes the same profile.
 }

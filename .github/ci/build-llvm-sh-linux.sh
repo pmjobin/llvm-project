@@ -15,8 +15,9 @@ stage="${pkgroot}${prefix}"
 expected="${LLVM_SH_CANDIDATE_COMMIT:?need full RC1 candidate commit}"
 expected_tree="${LLVM_SH_CANDIDATE_TREE:?need full RC1 candidate tree}"
 [[ "$expected" =~ ^[0-9a-f]{40}$ && "$expected_tree" =~ ^[0-9a-f]{40}$ ]] || exit 3
-[[ "$expected" != 090c682597f7155373681807330fbb0ac343a33c ]] || {
-  echo 'Published RC1 source is immutable and lacks SH LLD; select a new candidate' >&2; exit 3;
+[[ "$expected" != 090c682597f7155373681807330fbb0ac343a33c && \
+   "$expected" != c8f8d9181205796eaa58f38700906ee19a6444c8 ]] || {
+  echo 'Select a new library candidate; published RC1 identities stay unchanged' >&2; exit 3;
 }
 jobs="${LLVM_SH_BUILD_JOBS:-2}"
 [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || exit 3
@@ -29,7 +30,8 @@ tree="$(git rev-parse 'HEAD^{tree}')"
 [[ "$actual" == "$expected" && "$tree" == "$expected_tree" ]] || {
   echo "RC1 source mismatch: commit=$actual tree=$tree" >&2; exit 3;
 }
-[[ -f llvm/lib/Target/SH/CMakeLists.txt && -f lld/ELF/Arch/SH.cpp && -d clang ]] || exit 4
+[[ -f llvm/lib/Target/SH/CMakeLists.txt && -f lld/ELF/Arch/SH.cpp && \
+   -f runtimes/sh/picolibc.json && -d clang ]] || exit 4
 git diff --quiet && git diff --cached --quiet || { echo 'Dirty candidate source' >&2; exit 4; }
 
 mkdir -p "$out" "$pkgroot"
@@ -88,7 +90,7 @@ timed source-regressions python3 .github/ci/check-llvm-sh-regressions.py \
 timed stage env DESTDIR="$pkgroot" cmake --build "$bld" --target install-distribution --parallel "$jobs"
 timed target-runtime python3 .github/ci/stage-llvm-sh-freestanding.py \
   --source "$repo" --prefix "$stage" --build-dir "$RUNNER_TEMP/sh4-runtime-build" \
-  --commit "$actual" --tree "$tree"
+  --commit "$actual" --tree "$tree" --logs-dir "$out/target-runtime-build"
 
 test -x "$stage/bin/clang"
 test -x "$stage/bin/llc"
@@ -109,6 +111,7 @@ host=$(uname -srm)
 llvm_enable_projects=clang;lld
 llvm_targets=X86;SH(experimental)
 target_runtime=shle-unknown-none-elf/sh4-soft (bounded compiler-rt/C/C++ subset)
+target_libraries=SH4 little-endian soft argument ABI; Picolibc 1.8.12; static libc++/libc++abi; see SH4-LIBRARIES.rst
 no GNU SH4 SDK/sysroot/libgcc; no packaged emulator; see SH4-FREESTANDING.rst
 EOF
 
@@ -162,6 +165,9 @@ freestanding() {
   python3 "$root/share/llvm-sh/examples/SHFreestanding/check.py" \
     --prefix "$root" --build-dir "$out/freestanding-$label" \
     --qemu "$qemu" --require-execution
+  python3 "$root/share/llvm-sh/examples/SHFreestanding/libraries/check.py" \
+    --prefix "$root" --build-dir "$out/libraries-$label" \
+    --qemu "$qemu" --require-execution
 }
 timed staged-freestanding freestanding "$stage" "staged-$format"
 
@@ -188,7 +194,7 @@ set(CPACK_GENERATOR "DEB")
 set(CPACK_PACKAGE_FILE_NAME "$stem-ubuntu2604-amd64")
 set(CPACK_DEBIAN_PACKAGE_NAME "llvm-sh-clang")
 set(CPACK_DEBIAN_PACKAGE_VERSION "0.1.0~rc1")
-set(CPACK_DEBIAN_PACKAGE_RELEASE "2+lld.$short")
+set(CPACK_DEBIAN_PACKAGE_RELEASE "3+libs.$short")
 set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Pierre-Marc Jobin <pmjobin@users.noreply.github.com>")
 set(CPACK_DEBIAN_PACKAGE_SECTION "devel")
@@ -201,9 +207,9 @@ set(CPACK_GENERATOR "RPM")
 set(CPACK_PACKAGE_FILE_NAME "$stem-fedora45-x86_64")
 set(CPACK_RPM_PACKAGE_NAME "llvm-sh-clang")
 set(CPACK_RPM_PACKAGE_VERSION "0.1.0")
-set(CPACK_RPM_PACKAGE_RELEASE "0.rc1.2.lld.$short")
+set(CPACK_RPM_PACKAGE_RELEASE "0.rc1.3.libs.$short")
 set(CPACK_RPM_PACKAGE_ARCHITECTURE "x86_64")
-set(CPACK_RPM_PACKAGE_LICENSE "Apache-2.0 WITH LLVM-exception")
+set(CPACK_RPM_PACKAGE_LICENSE "Apache-2.0 WITH LLVM-exception AND LicenseRef-Picolibc-1.8.12")
 set(CPACK_RPM_PACKAGE_DESCRIPTION "Unpublished RC1 reissue candidate with SH LLD and bounded freestanding SH4 runtimes. No hosted SDK or emulator.")
 set(CPACK_RPM_PACKAGE_AUTOREQPROV ON)
 # Host strip cannot recognize the SH archive members but still rewrites ar
@@ -225,7 +231,7 @@ if [[ "$format" == deb ]]; then
   dpkg-deb --contents "$file" > "$out/contents-$format.txt"
   dpkg-deb --fsys-tarfile "$file" | tar -tf - > "$out/paths-$format.txt"
   [[ "$(dpkg-deb -f "$file" Package)" == llvm-sh-clang ]]
-  [[ "$(dpkg-deb -f "$file" Version)" == "0.1.0~rc1-2+lld.$short" ]]
+  [[ "$(dpkg-deb -f "$file" Version)" == "0.1.0~rc1-3+libs.$short" ]]
   [[ "$(dpkg-deb -f "$file" Architecture)" == amd64 ]]
   test -n "$(dpkg-deb -f "$file" Depends)"
   grep -F '/opt/llvm-sh/rc1/bin/clang' "$out/contents-$format.txt" || {
@@ -244,7 +250,7 @@ else
   rpm -qpl "$file" > "$out/paths-$format.txt"
   rpm -qplv "$file" > "$out/contents-$format.txt"
   [[ "$(rpm -qp --qf '%{NAME} %{VERSION}-%{RELEASE} %{ARCH}' "$file")" \
-    == "llvm-sh-clang 0.1.0-0.rc1.2.lld.$short x86_64" ]]
+    == "llvm-sh-clang 0.1.0-0.rc1.3.libs.$short x86_64" ]]
   grep -F '/opt/llvm-sh/rc1/bin/clang' "$out/paths-$format.txt" || {
     echo 'Package missing /opt/llvm-sh/rc1/bin/clang' >&2; exit 10;
   }

@@ -29,6 +29,10 @@ def main():
         if p.is_file() and p.suffix in (".c", ".cpp", ".s", ".ll")
     )
     clang_tests.append(source / "clang/test/CodeGen/SH")
+    clang_tests += [
+        source / "clang/test/Preprocessor" / name
+        for name in ("init-sh.c", "bitint-target.c")
+    ]
     suites = {
         "llvm-sh": [source / "llvm/test/MC/SH", source / "llvm/test/CodeGen/SH"],
         "clang-sh": clang_tests,
@@ -59,6 +63,22 @@ def main():
         output = (args.logs / (name + ".log")).read_text(encoding="utf-8")
         print(output if result.returncode else output[-3000:])
         failed |= result.returncode != 0
+    suffix = ".exe" if sys.platform == "win32" else ""
+    unit_dir = args.build / "unittests/Target/SH"
+    unit_candidates = [
+        unit_dir / args.configuration / ("SHTests" + suffix),
+        unit_dir / ("SHTests" + suffix),
+        binary / ("SHTests" + suffix),
+    ]
+    unit = next((path for path in unit_candidates if path.is_file()), None)
+    if unit is None:
+        raise SystemExit("Missing built SHTests unit-test executable")
+    command = [str(unit), "--gtest_output=xml:" + str(args.logs / "sh-unit.xml")]
+    with (args.logs / "sh-unit.log").open("w", encoding="utf-8") as log:
+        result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT)
+    receipt.append({"suite": "sh-unit", "command": command, "exit": result.returncode})
+    print((args.logs / "sh-unit.log").read_text(encoding="utf-8")[-3000:])
+    failed |= result.returncode != 0
     (args.logs / "commands.json").write_text(
         json.dumps(receipt, indent=2) + "\n", encoding="utf-8"
     )
