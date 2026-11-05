@@ -82,18 +82,20 @@ void SHSubtarget::initLibcallLoweringInfo(LibcallLoweringInfo &Info) const {
   Info.setLibcallImpl(RTLIB::UINTTOFP_I32_F64, RTLIB::impl___floatunsidf);
   Info.setLibcallImpl(RTLIB::UINTTOFP_I64_F32, RTLIB::impl___floatundisf);
   Info.setLibcallImpl(RTLIB::UINTTOFP_I64_F64, RTLIB::impl___floatundidf);
-  Info.setLibcallImpl(RTLIB::OEQ_F32, RTLIB::impl___eqsf2);
-  Info.setLibcallImpl(RTLIB::OEQ_F64, RTLIB::impl___eqdf2);
-  Info.setLibcallImpl(RTLIB::UNE_F32, RTLIB::impl___nesf2);
-  Info.setLibcallImpl(RTLIB::UNE_F64, RTLIB::impl___nedf2);
-  Info.setLibcallImpl(RTLIB::OGE_F32, RTLIB::impl___gesf2);
-  Info.setLibcallImpl(RTLIB::OGE_F64, RTLIB::impl___gedf2);
-  Info.setLibcallImpl(RTLIB::OLT_F32, RTLIB::impl___ltsf2);
-  Info.setLibcallImpl(RTLIB::OLT_F64, RTLIB::impl___ltdf2);
-  Info.setLibcallImpl(RTLIB::OLE_F32, RTLIB::impl___lesf2);
-  Info.setLibcallImpl(RTLIB::OLE_F64, RTLIB::impl___ledf2);
-  Info.setLibcallImpl(RTLIB::OGT_F32, RTLIB::impl___gtsf2);
-  Info.setLibcallImpl(RTLIB::OGT_F64, RTLIB::impl___gtdf2);
+  // GNU/compiler-rt comparison helpers return a signed comparison result, not
+  // a boolean. Preserve the predicate so legalization compares it with zero.
+  Info.setLibcallImpl(RTLIB::FCMP3_PRED_OEQ_F32, RTLIB::impl___eqsf2);
+  Info.setLibcallImpl(RTLIB::FCMP3_PRED_OEQ_F64, RTLIB::impl___eqdf2);
+  Info.setLibcallImpl(RTLIB::FCMP3_PRED_UNE_F32, RTLIB::impl___nesf2);
+  Info.setLibcallImpl(RTLIB::FCMP3_PRED_UNE_F64, RTLIB::impl___nedf2);
+  Info.setLibcallImpl(RTLIB::FCMP3_PRED_OGE_F32, RTLIB::impl___gesf2);
+  Info.setLibcallImpl(RTLIB::FCMP3_PRED_OGE_F64, RTLIB::impl___gedf2);
+  Info.setLibcallImpl(RTLIB::FCMP3_PRED_OLT_F32, RTLIB::impl___ltsf2);
+  Info.setLibcallImpl(RTLIB::FCMP3_PRED_OLT_F64, RTLIB::impl___ltdf2);
+  Info.setLibcallImpl(RTLIB::FCMP3_PRED_OLE_F32, RTLIB::impl___lesf2);
+  Info.setLibcallImpl(RTLIB::FCMP3_PRED_OLE_F64, RTLIB::impl___ledf2);
+  Info.setLibcallImpl(RTLIB::FCMP3_PRED_OGT_F32, RTLIB::impl___gtsf2);
+  Info.setLibcallImpl(RTLIB::FCMP3_PRED_OGT_F64, RTLIB::impl___gtdf2);
   Info.setLibcallImpl(RTLIB::UO_F32, RTLIB::impl___unordsf2);
   Info.setLibcallImpl(RTLIB::UO_F64, RTLIB::impl___unorddf2);
   if (!hasSH2())
