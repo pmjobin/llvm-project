@@ -93,6 +93,9 @@ void SHTargetInfo::getTargetDefines(const LangOptions &Opts,
                                     MacroBuilder &Builder) const {
   (void)Opts;
   Builder.defineMacro("__sh__");
+  Builder.defineMacro(llvm::SH::usesFPUArgumentABI(ABIKind)
+                          ? "__SH_FLOAT_ABI_HARD__"
+                          : "__SH_FLOAT_ABI_SOFT__");
   if (hasFeature("fpu-vector"))
     Builder.defineMacro("__SH_GRAPHICS__");
   if (hasFeature("sh4a") && hasFeature("single-fpu"))
