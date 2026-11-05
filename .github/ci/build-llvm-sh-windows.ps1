@@ -144,7 +144,7 @@ Copy-Item (Join-Path $source 'clang/LICENSE.TXT') (Join-Path $doc 'LICENSE-CLANG
 @"
 LLVM SH RC1 Windows x64 reissue candidate (UNPUBLISHED)
 published_tag_unchanged=llvm-sh-rc1
-published_commit=090c682597f7155373681807330fbb0ac343a33c
+published_commit=c8f8d9181205796eaa58f38700906ee19a6444c8
 commit=$actual
 tree=$tree
 automation_commit=$env:GITHUB_SHA
@@ -153,7 +153,7 @@ runner=windows-2022
 llvm_enable_projects=clang;lld
 llvm_targets=X86;SH(experimental)
 target_runtime=shle-unknown-none-elf/sh4-soft (bounded compiler-rt/C/C++ subset)
-target_libraries=SH4 little-endian soft argument ABI; Picolibc 1.8.12; static libc++/libc++abi; see SH4-LIBRARIES.rst
+target_libraries=SH4 little-endian no-FPU (0x10), soft argument ABI; Picolibc 1.8.12; static libc++/libc++abi; see SH4-LIBRARIES.rst
 no GNU SH4 SDK/sysroot/libgcc; no packaged emulator; see SH4-FREESTANDING.rst
 "@ | Set-Content -Path (Join-Path $stage 'BUILDINFO.txt') -Encoding utf8
 

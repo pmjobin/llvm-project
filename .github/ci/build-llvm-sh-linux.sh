@@ -101,7 +101,7 @@ cp clang/LICENSE.TXT "$stage/share/doc/llvm-sh/LICENSE-CLANG.txt"
 cat > "$stage/BUILDINFO.txt" <<EOF
 LLVM SH RC1 reissue candidate (UNPUBLISHED)
 published_tag_unchanged=llvm-sh-rc1
-published_commit=090c682597f7155373681807330fbb0ac343a33c
+published_commit=c8f8d9181205796eaa58f38700906ee19a6444c8
 commit=$actual
 tree=$tree
 automation_commit=${GITHUB_SHA:-$actual}
@@ -111,7 +111,7 @@ host=$(uname -srm)
 llvm_enable_projects=clang;lld
 llvm_targets=X86;SH(experimental)
 target_runtime=shle-unknown-none-elf/sh4-soft (bounded compiler-rt/C/C++ subset)
-target_libraries=SH4 little-endian soft argument ABI; Picolibc 1.8.12; static libc++/libc++abi; see SH4-LIBRARIES.rst
+target_libraries=SH4 little-endian no-FPU (0x10), soft argument ABI; Picolibc 1.8.12; static libc++/libc++abi; see SH4-LIBRARIES.rst
 no GNU SH4 SDK/sysroot/libgcc; no packaged emulator; see SH4-FREESTANDING.rst
 EOF
 
@@ -174,8 +174,7 @@ timed staged-freestanding freestanding "$stage" "staged-$format"
 # Package the already staged installation with CPack's native DEB/RPM generators.
 # It must occupy /opt/llvm-sh/rc1 inside the package (not the CI build path).
 config="$RUNNER_TEMP/CPack-llvm-sh-$format.cmake"
-cpackdir="$RUNNER_TEMP/cpack-output-$format"
-mkdir -p "$cpackdir"
+cpackdir="$(mktemp -d "$RUNNER_TEMP/cpack-output-$format-$short.XXXXXX")"
 cat > "$config" <<EOF
 set(CPACK_PACKAGE_NAME "llvm-sh-clang")
 set(CPACK_PACKAGE_VERSION "0.1.0")
@@ -219,13 +218,14 @@ set(CPACK_RPM_SPEC_MORE_DEFINE "%define __brp_strip_static_archive %{nil}\n%defi
 EOF
 fi
 timed package cpack --config "$config" --verbose
-case "$format" in
-  deb) cp "$cpackdir"/*.deb "$out/" ;;
-  rpm) cp "$cpackdir"/*.rpm "$out/" ;;
-esac
+package_files=("$cpackdir"/*."$format")
+[[ ${#package_files[@]} == 1 && -f "${package_files[0]}" ]] || {
+  echo 'Expected exactly one newly built native package' >&2; exit 10;
+}
+cp "${package_files[0]}" "$out/"
+file="$out/$(basename "${package_files[0]}")"
 
 if [[ "$format" == deb ]]; then
-  file="$(find "$out" -maxdepth 1 -name '*.deb' -print -quit)"
   test -f "$file"
   dpkg-deb --field "$file" | tee "$out/metadata-$format.txt"
   dpkg-deb --contents "$file" > "$out/contents-$format.txt"
@@ -243,7 +243,6 @@ if [[ "$format" == deb ]]; then
     | tee "$out/installation-$format.txt"
   dpkg -V llvm-sh-clang
 else
-  file="$(find "$out" -maxdepth 1 -name '*.rpm' -print -quit)"
   test -f "$file"
   rpm -qpi "$file" | tee "$out/metadata-$format.txt"
   rpm -qp --requires "$file" | tee "$out/dependencies-$format.txt"
@@ -306,8 +305,7 @@ if [[ "$format" == rpm ]]; then
   unzip -tq "$portable_zip"
 
   # Unzip into a completely different directory and smoke-test from there.
-  portable_test="$RUNNER_TEMP/llvm-sh-rc1 zip relocation"
-  mkdir -p "$portable_test"
+  portable_test="$(mktemp -d "$RUNNER_TEMP/llvm-sh-rc1 zip relocation.XXXXXX")"
   ( cd "$portable_test" && unzip -q "$portable_zip" )
   portable="$portable_test/rc1"
   test -x "$portable/bin/clang"
