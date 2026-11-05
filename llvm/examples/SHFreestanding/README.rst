@@ -6,6 +6,10 @@ archives and native SH ELF support in ``ld.lld``. No GNU SH linker, libgcc,
 GNU SDK, target sysroot or host target library is required for this profile.
 It is a freestanding toolchain, with the bounded runtime described below.
 
+An additional opt-in Picolibc/libc++/libc++abi profile is described in
+``libraries/README.rst``. It has separate startup, sysroot and library ownership
+requirements; the minimal runtime documented here remains independent.
+
 Profile
 -------
 
