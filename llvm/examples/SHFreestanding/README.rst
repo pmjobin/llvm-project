@@ -6,6 +6,10 @@ archives and native SH ELF support in ``ld.lld``. No GNU SH linker, libgcc,
 GNU SDK, target sysroot or host target library is required for this profile.
 It is a freestanding toolchain, with the bounded runtime described below.
 
+An additional opt-in Picolibc/libc++/libc++abi profile is described in
+``libraries/README.rst``. It has separate startup, sysroot and library ownership
+requirements; the minimal runtime documented here remains independent.
+
 Profile
 -------
 
@@ -15,6 +19,12 @@ assembly provider and runtime. The target produces little-endian ELF32 SH4
 objects (EM_SH 42, e_flags 9). Links are static, non-PIE ET_EXEC or ``-r``
 ET_REL. LLD also implements big-endian relocation encoding and the ``shelf``
 emulation; the bundled runtime is **little endian only**.
+
+Here soft float selects the argument ABI; SH4 hardware arithmetic remains
+enabled and needs the board's FPU setup. The independent ``libraries/``
+profile selects ``-m4-nofpu`` and software arithmetic with e_flags 0x10.
+LLD rejects mixing these machine profiles. Neither profile qualifies a
+configurable floating-point environment.
 
 Use code/data labels for short PC-relative branch and literal-load references.
 Absolute numeric short PC-relative relocations retain a compile-only assembler

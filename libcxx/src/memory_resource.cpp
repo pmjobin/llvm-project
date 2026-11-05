@@ -6,10 +6,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <atomic>
 #include <cstddef>
 #include <memory>
 #include <memory_resource>
+
+#include "include/atomic_support.h"
 
 _LIBCPP_BEGIN_NAMESPACE_STD
 _LIBCPP_BEGIN_EXPLICIT_ABI_ANNOTATIONS
@@ -91,13 +92,13 @@ memory_resource* null_memory_resource() noexcept { return &res_init.resources.nu
 // default_memory_resource()
 
 static memory_resource* __default_memory_resource(bool set = false, memory_resource* new_res = nullptr) noexcept {
-  static constinit atomic<memory_resource*> __res{&res_init.resources.new_delete_res};
+  static constinit memory_resource* __res = &res_init.resources.new_delete_res;
   if (set) {
     new_res = new_res ? new_res : new_delete_resource();
     // TODO: Can a weaker ordering be used?
-    return std::atomic_exchange_explicit(&__res, new_res, memory_order_acq_rel);
+    return std::__libcpp_atomic_exchange(&__res, new_res, _AO_Acq_Rel);
   } else {
-    return std::atomic_load_explicit(&__res, memory_order_acquire);
+    return std::__libcpp_atomic_load(&__res, _AO_Acquire);
   }
 }
 

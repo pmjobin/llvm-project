@@ -19,7 +19,6 @@ from pathlib import Path
 import shutil
 import subprocess
 
-
 BUILTINS = """
 adddf3 addsf3 ashldi3 ashrdi3 bswapdi2 bswapsi2 clzdi2 clzsi2 cmpdi2
 comparedf2 comparesf2 ctzdi2 ctzsi2 divdf3 divdi3 divmoddi4 divmodsi4
@@ -52,6 +51,11 @@ def main():
     parser.add_argument("--jobs", type=int, default=min(os.cpu_count() or 1, 8))
     parser.add_argument("--source-commit")
     parser.add_argument("--source-tree")
+    parser.add_argument(
+        "--with-libc",
+        action="store_true",
+        help="build compiler helpers only; libc and libc++abi own memory/C++ APIs",
+    )
     args = parser.parse_args()
     if args.jobs < 1:
         parser.error("--jobs must be positive")
@@ -88,7 +92,13 @@ def main():
         "-ffile-prefix-map=" + str(source) + "=compiler-rt/builtins",
     ]
     sources = [Path(name + ".c") for name in BUILTINS]
-    sources += [Path("sh/freestanding-memory.c"), Path("sh/freestanding-cxx.cpp")]
+    if args.with_libc:
+        flags.append("-m4-nofpu")
+        sources += [
+            Path(name + ".c") for name in ("divdc3", "divsc3", "muldc3", "mulsc3")
+        ]
+    else:
+        sources += [Path("sh/freestanding-memory.c"), Path("sh/freestanding-cxx.cpp")]
     commands = []
 
     def compile_one(name):
@@ -131,24 +141,27 @@ def main():
         "libclang_rt.builtins.a": [
             obj for name, obj, _, _ in results if name.suffix == ".c"
         ],
-        "libclang_rt.sh4_cxx.a": [build / "freestanding-cxx.o"],
     }
+    if not args.with_libc:
+        groups["libclang_rt.sh4_cxx.a"] = [build / "freestanding-cxx.o"]
     for name, objects in groups.items():
         archive = install / "lib" / name
         archive.parent.mkdir(parents=True, exist_ok=True)
         archive.unlink(missing_ok=True)
         subprocess.run([str(ar), "rcsD", str(archive), *map(str, objects)], check=True)
         archives[name] = {"sha256": digest(archive), "size": archive.stat().st_size}
-    shutil.copytree(source / "sh/include", install / "include", dirs_exist_ok=True)
+    if not args.with_libc:
+        shutil.copytree(source / "sh/include", install / "include", dirs_exist_ok=True)
     provenance = install / "src/builtins"
     source_files = sources + [
         p.relative_to(source)
         for p in sorted(source.iterdir())
         if p.suffix in (".h", ".inc")
     ]
-    source_files += [
-        p.relative_to(source) for p in sorted((source / "sh/include").iterdir())
-    ]
+    if not args.with_libc:
+        source_files += [
+            p.relative_to(source) for p in sorted((source / "sh/include").iterdir())
+        ]
     for name in source_files:
         dest = provenance / name
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -162,6 +175,7 @@ def main():
         shutil.copy2(license_file, install / "LICENSE.TXT")
     manifest = {
         "profile": PROFILE,
+        "with_libc": args.with_libc,
         "flags": flags,
         "archives": archives,
         "source_commit": args.source_commit,

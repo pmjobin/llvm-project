@@ -190,6 +190,14 @@ TEST(SHInlineAsmSizeTest, IgnoresNonEmittingDirectives) {
              0);
 }
 
+TEST(SHInlineAsmSizeTest, SizesSymbolAssignmentsExactly) {
+  expectSize("alias = base\nnop", 2);
+  expectSize(".Lalias=base+4\nrts\nnop", 4);
+  expectSize("${0:c} = ${1:c}\nnop", 2);
+  expectFailure(". = . + 16", SHInlineAsmSizeKind::Indeterminate,
+                "location counter assignment");
+}
+
 TEST(SHInlineAsmSizeTest, SelectsTheSHAssemblyAlternative) {
   expectSize("$(nop$|nop;nop$)", 2);
   expectSize("$(.rept 2;nop;.endr$|nop$)", 4);

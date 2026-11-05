@@ -44,14 +44,22 @@ public:
 uint32_t SH::calcEFlags() const {
   if (!ctx.sharedFiles.empty())
     ErrAlways(ctx) << "SH shared object inputs are not supported";
+  uint32_t flags = 0;
   for (InputFile *f : ctx.objectFiles) {
     auto checkFile = [&](const auto &obj) {
       const auto &h = obj.getHeader();
-      // Only the SH4 non-FDPIC profile is qualified. Do not merge a different
-      // ISA, an unknown ISA, PIC/FDPIC flags or unknown flag bits into it.
-      if (h.e_flags != EF_SH4)
+      // Keep the two qualified machine profiles distinct. ISA compatibility
+      // alone does not establish compatible floating-point conventions.
+      // Reject other ISAs, PIC/FDPIC and unknown flag bits.
+      if (h.e_flags != EF_SH4 && h.e_flags != EF_SH4_NOFPU)
         ErrAlways(ctx) << f << ": unsupported SH e_flags: 0x"
-                       << utohexstr(h.e_flags) << "; expected SH4 (0x9)";
+                       << utohexstr(h.e_flags)
+                       << "; expected SH4 (0x9) or SH4_NOFPU (0x10)";
+      else if (flags && h.e_flags != flags)
+        ErrAlways(ctx)
+            << f << ": SH4 and SH4_NOFPU machine profiles cannot be mixed";
+      else
+        flags = h.e_flags;
       if ((h.e_ident[EI_OSABI] != ELFOSABI_NONE &&
            h.e_ident[EI_OSABI] != ELFOSABI_GNU) ||
           h.e_ident[EI_ABIVERSION] != 0)
@@ -68,7 +76,7 @@ uint32_t SH::calcEFlags() const {
       if (sec && sec != &InputSection::discarded && (sec->flags & SHF_TLS))
         ErrAlways(ctx) << f << ": SH TLS is not supported";
   }
-  return EF_SH4;
+  return flags ? flags : EF_SH4;
 }
 
 RelExpr SH::getRelExpr(RelType type, const Symbol &s,

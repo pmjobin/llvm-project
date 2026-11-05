@@ -19,13 +19,13 @@ import struct
 import subprocess
 
 
-def elf_info(path, expected_type, data=None):
+def elf_info(path, expected_type, data=None, expected_flags=9):
     """Check ELF32 independently of the toolchain's ELF reader."""
     if data is None:
         data = path.read_bytes()
     assert data[:7] == b"\x7fELF\x01\x01\x01", (path, "ELF32 little endian")
     h = struct.unpack_from("<16sHHIIIIIHHHHHH", data)
-    assert h[1:3] == (expected_type, 42) and h[7] == 9, (path, h)
+    assert h[1:3] == (expected_type, 42) and h[7] == expected_flags, (path, h)
     headers = [
         struct.unpack_from("<IIIIIIII", data, h[5] + i * h[9]) for i in range(h[10])
     ]
