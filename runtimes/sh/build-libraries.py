@@ -64,6 +64,17 @@ def main():
     clang = tools / ("clang" + suffix)
     ar = tools / ("llvm-ar" + suffix)
     commands = []
+    fingerprint = {
+        "clang": digest(clang),
+        "ar": digest(ar),
+        "recipe": digest(Path(__file__)),
+        "picolibc_pin": digest(Path(__file__).parent / "picolibc.json"),
+        "cxx_profile": digest(Path(__file__).parent / "SH4Soft.cmake"),
+    }
+    stamp = build / "toolchain.json"
+    changed_toolchain = (
+        not stamp.is_file() or json.loads(stamp.read_text()) != fingerprint
+    )
 
     def run(command, name):
         command = list(map(str, command))
@@ -106,9 +117,11 @@ def main():
         "# define _SH_CONCAT(a, b) _SH_CONCAT_IMPL(a, b)\n"
         "# define _C_LABEL(x) _SH_CONCAT(__USER_LABEL_PREFIX__, x)"
     )
-    content = asm.read_text()
+    content = asm.read_text(encoding="utf-8")
     if original in content:
-        asm.write_text(content.replace(original, replacement))
+        asm.write_text(
+            content.replace(original, replacement), encoding="utf-8", newline="\n"
+        )
     elif replacement not in content:
         raise SystemExit("Unexpected pinned SH assembly label definitions")
     # A cached extraction is still required to match the pinned archive. Apart
@@ -164,6 +177,7 @@ def main():
         "-fno-pic",
         "-fno-pie",
         "-fno-stack-protector",
+        "-fno-ident",
         "-fno-unwind-tables",
         "-fno-asynchronous-unwind-tables",
         "-nostdinc",
@@ -224,7 +238,7 @@ def main():
         "-Dtests=false",
     ]
     if (pico_build / "meson-private/coredata.dat").exists():
-        configure.append("--reconfigure")
+        configure.append("--wipe" if changed_toolchain else "--reconfigure")
     run(configure, "picolibc-configure")
     run(["ninja", "-C", pico_build, "-j", args.jobs], "picolibc-build")
     run(["meson", "install", "-C", pico_build, "--no-rebuild"], "picolibc-install")
@@ -252,6 +266,8 @@ def main():
             )
 
         cxx_build = build / "cxx-build"
+        if changed_toolchain and (cxx_build / "build.ninja").is_file():
+            run(["ninja", "-C", cxx_build, "-t", "clean"], "cxx-clean")
         run(
             [
                 "cmake",
@@ -337,6 +353,7 @@ def main():
         },
     }
     (sysroot / "LIBRARIES.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    stamp.write_text(json.dumps(fingerprint, indent=2) + "\n")
     print(json.dumps(manifest["archives"], indent=2))
 
 

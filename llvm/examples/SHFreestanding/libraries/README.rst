@@ -128,3 +128,6 @@ archive. The recipe verifies its SHA-256 before extraction. Its SH assembly
 label-prefix adaptation uses Clang's ``__USER_LABEL_PREFIX__``; the original
 archive and modified file hash are retained. Runtime builds use only LLVM
 target tools, and are separate from the native host compiler build.
+Compiler, archive-tool, source-pin, profile and recipe fingerprints invalidate
+runtime object caches when their inputs change. Compiler provenance is recorded
+in the manifest; target objects omit compiler-identification comment sections.

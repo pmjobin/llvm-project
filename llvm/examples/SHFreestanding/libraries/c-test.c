@@ -84,6 +84,12 @@ int main(void) {
   assert(fabs(creal(Quotient) - 3.0) < 1e-12);
   assert(fabs(cimag(Quotient) - 4.0) < 1e-12);
   assert(fabs(cabs(Z) - sqrt(4.25)) < 1e-12);
+  float complex F = (float)X + 2.0f * I;
+  float complex FP = F * (3.0f + 4.0f * I);
+  assert(crealf(FP) == -6.5f && cimagf(FP) == 8.0f);
+  float complex FQ = FP / F;
+  assert(fabsf(crealf(FQ) - 3.0f) < 1e-5f);
+  assert(fabsf(cimagf(FQ) - 4.0f) < 1e-5f);
 
   char FileData[64] = {0};
   FILE *File = fmemopen(FileData, sizeof(FileData), "w+");
