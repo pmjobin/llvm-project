@@ -107,31 +107,42 @@ def main():
     if not pico.exists():
         with tarfile.open(archive) as src:
             src.extractall(build, filter="data")
-    # GNU's SH ELF assembly convention prefixes C symbols with '_'; this
-    # Clang target uses the unprefixed ELF convention. Use Clang's actual
-    # predefined label prefix instead of changing the library's C ABI.
-    asm = pico / "libc/machine/sh/asm.h"
-    original = "# define _C_LABEL(x)    _ ## x"
-    replacement = (
-        "# define _SH_CONCAT_IMPL(a, b) a ## b\n"
-        "# define _SH_CONCAT(a, b) _SH_CONCAT_IMPL(a, b)\n"
-        "# define _C_LABEL(x) _SH_CONCAT(__USER_LABEL_PREFIX__, x)"
-    )
-    content = asm.read_text(encoding="utf-8")
-    if original in content:
-        asm.write_text(
-            content.replace(original, replacement), encoding="utf-8", newline="\n"
-        )
-    elif replacement not in content:
-        raise SystemExit("Unexpected pinned SH assembly label definitions")
+    # Adapt the ELF label prefix and the compiler-rt soft-float NaN convention.
+    # SH hardware uses the legacy signaling bit; LLVM's software helpers and
+    # floating constants use IEEE-754-2008 quiet/signaling encoding instead.
+    patches = {
+        "libc/machine/sh/asm.h": (
+            "# define _C_LABEL(x)    _ ## x",
+            "# define _SH_CONCAT_IMPL(a, b) a ## b\n"
+            "# define _SH_CONCAT(a, b) _SH_CONCAT_IMPL(a, b)\n"
+            "# define _C_LABEL(x) _SH_CONCAT(__USER_LABEL_PREFIX__, x)",
+        ),
+        "libc/include/machine/ieeefp.h": (
+            "#ifdef __sh__\n#define _IEEE_754_2008_SNAN 0",
+            "#ifdef __sh__\n#if defined(__SH_FLOAT_ABI_SOFT__)\n"
+            "#define _IEEE_754_2008_SNAN 1\n#else\n"
+            "#define _IEEE_754_2008_SNAN 0\n#endif",
+        ),
+    }
+    for name, (original, replacement) in patches.items():
+        path = pico / name
+        content = path.read_text(encoding="utf-8")
+        if original in content:
+            path.write_text(
+                content.replace(original, replacement), encoding="utf-8", newline="\n"
+            )
+        elif replacement not in content:
+            raise SystemExit("Unexpected pinned Picolibc source: " + name)
     # A cached extraction is still required to match the pinned archive. Apart
-    # from the explicit assembly adaptation, local source edits are rejected.
+    # from the explicit adaptations, local source edits are rejected.
     with tarfile.open(archive) as original_source:
         for member in original_source.getmembers():
             path = build / member.name
             if member.isfile():
                 expected = original_source.extractfile(member).read()
-                if path == asm:
+                name = path.relative_to(pico).as_posix()
+                if name in patches:
+                    original, replacement = patches[name]
                     expected = expected.replace(original.encode(), replacement.encode())
                 if not path.is_file() or path.read_bytes() != expected:
                     raise SystemExit("Picolibc source differs from pin: " + member.name)
@@ -170,6 +181,7 @@ def main():
     flags = [
         "--target=shle-unknown-none-elf",
         "-mcpu=sh4",
+        "-m4-nofpu",
         "-msoft-float",
         "-mfloat-abi=soft",
         "-ffreestanding",
@@ -335,11 +347,11 @@ def main():
         dirs_exist_ok=True,
     )
     manifest = {
-        "profile": "SH4 little-endian soft-float static, single-thread, no TLS",
+        "profile": "SH4 little-endian no-FPU (0x10), soft arguments, static, single-thread, no TLS",
         "picolibc": lock,
         "flags": flags,
         "cxx": not args.c_only,
-        "picolibc_patches": {"libc/machine/sh/asm.h": digest(asm)},
+        "picolibc_patches": {name: digest(pico / name) for name in patches},
         "recipe_sha256": digest(Path(__file__)),
         "llvm_source_commit": source_commit,
         "llvm_source_tree": source_tree,

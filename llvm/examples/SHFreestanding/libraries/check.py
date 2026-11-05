@@ -32,7 +32,7 @@ def archive_members(path):
         if member.startswith(b"\x7fELF"):
             assert member[:7] == b"\x7fELF\x01\x01\x01", (path, header[:16])
             assert struct.unpack_from("<HH", member, 16) == (1, 42)
-            assert struct.unpack_from("<I", member, 36)[0] == 9
+            assert struct.unpack_from("<I", member, 36)[0] == 0x10
             count += 1
         else:
             assert header[:16].strip() in (b"/", b"//"), (path, header[:16])
@@ -112,7 +112,10 @@ def main():
             }
         )
         if reject:
-            assert result.returncode != 0 and "profile requires" in result.stderr, (
+            assert result.returncode != 0 and (
+                "profile requires" in result.stderr
+                or "unsupported option '-mfloat-abi=hard' for target" in result.stderr
+            ), (
                 command,
                 result.returncode,
                 result.stderr,
@@ -169,6 +172,7 @@ def main():
         common = [
             "--target=shle-unknown-none-elf",
             "-mcpu=sh4",
+            "-m4-nofpu",
             "-msoft-float",
             "-mfloat-abi=soft",
             "-ffreestanding",
@@ -245,7 +249,7 @@ def main():
                                 merged,
                             ]
                         )
-                        elf_info(merged, 1)
+                        elf_info(merged, 1, expected_flags=0x10)
                         inputs = [merged]
                     output = build / (name + ".elf")
                     if mode == "config":
@@ -307,7 +311,11 @@ def main():
                                 output,
                             ]
                         )
-                    program = {"name": name, **elf_info(output, 2), "executed": False}
+                    program = {
+                        "name": name,
+                        **elf_info(output, 2, expected_flags=0x10),
+                        "executed": False,
+                    }
                     receipt["programs"].append(program)
                     run(
                         [

@@ -93,6 +93,7 @@ def main():
     ]
     sources = [Path(name + ".c") for name in BUILTINS]
     if args.with_libc:
+        flags.append("-m4-nofpu")
         sources += [
             Path(name + ".c") for name in ("divdc3", "divsc3", "muldc3", "mulsc3")
         ]

@@ -20,6 +20,12 @@ objects (EM_SH 42, e_flags 9). Links are static, non-PIE ET_EXEC or ``-r``
 ET_REL. LLD also implements big-endian relocation encoding and the ``shelf``
 emulation; the bundled runtime is **little endian only**.
 
+Here soft float selects the argument ABI; SH4 hardware arithmetic remains
+enabled and needs the board's FPU setup. The independent ``libraries/``
+profile selects ``-m4-nofpu`` and software arithmetic with e_flags 0x10.
+LLD rejects mixing these machine profiles. Neither profile qualifies a
+configurable floating-point environment.
+
 Use code/data labels for short PC-relative branch and literal-load references.
 Absolute numeric short PC-relative relocations retain a compile-only assembler
 convention and are rejected by LLD rather than silently losing their target.

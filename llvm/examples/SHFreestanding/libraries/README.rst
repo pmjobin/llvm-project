@@ -3,7 +3,8 @@ SH4 static C and C++ libraries
 
 This opt-in profile combines Picolibc 1.8.12 (C and math), selected compiler-rt
 helpers, and the matching in-tree libc++ and libc++abi. It targets little-endian
-SH4 with the soft floating-point argument ABI, static non-PIC/non-PIE ELF32.
+SH4's no-FPU instruction subset with the soft floating-point argument ABI,
+static non-PIC/non-PIE ELF32 (EM_SH 42, e_flags 0x10).
 All target libraries are built by the packaged Clang and LLVM archive tools.
 The system compiler and the existing compile-only Linux triple are unchanged.
 
@@ -23,12 +24,20 @@ CPU, endianness, argument ABI, PIC/PIE, exceptions and RTTI for compiled sources
 LLD checks object machine flags; those flags cannot identify every argument ABI
 in precompiled objects. All input providers must use matching options.
 
-SH4 hardware capabilities and its argument ABI are independent. ``-msoft-float
--mfloat-abi=soft`` selects software C arithmetic and general-purpose argument
-registers. Picolibc's SH assembly ``setjmp``/``longjmp`` preserves SH4 floating
-registers, so this profile still requires an SH4 implementation with an FPU.
-It does not qualify SH4 no-FPU implementations or a software floating-point
-environment with selectable rounding and exception flags.
+SH4 instruction selection and its argument ABI are independent on this backend.
+``-msoft-float -mfloat-abi=soft`` alone still permits hardware arithmetic with
+``-mcpu=sh4``. This configuration also selects the existing, tested
+``-m4-nofpu`` mode, which emits the SH4 no-FPU machine flag 0x10 and uses
+compiler-rt arithmetic. This is a real supported selector, separate from the
+unsupported ``-m4`` spelling. The original Linux-target compile-only command
+continues to emit SH4 flags 0x9. LLD rejects mixing 0x9 and 0x10 profiles;
+compile startup and all input providers with matching options.
+This profile runs on SH4 without requiring FPU initialization. A software
+floating-point environment with selectable rounding/exception flags remains
+unsupported; software helpers use round-to-nearest, ties to even.
+The soft-ABI adaptation uses IEEE-754-2008 quiet/signaling NaN encoding to
+match Clang constants and compiler-rt software operations, rather than the
+opposite legacy SH hardware signaling-bit convention.
 
 The sysroot is ``lib/clang-runtimes/shle-unknown-none-elf/sh4-soft``. Picolibc
 includes its math implementation in ``libc.a``; the accompanying ``libm.a`` is
@@ -56,7 +65,7 @@ providers in the older minimal profile. That independent profile remains at
 ``lib/shle-unknown-none-elf/sh4-soft`` with its original board-hook contract.
 
 Supply reset/stack setup, data copying/BSS clearing, vectors, clocks,
-MMU/cache/FPU initialization, a linker script and any other hardware setup.
+MMU/cache initialization, a linker script and any other hardware setup.
 After initialization, call ``__libc_init_array()``, then the application entry,
 then ``exit(status)``. The example C++ entry uses ``extern "C" int main()``
 because freestanding C++ does not give main the hosted linkage contract.
@@ -94,6 +103,8 @@ outputs and execution exit statuses are retained in ``receipt.json``.
 
 The corpus covers memory alignment/lengths, allocation/reallocation, sorting,
 64-bit and floating varargs, conversion/errno, real and complex arithmetic,
+binary32/binary64 comparisons (finite, NaN, signed zero and infinity),
+quiet/signaling NaN classification and invalid square roots,
 RAM stdio, setjmp/longjmp, atexit, global/local constructors and destructors,
 guards, strings, vector/map/unordered_map, smart pointers, aligned allocation,
 nothrow allocation failure/new-handler behavior, PMR and integer charconv.
@@ -101,6 +112,8 @@ Successful smoke tests are not full C/C++ conformance qualification.
 
 * C memory, allocation, formatting, math and RAM streams: exercised by this
   corpus; board I/O, heap and startup requirements still apply.
+* Math uses IEEE return-value semantics without math errno reporting. A
+  configurable floating-point environment and exception flags are unsupported.
 * C++17 containers, algorithms, strings, smart pointers, guards, static
   initialization and allocation: exercised; single-threaded only.
 * Exceptions and unwinding: unsupported; no SH libunwind port is bundled.
@@ -125,8 +138,9 @@ With a matching LLVM source checkout, Python 3.12+, CMake 3.24+, Meson and Ninja
 
 For an offline build, pass ``--picolibc-archive`` with the shipped pinned source
 archive. The recipe verifies its SHA-256 before extraction. Its SH assembly
-label-prefix adaptation uses Clang's ``__USER_LABEL_PREFIX__``; the original
-archive and modified file hash are retained. Runtime builds use only LLVM
+label-prefix adaptation uses Clang's ``__USER_LABEL_PREFIX__``; the soft-ABI
+NaN adaptation is explicit in the recipe. The original archive and hashes of
+both modified files are retained. Runtime builds use only LLVM
 target tools, and are separate from the native host compiler build.
 Compiler, archive-tool, source-pin, profile and recipe fingerprints invalidate
 runtime object caches when their inputs change. Compiler provenance is recorded

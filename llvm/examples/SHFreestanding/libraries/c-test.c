@@ -30,6 +30,17 @@ static void finish(void) {
 
 static void jump(void) { longjmp(Jump, 7); }
 
+#define DEFINE_COMPARE(Name, Type)                                             \
+  __attribute__((noinline)) static unsigned Name(Type A, Type B) {             \
+    return (A == B) | ((A != B) << 1) | ((A < B) << 2) | ((A <= B) << 3) |     \
+           ((A > B) << 4) | ((A >= B) << 5) |                                  \
+           ((!__builtin_isunordered(A, B)) << 6) |                             \
+           (__builtin_isunordered(A, B) << 7);                                 \
+  }
+DEFINE_COMPARE(compareFloat, float)
+DEFINE_COMPARE(compareDouble, double)
+#undef DEFINE_COMPARE
+
 int main(void) {
   assert(library_transform(7) == 52);
   unsigned char Source[128], Destination[128];
@@ -72,6 +83,36 @@ int main(void) {
   assert(errno == ERANGE);
 
   double X = Input;
+  volatile float FloatQuiet = __builtin_nanf("");
+  volatile double DoubleQuiet = __builtin_nan("");
+  uint32_t FloatSignalingBits = 0x7f800001;
+  uint64_t DoubleSignalingBits = UINT64_C(0x7ff0000000000001);
+  float FloatSignaling;
+  double DoubleSignaling;
+  memcpy(&FloatSignaling, &FloatSignalingBits, sizeof(FloatSignaling));
+  memcpy(&DoubleSignaling, &DoubleSignalingBits, sizeof(DoubleSignaling));
+  assert(isnan(FloatQuiet) && !issignaling(FloatQuiet));
+  assert(isnan(DoubleQuiet) && !issignaling(DoubleQuiet));
+  assert(isnan(FloatSignaling) && issignaling(FloatSignaling));
+  assert(isnan(DoubleSignaling) && issignaling(DoubleSignaling));
+  assert(compareDouble(X, X) == 105 && compareFloat((float)X, (float)X) == 105);
+  assert(compareDouble(X, X + 1) == 78 &&
+         compareFloat((float)X, (float)X + 1) == 78);
+  assert(compareDouble(X + 1, X) == 114 &&
+         compareFloat((float)X + 1, (float)X) == 114);
+  assert(compareDouble(DoubleQuiet, X) == 130 &&
+         compareFloat(FloatQuiet, (float)X) == 130);
+  assert(compareDouble(X, DoubleQuiet) == 130 &&
+         compareFloat((float)X, FloatQuiet) == 130);
+  assert(compareDouble(0.0, -0.0) == 105 && compareFloat(0.0f, -0.0f) == 105);
+  assert(compareDouble(INFINITY, X) == 114 &&
+         compareFloat(INFINITY, (float)X) == 114);
+  assert(compareDouble(-INFINITY, X) == 78 &&
+         compareFloat(-INFINITY, (float)X) == 78);
+  double Invalid = sqrt(-X);
+  assert(isnan(Invalid) && !issignaling(Invalid));
+  float InvalidFloat = sqrtf(-(float)X);
+  assert(isnan(InvalidFloat) && !issignaling(InvalidFloat));
   assert(fabs(sin(X) - 0.479425538604203) < 1e-12);
   assert(fabs(cos(X) - 0.877582561890373) < 1e-12);
   assert(fabs(sqrt(X + 1.75) - 1.5) < 1e-12);

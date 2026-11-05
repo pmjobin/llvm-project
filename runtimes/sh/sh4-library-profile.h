@@ -6,9 +6,10 @@
 #define LLVM_SH4_LIBRARY_PROFILE_H
 
 #if !defined(__sh__) || !defined(__LITTLE_ENDIAN__) ||                         \
-    !defined(__SH4__) || defined(__SH4A__) ||                                  \
+    !defined(__SH4_NOFPU__) || defined(__SH4A__) ||                            \
     !defined(__SH_FLOAT_ABI_SOFT__) || defined(__SH_FDPIC__)
-#error "This library profile requires little-endian SH4, soft float, static ELF"
+#error                                                                         \
+    "This library profile requires little-endian SH4 -m4-nofpu, soft arguments, static ELF"
 #endif
 
 #if defined(__PIC__) || defined(__PIE__)
