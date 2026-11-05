@@ -782,6 +782,24 @@ class InlineAsmSizeParser {
 
   bool measureStatement(StringRef Statement, uint64_t &Size,
                         bool &Conservative) {
+    // A symbol assignment emits no bytes, including libc++'s operand-based
+    // aliases. Assigning to '.' changes the location counter and is different.
+    size_t Equal = Statement.find('=');
+    if (Equal != StringRef::npos) {
+      StringRef Left = Statement.take_front(Equal).trim();
+      StringRef Right = Statement.drop_front(Equal + 1).trim();
+      if (Left == ".")
+        return fail(SHInlineAsmSizeKind::Indeterminate,
+                    "location counter assignment is not supported");
+      StringRef Operand = Left;
+      bool IsOperand = Operand.consume_front("${") &&
+                       Operand.consume_back(":c}") && !Operand.empty() &&
+                       llvm::all_of(Operand, [](char C) { return isDigit(C); });
+      bool IsSymbol = isLabelName(Left) &&
+                      !isDigit(static_cast<unsigned char>(Left.front()));
+      if ((IsSymbol || IsOperand) && !Right.empty())
+        return true;
+    }
     auto [Head, Arguments] = splitHead(Statement);
     if (Head.empty())
       return true;
