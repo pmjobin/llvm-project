@@ -57,7 +57,7 @@ $toolComponents = @(
   'clang', 'clang-resource-headers', 'llc', 'opt', 'llvm-as', 'llvm-dis',
   'llvm-readobj', 'llvm-objdump', 'llvm-ar', 'llvm-ranlib', 'llvm-mc', 'llvm-objcopy', 'llvm-nm', 'llvm-link', 'lld'
 )
-$buildTargets = @(Get-Content (Join-Path $source '.github/ci/llvm-sh-test-tools.txt'))
+$buildTargets = @(Get-Content (Join-Path $PSScriptRoot 'llvm-sh-test-tools.txt'))
 
 # Visual Studio generator supplies the 64-bit host toolchain without vcvars setup.
 # Unlike Linux, Windows/MSVC does not support LLVM_BUILD_LLVM_DYLIB.
@@ -102,7 +102,7 @@ Invoke-Timed 'build' {
 }
 $script:sourceRegressionsExit = 0
 Invoke-Timed 'source-regressions' {
-  & python (Join-Path $source '.github/ci/check-llvm-sh-regressions.py') `
+  & python (Join-Path $PSScriptRoot 'check-llvm-sh-regressions.py') `
     --source $source --build $build --configuration Release --logs (Join-Path $out 'source-tests-windows')
   $script:sourceRegressionsExit = $LASTEXITCODE
   "source_tests_exit=$script:sourceRegressionsExit" |
@@ -124,7 +124,7 @@ Copy-Item (Join-Path $source 'llvm/LICENSE.TXT') (Join-Path $doc 'LICENSE-LLVM.t
 Copy-Item (Join-Path $source 'clang/LICENSE.TXT') (Join-Path $doc 'LICENSE-CLANG.txt')
 Copy-Item (Join-Path $source 'lld/LICENSE.TXT') (Join-Path $doc 'LICENSE-lld.txt')
 Invoke-Timed 'target-runtime' {
-  & python (Join-Path $source '.github/ci/stage-llvm-sh-freestanding.py') `
+  & python (Join-Path $PSScriptRoot 'stage-llvm-sh-freestanding.py') `
     --source $source --prefix $stage --build-dir (Join-Path $env:RUNNER_TEMP 'sh4-runtime-build') `
     --commit $actual --tree $tree --logs-dir (Join-Path $out 'target-runtime-build')
   if ($LASTEXITCODE -ne 0) { throw 'SH freestanding runtime staging failed' }
@@ -145,8 +145,8 @@ if (!(Test-Path (Join-Path $resourceVersion 'include/stddef.h'))) {
 
 @"
 LLVM SH RC1 Windows x64 reissue candidate (UNPUBLISHED)
-published_tag_unchanged=llvm-sh-rc1
-published_commit=c8f8d9181205796eaa58f38700906ee19a6444c8
+source_tag=llvm-sh-rc1
+previous_release_commit=c8f8d9181205796eaa58f38700906ee19a6444c8
 commit=$actual
 tree=$tree
 automation_commit=$env:GITHUB_SHA

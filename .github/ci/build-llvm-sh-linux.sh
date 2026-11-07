@@ -3,6 +3,7 @@
 # All packages install under /opt/llvm-sh/rc1, never replacing system clang.
 set -euo pipefail
 
+ci_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 format="${1:?need deb or rpm}"
 case "$format" in deb|rpm) ;; *) echo 'format must be deb or rpm' >&2; exit 2;; esac
 
@@ -86,12 +87,12 @@ timed configure cmake -S llvm -B "$bld" -G Ninja \
   -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF
 
 timed build cmake --build "$bld" --target distribution --parallel "$jobs"
-mapfile -t test_tools < .github/ci/llvm-sh-test-tools.txt
+mapfile -t test_tools < "$ci_dir/llvm-sh-test-tools.txt"
 timed test-tools cmake --build "$bld" --target "${test_tools[@]}" --parallel "$jobs"
-timed source-regressions python3 .github/ci/check-llvm-sh-regressions.py \
+timed source-regressions python3 "$ci_dir/check-llvm-sh-regressions.py" \
   --source "$repo" --build "$bld" --logs "$out/source-tests-$format"
 timed stage env DESTDIR="$pkgroot" cmake --build "$bld" --target install-distribution --parallel "$jobs"
-timed target-runtime python3 .github/ci/stage-llvm-sh-freestanding.py \
+timed target-runtime python3 "$ci_dir/stage-llvm-sh-freestanding.py" \
   --source "$repo" --prefix "$stage" --build-dir "$RUNNER_TEMP/sh4-runtime-build" \
   --commit "$actual" --tree "$tree" --logs-dir "$out/target-runtime-build"
 
@@ -103,8 +104,8 @@ cp llvm/LICENSE.TXT "$stage/share/doc/llvm-sh/LICENSE-LLVM.txt"
 cp clang/LICENSE.TXT "$stage/share/doc/llvm-sh/LICENSE-CLANG.txt"
 cat > "$stage/BUILDINFO.txt" <<EOF
 LLVM SH RC1 reissue candidate (UNPUBLISHED)
-published_tag_unchanged=llvm-sh-rc1
-published_commit=c8f8d9181205796eaa58f38700906ee19a6444c8
+source_tag=llvm-sh-rc1
+previous_release_commit=c8f8d9181205796eaa58f38700906ee19a6444c8
 commit=$actual
 tree=$tree
 automation_commit=${GITHUB_SHA:-$actual}
