@@ -1,12 +1,12 @@
-LLVM SH RC1 prebuilt packages
-============================
+LLVM SH RC1: SH linker and static C/C++ libraries
+================================================
 
 Release: https://github.com/pmjobin/llvm-project/releases/tag/llvm-sh-rc1
-Source: 090c682597f7155373681807330fbb0ac343a33c
-Tree:   55640dd25d624b11b9e0f28a7903eea42a429254
-Build recipes: 8cc110b2ee91b3645a8ea350b8c321eda5f74bc5
+Source: 2ab77bfe7ccd9bbe3f78f2582f3b28d4c10b7004
+Tree:   fde861cc0c96b9f21801348c68a0fe140e1f6d56
+Build recipes: 32d77950cf98585b9d62dfbfa34ea81ccec4a1b4
 Build and package checks:
-https://github.com/pmjobin/llvm-project/actions/runs/41766778569
+https://github.com/pmjobin/llvm-project/actions/runs/42332576014
 
 Choose the package for the computer running the compiler:
 
@@ -32,8 +32,11 @@ On Windows, compare the result below with the supplied .sha256 text file:
   Get-FileHash .\llvm-sh-rc1-windows-x64.zip -Algorithm SHA256
 
 Each package contains BUILDINFO.txt with its source commit/tree, automation
-commit and exact GitHub Actions run URL. The package SHA-256 values describe
-these binaries, not the earlier builds made before the RC1 history fold.
+commit and exact GitHub Actions run URL. These packages are rebuilt from the
+source above. They replace the previous RC1 downloads; refresh cached files
+and check their new SHA-256 values. Build metadata calls them candidates
+because the CI workflow builds candidates before release publication.
+Extract each ZIP update into a fresh directory.
 
 Ubuntu DEB
 ----------
@@ -80,15 +83,74 @@ From PowerShell in a directory where you can write files:
   Expand-Archive -LiteralPath .\llvm-sh-rc1-windows-x64.zip -DestinationPath .\toolchains
   & .\toolchains\llvm-sh-rc1\bin\clang.exe --version
 
-The host tools are PE x64 executables built by native MSVC 19.44.35229.0.
+The host tools are PE x64 executables built by native MSVC.
 Imports include MSVCP140.dll, VCRUNTIME140.dll, VCRUNTIME140_1.dll, the
 Universal CRT and standard Windows system DLLs. Runtime DLLs are not bundled.
 Install a compatible Microsoft x64 v14 runtime if needed. Microsoft's current
 runtime/download guidance is here:
 https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist/
 
-SH4 compilation
-----------------
+Static SH4 C and C++ programs
+-----------------------------
+
+The packages include native SH ELF32 LLD, compiler-rt helpers, Picolibc
+1.8.12 and static libc++/libc++abi. Target libraries are built with the
+packaged compiler and archive tools. Select the installed configurations:
+
+  clang --config=sh4-picolibc.cfg -O2 -c application.c -o application.o
+  clang++ --config=sh4-libcxx.cfg -O2 -c application.cpp -o application.o
+  clang++ --config=sh4-libcxx.cfg -Wl,--gc-sections -T board.ld \
+    startup.o application.o libapplication.a -o application.elf
+
+Use the clang/clang++ in /opt/llvm-sh/rc1/bin or the extracted ZIP's bin
+directory. Supply the application's startup, linker script, heap bounds and
+required platform I/O hooks. The configurations supply no board startup or
+default memory map. C++ defaults to C++17 without exceptions or RTTI.
+
+This library profile is little-endian SH4, -m4-nofpu, soft floating-point
+arguments and software arithmetic, static non-PIC/non-PIE ELF32 EM_SH 42
+with e_flags 0x10. Use matching options for startup and every input object.
+LLD rejects mixing the 0x10 library profile with the older 0x9 SH4 profile.
+The configurations and headers resolve relative to the installed toolchain;
+no GNU SH linker, target libgcc or external target SDK is required.
+
+The library sysroot is:
+
+  lib/clang-runtimes/shle-unknown-none-elf/sh4-soft
+
+LIBRARIES.json in that sysroot records source identities, compiler version,
+recipe hashes and archive checksums. Installed archives include libc.a,
+libm.a, libc++.a, libc++abi.a and libclang_rt.builtins.a. The exact pinned
+Picolibc source archive, its license material and the library build recipe
+are included. See share/doc/llvm-sh/SH4-LIBRARIES.rst for the complete board
+contract, configuration options, supported facilities and rebuild steps.
+
+The independent minimal freestanding runtime remains at:
+
+  lib/shle-unknown-none-elf/sh4-soft
+
+It has its own board allocation/panic hooks and 0x9 SH4 profile. Do not mix
+its memory or C++ lifecycle providers with the Picolibc/libc++ profile.
+See share/doc/llvm-sh/SH4-FREESTANDING.rst for its contract and examples.
+
+Installed examples and checks are under:
+
+  share/llvm-sh/examples/SHFreestanding
+  share/llvm-sh/examples/SHFreestanding/libraries
+
+On a compatible Linux host with an independently installed SH4 QEMU:
+
+  python3 /path/to/toolchain/share/llvm-sh/examples/SHFreestanding/libraries/check.py \
+    --prefix /path/to/toolchain --build-dir /path/to/scratch/library-check \
+    --qemu /usr/bin/qemu-sh4-static --require-execution
+
+QEMU is not bundled. The supplied Linux-user console adapter exercises
+target code under an emulator; it is not a universal board image. On Windows
+the checker compiles, archives and links, and explicitly records execution
+as unrun when no emulator is supplied.
+
+Existing Linux-target compile-only workflow
+-------------------------------------------
 
 The canonical target architecture is shle for little endian and sh for big
 endian. For a little-endian SH4 compile-only object using a native Linux package:
@@ -104,12 +166,23 @@ Do not use the unrecognized sh4-unknown-linux-gnu architecture spelling.
 Scope
 -----
 
-This is an experimental release candidate. Packages provide LLVM/Clang tools,
-Clang resource headers and license files. They do not include a GNU SH
-sysroot/SDK, emulator, Doom or complete target runtime distribution. Linking
-SH programs needs a separately compatible target toolchain/sysroot. Compile
-checks do not establish execution or application compatibility on hardware.
+This remains an experimental release candidate with bounded, single-threaded
+C and C++ library support. Tested examples do not establish full language or
+library conformance, hardware reset/interrupt behavior or compatibility with
+a particular board. Supply board startup, memory layout, I/O and heap setup.
 
-The Windows package passed full tool compilation and staged/relocated SH4
-object checks. The Windows SH regression suite was not run by the package job.
-LLVM and Clang license texts are included under share/doc/llvm-sh.
+Exceptions, unwinding, application RTTI, TLS, threads and inter-thread atomics
+are unsupported. The libc++ profile disables filesystem, locale/iostream,
+wide-character facilities, random_device, monotonic clock and the time-zone
+database. File/process/clock/entropy APIs require platform implementations.
+Math uses IEEE return-value semantics without math errno reporting; a
+configurable floating-point environment is unsupported.
+
+Big-endian libraries, other CPUs, hard argument ABIs, dynamic/shared/PIE,
+FDPIC and hosted GNU/Linux SDK compatibility are outside this library profile.
+Big-endian LLD regression coverage does not qualify a big-endian runtime.
+
+The release qualification report records native source regressions, installed
+and relocated package checks, and actual execution coverage separately.
+LLVM, Clang, LLD and compiler-rt license texts are under share/doc/llvm-sh;
+target-library license material is included in the library sysroot.
